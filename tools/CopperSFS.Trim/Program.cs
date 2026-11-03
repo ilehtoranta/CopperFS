@@ -68,6 +68,7 @@ public static class TrimCommand
             if (dry) DOS.PutStr("Checkpoint completed; proposed discard only (DRYRUN).\n");
             else DOS.PutStr("Manual discard completed.\n");
             DOS.VPrintf("%lu filesystem blocks in %lu ranges.\n", APTR.FromPointer(record.Raw + 12));
+            DOS.PutStr("These are submitted blocks, not host bytes reclaimed. Host allocation may retain partial units.\n");
         }
         return DOS.RETURN_OK;
     }
