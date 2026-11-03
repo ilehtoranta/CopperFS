@@ -24,6 +24,11 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     internal int Events, CutAfterEvent, TearAtWrite, TearBytes, FailAtEvent, FailAtRead;
     internal bool BatchedWrites, ScalarRanges, PersistentFailure, ReadOnly;
     internal bool RelocateFragmented = true;
+    public APTR RedoOverlay { get; set; }
+    internal bool DiscardSupported = true;
+    internal int Discarded, FailDiscardAt;
+    internal AmigaFileSystemDiscardLimits DiscardLimits = new() { MaximumBlocks = 32, Granularity = 1 };
+    internal List<(uint Block, uint Count)> DiscardRequests = new();
     internal bool ReserveOverwrites = true;
     internal uint BatchBytes = 65536;
     internal readonly byte[] Ram;

@@ -7,6 +7,42 @@ namespace CopperSFS.Tests;
 public sealed class Sfs2TrimTests
 {
     [Theory]
+    [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)]
+    public void EveryBitmapAndPermanentMetadataMustValidateBeforeAnyDiscard(int corruption)
+    {
+        var image = Empty(capacity: 8 * 1024 * 1024);
+        var bitmap = (int)U32(image, 96);
+        if (corruption == 0) image[(bitmap + 4) * 512 + 4] ^= 1; // Last map: earlier free runs must not be submitted.
+        else
+        {
+            var block = corruption == 1 ? 2 : corruption == 2 ? bitmap + 4 : 5;
+            var map = image.AsSpan(bitmap * 512, 512);
+            var at = 12 + block / 32 * 4;
+            U32(map, at, U32(map, at) | (1u << (31 - block % 32))); Seal(map);
+        }
+        var disk = new StudyDisk(image, 512); var work = WorkFor(disk);
+        Assert.False(AmigaSmartFileSystem2WriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _));
+        Assert.Empty(disk.DiscardRequests);
+    }
+
+    [Theory]
+    [InlineData(1u, 0u, 6000u)] [InlineData(8u, 3u, 31u)] [InlineData(128u, 127u, 512u)]
+    public void RangeLimitsAlignmentAndPartitionEndsAreRespected(uint granularity, uint alignment, uint maximum)
+    {
+        var disk = new StudyDisk(Empty(capacity: 8 * 1024 * 1024), 512)
+        { ScalarRanges = true, DiscardLimits = new() { Granularity = granularity, Alignment = alignment, MaximumBlocks = maximum } };
+        var work = WorkFor(disk);
+        Assert.True(AmigaSmartFileSystem2WriteCore.Trim(ref disk, ref work, APTR.Null, 0, out var result));
+        Assert.Equal((uint)disk.Discarded, result.Blocks);
+        foreach (var (block, count) in disk.DiscardRequests)
+        {
+            Assert.Equal(alignment, block % granularity); Assert.Equal(0u, count % granularity);
+            Assert.InRange(count, 1u, maximum); Assert.True(block + count < disk.Geometry.BlockCount);
+        }
+        Inspect(disk.Snapshot());
+    }
+
+    [Theory]
     [InlineData(false)] [InlineData(true)]
     public void InterruptedJournalMustRecoverDurablyBeforeDiscard(bool redo)
     {

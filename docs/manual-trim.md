@@ -82,7 +82,11 @@ and cannot detect every pre-existing bitmap/reference inconsistency.
 ## Integrating the core
 
 Implement the optional `IAmigaDiscardFileSystemPlatform` interface and call
-`AmigaSmartFileSystemWriteCore.Trim`. Serialize the **entire call** with all
+`AmigaSmartFileSystemWriteCore.Trim` for classic SFS or
+`AmigaSmartFileSystem2WriteCore.Trim` for SFS2 version-4 allocation metadata.
+SFS2 completes CSUN undo or TRST redo recovery and flushes the clean allocation
+state before bitmap validation. Its mutations commit before releasing mount ownership.
+Serialize the **entire call** with all
 operations on the mount, including readers and other trims. The portable core
 does not add its own locks. Backend control storage must not overlap scratch,
 buffered transactions or write queues. Backend discard is synchronous, orders

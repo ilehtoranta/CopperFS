@@ -4,7 +4,6 @@ namespace CopperSFS.Bench;
 
 internal partial struct StudyDisk : IAmigaDiscardFileSystemPlatform
 {
-    public APTR RedoOverlay { get; set; }
     public uint BlockCount => Geometry.BlockCount;
     public uint BlockBytes => Geometry.BlockBytes;
     public uint ReservedBlocks => Geometry.ReservedBlocks;
@@ -12,16 +11,15 @@ internal partial struct StudyDisk : IAmigaDiscardFileSystemPlatform
     public APTR ReadMetadataView(uint block, uint id, APTR target) => ReadMetadataBlock(block, id, target) ? target : APTR.Null;
     public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
     public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
-    internal bool DiscardSupported = true;
-    internal int Discarded, FailDiscardAt;
     public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits)
     {
-        limits = new() { MaximumBlocks = 32, Granularity = 1, Alignment = 0 };
+        limits = DiscardLimits;
         return DiscardSupported;
     }
     public bool DiscardBlocks(APTR control, uint block, uint count)
     {
         if (pending.Count != 0) throw new InvalidOperationException("Discard preceded durable checkpoint.");
+        DiscardRequests.Add((block, count));
         var bitmapBase = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(device.AsSpan(bytes + 96));
         for (var i = block; i < block + count; i++)
         {
