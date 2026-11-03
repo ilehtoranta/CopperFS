@@ -129,7 +129,9 @@ public sealed class Sfs2TrimTests
         for (var cut = 1; cut <= seed.Discarded; cut++)
         {
             var disk = new StudyDisk(image, 512, crashModel: true) { FailDiscardAt = cut }; work = WorkFor(disk);
-            Assert.False(AmigaSmartFileSystem2WriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _));
+            Assert.False(AmigaSmartFileSystem2WriteCore.Trim(ref disk, ref work, APTR.Null, 0, out var failed));
+            Assert.Equal((uint)(disk.DiscardRequests.Count - 1), failed.Ranges);
+            Assert.Equal((uint)disk.DiscardRequests.SkipLast(1).Sum(r => (long)r.Count), failed.Blocks);
             Assert.Equal(expected, Manifest(disk.Snapshot()));
             disk.FailDiscardAt = 0;
             Assert.True(AmigaSmartFileSystem2WriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _));

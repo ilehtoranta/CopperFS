@@ -82,7 +82,9 @@ public sealed partial class AmigaSmartFileSystemTests
         {
             var disk = new Disk(Image()) { Buffered = true, DiscardPattern = 2, FailAtDiscardSector = failure };
             work = TrimWork(ref disk, buffered, 128); BufferedOverwrite(ref disk, ref work, 0xA7);
-            Assert.False(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _));
+            Assert.False(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out var failed));
+            Assert.Equal((uint)(disk.DiscardRequests.Count - 1), failed.Ranges);
+            Assert.Equal((uint)disk.DiscardRequests.SkipLast(1).Sum(r => (long)r.Count), failed.Blocks);
             Assert.Equal(DOS.Error.SeekError, work.Error); Assert.Equal(expected, AllocatedState(disk.Snapshot()));
             disk.FailAtDiscardSector = 0;
             Assert.True(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _));
