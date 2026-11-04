@@ -958,6 +958,48 @@ public static partial class AmigaSmartFileSystemWriteCore
         return Put(ref p, ref w, w.NodeRoot, w.Meta);
     }
 
+    private static bool UpdateNodeFullness<T>(ref T p, ref Work w, uint block, uint node, uint depth,
+        out bool full) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        full = false;
+        if (depth >= 8) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (!Read(ref p, ref w, block, NodeId, w.Meta)) return false;
+        var first = p.ReadUInt32(w.Meta, 12); var stride = p.ReadUInt32(w.Meta, 16);
+        if (stride == 0 || node < first) return Fail(ref w, DOS.Error.DiskNotValidated);
+        var index = (node - first) / stride;
+        if (stride == 1)
+        {
+            if (index >= (w.BlockBytes - 20) / 10) return Fail(ref w, DOS.Error.DiskNotValidated);
+            full = true;
+            for (var at = 20; at + 10 <= w.BlockBytes; at += 10)
+                if (p.ReadUInt32(w.Meta, at) == 0) { full = false; break; }
+            return true;
+        }
+        if (index >= (w.BlockBytes - 20) / 4) return Fail(ref w, DOS.Error.DiskNotValidated);
+        var offset = 20 + (int)index * 4;
+        var pointer = p.ReadUInt32(w.Meta, offset);
+        var shift = 0;
+        while ((1u << shift) < w.BlockBytes) shift++;
+        shift -= 5;
+        var child = pointer >> shift;
+        if (child == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (!UpdateNodeFullness(ref p, ref w, child, node, depth + 1, out var childFull) ||
+            !Read(ref p, ref w, block, NodeId, w.Meta)) return false;
+        var updated = childFull ? pointer | 1u : pointer & ~1u;
+        if (updated != pointer)
+        {
+            p.WriteUInt32(w.Meta, offset, updated);
+            if (!Put(ref p, ref w, block, w.Meta)) return false;
+        }
+        full = true;
+        for (var at = 20; at + 4 <= w.BlockBytes; at += 4)
+        {
+            var entry = p.ReadUInt32(w.Meta, at);
+            if (entry == 0 || (entry & 1) == 0) { full = false; break; }
+        }
+        return true;
+    }
+
     private static bool InsertObject<T>(ref T p, ref Work w, ref Request r, bool directory, uint node,
         APTR preserved, int preservedAt, int commentAt, uint commentLength,
         out uint container, out uint hashTable, out int recordAt, bool recycledName = false)
@@ -1070,7 +1112,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (nodeImage.IsNull) return false;
         ReplaceWord(ref p, nodeImage, slot, container); ReplaceWord(ref p, nodeImage, slot + 4, oldHead);
         ReplaceHalf(ref p, nodeImage, slot + 8, hash);
-        if (!PutSealed(ref p, ref w, leaf, nodeImage)) return false;
+        if (!PutSealed(ref p, ref w, leaf, nodeImage) ||
+            !UpdateNodeFullness(ref p, ref w, w.NodeRoot, node, 0, out _)) return false;
         if (hashTable != 0)
         {
             var hashImage = Edit(ref p, ref w, hashTable, HashId, w.Meta);
@@ -1705,6 +1748,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         ReplaceWord(ref p, nodeImage, nodeSlot, 0); ReplaceWord(ref p, nodeImage, nodeSlot + 4, 0);
         ReplaceHalf(ref p, nodeImage, nodeSlot + 8, 0);
         return PutSealed(ref p, ref w, leafBlock, nodeImage) &&
+            UpdateNodeFullness(ref p, ref w, w.NodeRoot, node, 0, out _) &&
             ExciseObject(ref p, ref w, objectContainer, at, node) && Finish(ref p, ref w);
     }
 

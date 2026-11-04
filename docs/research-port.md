@@ -74,7 +74,7 @@ available at the source commit. No assertions were weakened to hide these cases.
 
 | Research suites / cases | Observation and follow-up |
 | --- | --- |
-| FileSystemCompatibilityTests | Packed containers, embedded-null comments, new extent owner tags, node fullness bits and metadata relocation need focused investigation. The benchmark independently fails its setup checker with `Block 6: incorrect node fullness flag`. |
+| FileSystemCompatibilityTests | Packed containers, embedded-null comments, new extent owner tags and metadata relocation need focused investigation. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
 | FileSystemRegressionTests | Node-branch growth failure scenario needs comparison with current tree allocation behavior. |
 | TransactionRegressionTests | Archive-bit updates, empty directory-container unlinking and reads after failed writes differ. Check current mount/read contracts before porting fixes. |
 | ReliabilityTests advanced growth scenarios | Admin-growth setup failed; advanced growth and packed cases are not part of the selected basic-mutation matrix. |
@@ -84,15 +84,41 @@ available at the source commit. No assertions were weakened to hide these cases.
 
 Classic historical zero first-extent backlinks are accepted by main's checker.
 The old test rejecting that representation was omitted; the existing wrong-owner
-corruption case remains. The benchmark currently produces a failed diagnostic
-report at workload preparation; it does not provide current performance evidence.
-The research writer contains an `UpdateNodeFullness` routine absent from main's
-classic writer. That is a concrete candidate for the next production fix, with
-`FillingNodeLeafMustSetItsParentFullBit` and
-`FreeingNodeLeafSlotMustClearItsParentFullBit` as regression cases. Its interaction
-with main's newer buffered/TRST paths still needs review and native validation.
+corruption case remains. The original port's benchmark failure is retained in its historical receipt.
+The subsequent node-fullness fix makes the current benchmark pass.
 
-## Validation
+## Node-fullness correction (2026-11-04)
+
+Classic node allocation and removal now recompute fullness along the modified
+node's ancestor path inside the existing transaction. Each parent's low pointer
+bit is updated only when its child changes between full and non-full. The bounded
+traversal uses caller-owned scratch and the current cached block size; parent
+updates use the existing journal/overlay path. On-disk layout is unchanged.
+
+The helper and two leaf-boundary regressions were selectively adapted from research
+commit 4a902a1. Additional tests cover buffered fill/free/reopen and every write
+and flush cut/failure during fullness transitions under both CSUN and TRST.
+The original wrong-fullness corruption checks remain intact.
+
+The final Release build passed with zero warnings/errors. The full solution run
+passed 1,126 tests with three external-media tests unavailable; the subsequently
+added buffered regression passed in the seven-test focused run, for 1,127 distinct
+passing host tests across validation runs. Both default TRST and legacy CSUN 68000
+handlers compiled and passed CopperStart's native classic TRIM/rewrite/cold-reboot
+replay on Windows/NTFS, with no skips. These existing guest replays are integration
+checks; the new node-boundary crash/failure regressions are managed tests.
+The combined benchmark/recovery command passed all 98 benchmark configurations
+and 40 recovery scenarios, with source hashes unchanged during execution.
+No real-disk or Amiga throughput improvement is claimed.
+
+Current validation receipts are under `artifacts/node-fullness-*`. The benchmark
+is a synthetic in-memory host study; passing it establishes workload integrity,
+not real-disk or Amiga performance. Other deferred compatibility findings above
+are outside this fix.
+
+## Original selective-port validation
+
+
 
 On Windows, the final standard Release solution build succeeded with zero
 warnings and errors. An earlier isolated build emitted one existing CS8602
