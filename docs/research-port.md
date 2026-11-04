@@ -1,9 +1,19 @@
 # Selective research port (2026-11-04)
 
 Source: CopperSFS research commit `4a902a1ff9189bbdff841c23441c66678a6e2427`,
-preserved as `codex/preserve-local-research` in CopperFS. Baseline:
+retained in the history of `codex/preserve-local-research` in CopperFS. Baseline:
 `a110fcf8e586287c795e0256c70d2147672becf8`. This port changes host tests and
 diagnostic tools; it does not replace filesystem or native handler implementations.
+
+## Research PR reconciliation
+
+PR #1 originally proposed the complete research snapshot. Its conflict resolution
+retains the validated selective port from main, including the deferred findings
+below. Unported experiments and obsolete implementations remain available at
+[the immutable research snapshot](https://github.com/ilehtoranta/CopperFS/tree/4a902a1ff9189bbdff841c23441c66678a6e2427).
+The PR branch now incorporates main; use that commit, rather than the moving
+branch tip, to inspect or extract the original research. This reconciliation
+changes documentation only relative to main and does not import deferred code.
 
 ## Included
 
