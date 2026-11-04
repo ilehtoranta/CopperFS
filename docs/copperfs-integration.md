@@ -90,3 +90,28 @@ are local artifacts under CopperStart's `artifacts/copperfs-migration/`.
 This is not the complete v5 extension-bundle receipt: extensions were not rebuilt
 in this migration run. Linux/macOS native replay and full extension/reset-ROM
 boot remain separate, unavailable coverage here. No packages or media were published.
+
+## Independent native builds, 2026-11-04
+
+The follow-up standalone project removes the CopperStart build dependency.
+CopperFFS was built directly from CopperFS; classic CopperSFS, SFS2 CSUN, SFS2
+TRST and CopperTrim also built from a source snapshot under the host's temporary
+directory, with no CopperStart checkout beside it. The only explicit external
+build root was CopperSharp68k. All four handler input graphs were inspected and
+contained no CopperStart DLL or library dependency. Their input assembly is now
+`CopperFS.Amiga.dll`; native entry names and on-disk/packet formats are unchanged.
+
+The CopperFS Release solution passed with 1,018 managed tests and one unavailable
+external-media test. That includes 17 retained record-lock cases and a new
+transitive assembly dependency check. Invalid buffered/strict configurations are
+rejected by the standalone project. CopperStart's Release solution, 164 integrated
+filesystem tests and 50 focused record-lock/notification/attribute/ABI tests passed.
+All twelve native sparse-storage cases passed without skips against the independent
+68000 binaries on Windows/NTFS. Results are in CopperStart's
+`artifacts/independent-fs-native/`; binaries and dependency evidence are in
+CopperFS's `artifacts/standalone-handlers/` and `standalone-dependencies.json`.
+
+The CopperStart 512 KiB SFS2 CSUN extension also built and linked, preserving the
+separate OS integration path. This is not extension boot qualification. The 68020
+target, Linux/macOS host replay and full extension/reset-ROM boot were not rerun
+in this follow-up. No packages or media were published.
