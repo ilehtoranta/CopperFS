@@ -9,8 +9,9 @@ variant. Read the durability section before upgrading.
 
 This remains an **experimental preview** for disposable SFS volumes with
 independent backups. Keep a separate boot volume. The handler does not format
-disks or install itself in the RDB, and its integration source is not included
-in the public repository or binary package.
+disks or install itself in the RDB. The published package remains unchanged;
+current integration source is now maintained in the public CopperFS repository
+under `src/CopperFS.Amiga`, with CopperStart supplying OS services and registration.
 
 ## Choose the package and handler
 

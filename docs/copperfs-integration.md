@@ -33,6 +33,8 @@ MIT license retained. CopperFFS and native handler sources and their tests were
 copied without behavior changes from CopperStart commit
 `cdd3935` (the tested OFS writer baseline). Their original history remains in
 CopperStart. New filesystem development belongs here.
+The [source parity manifest](migration-source-parity.json) records the 27 moved
+core, native and test files and their SHA-256 values after newline normalization.
 
 Earlier uncommitted CopperSFS research was preserved and pushed as
 `codex/preserve-local-research`, commit
@@ -55,5 +57,25 @@ here; the physical MFM clock test remains in CopperStart. Native cases include
 same-mount write/delete/TRIM/rewrite, destructive partial discard, cold boot and
 independent ROM OFS reading. These are correctness results, not throughput data.
 
-Migration build and replay results are recorded below after validation. Linux and
-macOS native replay and full extension/reset-ROM boot remain separate coverage.
+Migration validation on 2026-11-04 passed:
+
+- CopperFS Release solution build; 163 OFS/FFS and 837 SFS/SFS2 tests. One optional
+  external-media SFS test was unavailable.
+- CopperStart Release solution and both retained benchmark probe builds; all 164
+  integrated filesystem tests. Existing CopperStart warnings remain.
+- CopperScreen Release solution, with no warnings.
+- Rebuilt CopperFFS, classic CopperSFS, SFS2 CSUN and SFS2 TRST standalone handlers
+  and both command names; all twelve native sparse-storage cases passed without
+  skips on Windows/NTFS.
+
+The rebuilt CopperFFS is byte-identical to the pre-migration OFS writer binary
+(SHA-256 `DDB60FABBF0B034FFEF1B092EB466DCAAB65668DBEA80431AE3F1897C3A9A977`).
+CopperTrim and CopperSFSTrim retain SHA-256
+`612EED6C29614166CF61F0BB1F03D40586E162ECEB1A3F89B0D11DF112E08381`.
+The migration changes source ownership and build paths, not these binaries.
+
+Native TRX, per-case allocation measurements and the standalone migration receipt
+are local artifacts under CopperStart's `artifacts/copperfs-migration/`.
+This is not the complete v5 extension-bundle receipt: extensions were not rebuilt
+in this migration run. Linux/macOS native replay and full extension/reset-ROM
+boot remain separate, unavailable coverage here. No packages or media were published.

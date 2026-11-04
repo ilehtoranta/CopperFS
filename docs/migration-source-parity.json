@@ -1,0 +1,141 @@
+{
+  "baseline": "cdd3935660323755d3f2b3292c26911599c414af",
+  "normalization": "CRLF to LF only",
+  "files": [
+    {
+      "source": "src/CopperStart.Dos/AmigaBitmapWordCore.cs",
+      "destination": "src/CopperFFS.Core/AmigaBitmapWordCore.cs",
+      "sha256Lf": "92340c40dedeedfc3270dd2796d92aaa7832ee735990e5fa9f0808a96fab59f1"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaDiskFileSystemCore.cs",
+      "destination": "src/CopperFFS.Core/AmigaDiskFileSystemCore.cs",
+      "sha256Lf": "2f5f7101f4930306faaa52787184acebb4252d80dfbe7c8e161985123b5ee62f"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaFfsReadLinkCore.cs",
+      "destination": "src/CopperFFS.Core/AmigaFfsReadLinkCore.cs",
+      "sha256Lf": "7fef2af5c0215f9eee162b5acb0d5b8a712d9ac0abe4b906e8a9f50ac76ecdb3"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaFfsTrim.cs",
+      "destination": "src/CopperFFS.Core/AmigaFfsTrim.cs",
+      "sha256Lf": "ed6ba11e01dc2350ea15cfc0e046c9a8dfaeab8bfc99ee704e3f4046fbb719de"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaFfsWriteCore.cs",
+      "destination": "src/CopperFFS.Core/AmigaFfsWriteCore.cs",
+      "sha256Lf": "b12c0e06a14f525129807b3b2e9a1106c4632d39ac38e55b2e620aeb3f5a9554"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaFilePositionCore.cs",
+      "destination": "src/CopperFFS.Core/AmigaFilePositionCore.cs",
+      "sha256Lf": "18e142ae86d2d1bd43970f63ef212bcc6bfa17a3a85c67767d6034ff1c262a3e"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaFileSystemDeviceCore.cs",
+      "destination": "src/CopperFFS.Core/AmigaFileSystemDeviceCore.cs",
+      "sha256Lf": "a6253a88fa3f2331f5885eef220222ccbbeaece4ccf7394a6a8636ed5f062013"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaGeometryMath.cs",
+      "destination": "src/CopperFFS.Core/AmigaGeometryMath.cs",
+      "sha256Lf": "8c161e4d0019b9471804d74603aeef83c962e18325e4407a83841533fe008428"
+    },
+    {
+      "source": "src/CopperStart.Dos/AmigaOfsWrite.cs",
+      "destination": "src/CopperFFS.Core/AmigaOfsWrite.cs",
+      "sha256Lf": "803c35971242d8f0ae9a1c9dca33742e352b6eb421a1227077bcb7c5c25ad77c"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeAmigaFileSystem.cs",
+      "destination": "src/CopperFS.Amiga/NativeAmigaFileSystem.cs",
+      "sha256Lf": "347701ee36d4f445f6fcb25d04228df926bf896c3dd62e380109d29d5c868f53"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeFileSystemNotifications.cs",
+      "destination": "src/CopperFS.Amiga/NativeFileSystemNotifications.cs",
+      "sha256Lf": "8e29b812f61bfdc97b1959073a960312f35c0578a9e7cf5a7c2a6d790f987f68"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeFileSystemRecordCodecs.cs",
+      "destination": "src/CopperFS.Amiga/NativeFileSystemRecordCodecs.cs",
+      "sha256Lf": "01f3d955cd2890732ee41123e3aeb7b60fc9a58e73bf2b73888047b99acd92ba"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeSfs2Bridge.cs",
+      "destination": "src/CopperFS.Amiga/NativeSfs2Bridge.cs",
+      "sha256Lf": "df55b9be9f94f84305a21db5834bc29ea480bbcbf33a6c12aeffbc2ea4b9fef7"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeSfs2Bridge.Disabled.cs",
+      "destination": "src/CopperFS.Amiga/NativeSfs2Bridge.Disabled.cs",
+      "sha256Lf": "3e9c215ce3b52252fcb9a2d176b34eaa74e92036782f7e34b6705deef005b0ff"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeSfsStandaloneHandler.cs",
+      "destination": "src/CopperFS.Amiga/NativeSfsStandaloneHandler.cs",
+      "sha256Lf": "987ca8b44d13d73e9892a43800cf6411b94e278a4bbbfa086448994655bc5b65"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeSfsTrim.cs",
+      "destination": "src/CopperFS.Amiga/NativeSfsTrim.cs",
+      "sha256Lf": "de12336eee463225fb94435248be1af2dcdec387df1420fc903593d4274af6dd"
+    },
+    {
+      "source": "src/CopperStart.Dos/NativeSfsTrstGroup.cs",
+      "destination": "src/CopperFS.Amiga/NativeSfsTrstGroup.cs",
+      "sha256Lf": "ccc839e049a1132df924eff245935b5fb92eca37b3409acedbb5c278eaf98770"
+    },
+    {
+      "source": "tests/CopperStart.Floppy.Native.Tests/AmigaDiskFileSystemTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/AmigaDiskFileSystemTests.cs",
+      "sha256Lf": "7ec99988ad923075c6f1c8e0b301cb4450b413dc05f7b290bf13750e6369a9ba"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/DesktopIoCoreTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/DesktopIoCoreTests.cs",
+      "sha256Lf": "9ce49f601bc63ba36d8371e0af622d1ae525329183fc499a7128b1b866d48f48"
+    },
+    {
+      "source": "tests/CopperStart.Floppy.Native.Tests/DosDiskImage.cs",
+      "destination": "tests/CopperFFS.Core.Tests/DosDiskImage.cs",
+      "sha256Lf": "338ea1438539f50e201d4c0be4ee145145444ceed79d02f7b02f346e4522c0db"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/FfsOverwriteValidationTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/FfsOverwriteValidationTests.cs",
+      "sha256Lf": "51db6861b2696d450630b6b05a2a89e3a8a64dbe0c60bcb9fe0c436244511faa"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/FfsTrimTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/FfsTrimTests.cs",
+      "sha256Lf": "bb6b4ccf31936dbc66928acc874b6e9406bb09a8ba68ca1b04e8ebc8f996fc3d"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/FilePositionTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/FilePositionTests.cs",
+      "sha256Lf": "90f4b6467eba5cf872cdddd822505ac6575b91b459ecaaf564d75c174b77b1dc"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/OfsTrimTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/OfsTrimTests.cs",
+      "sha256Lf": "7dec3f3b016ec5c78f827fc111ac3e93bb6dd8093cafc0c790e8d6e7a6a3533c"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/OfsWriteTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/OfsWriteTests.cs",
+      "sha256Lf": "e30dacbbc43217f14e8ef4eaf606b83aa9c15948b57b07240ec81b7380b9bd76"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/SectorTransferTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/SectorTransferTests.cs",
+      "sha256Lf": "0245a3e65555cc1ff8d87e148d2dae3bfe7c32a2ae9d327d70e217d3583ff7e8"
+    },
+    {
+      "source": "tests/CopperStart.FileSystem.Tests/VolumeGeometryTests.cs",
+      "destination": "tests/CopperFFS.Core.Tests/VolumeGeometryTests.cs",
+      "sha256Lf": "6c980c2d18ba17af44573f5fe0b8100dc80a740971aef60f79c4e91232587be4"
+    }
+  ]
+}

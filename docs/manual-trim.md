@@ -10,8 +10,11 @@ matching newer sources. No package release is implied by these source changes.
 Install the compiled 68000 HUNK `CopperTrim` in `C:` and the matching handler
 in `L:`. The command requires dos.library V37 or newer.
 `CopperSFSTrim` remains a compatibility alias for the same executable and packet.
-CopperTrim also serves CopperStart's DOS1/FFS handler; that scanner and its
-invalid-volume policy are maintained in CopperStart, not this SFS core.
+CopperTrim also serves CopperFFS for DOS0/OFS and DOS1/FFS. Both filesystem
+implementations are maintained in this CopperFS umbrella repository; the
+OFS/FFS scanner is in `src/CopperFFS.Core/AmigaFfsTrim.cs`. CopperFFS supports
+writes and manual TRIM on the same mount, with no handler switch required.
+Its invalid-volume policy remains distinct from SFS journal recovery.
 
 ```text
 CopperTrim SFS0: CHECK

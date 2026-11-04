@@ -1,4 +1,8 @@
-# CopperSFS
+# CopperSFS (historical repository overview)
+
+This overview retains the original release and compatibility context. Current
+source ownership and build instructions are in the [CopperFS README](../README.md).
+Shared native handler source is now available in `src/CopperFS.Amiga`.
 
 Current source includes bounded TRST transactions and legacy CSUN recovery.
 See [the mainline integration notes](trst-mainline-integration.md) for
