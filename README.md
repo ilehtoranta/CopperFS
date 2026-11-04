@@ -1,95 +1,62 @@
-# CopperSFS
+# CopperFS
 
-Current source includes bounded TRST transactions and legacy CSUN recovery.
-See [the mainline integration notes](docs/trst-mainline-integration.md) for
-atomicity, durability policy and validation scope. Released packages retain
-their separately documented build and qualification identities.
-The [Write tail and p95 report](docs/trst-tail-latency.md) records the current
-optimization, its checkpoint tradeoff and compiled-handler checks.
+CopperFS is the umbrella repository for CopperFFS (OFS/FFS), CopperSFS
+(classic SFS/SFS2), their shared native handler sources and CopperTrim.
+The formats retain separate allocation, validation and recovery implementations.
 
-CopperSFS is an experimental, allocation-free implementation of the classic
-Amiga Smart File System on-disk format (`SFS\0`). This repository contains the
-portable filesystem core and its host tests.
+| Component | Location |
+| --- | --- |
+| OFS/FFS core | `src/CopperFFS.Core` |
+| Classic SFS and SFS2 cores | `src/CopperSFS.Core` |
+| Shared Amiga handler sources | `src/CopperFS.Amiga` |
+| CopperTrim and compatibility command | `tools/CopperSFS.Trim` |
+| Managed filesystem tests | `tests/CopperFFS.Core.Tests`, `tests/CopperSFS.Core.Tests` |
+| Native build tools | `build/Build-Handler.ps1`, `build/Build-Trim.ps1` |
 
-**Status: experimental preview.** [Preview.4](https://github.com/ilehtoranta/CopperSFS/releases/tag/v0.1.0-preview.4)
-provides a buffered 68020 handler with a 256 KiB clean-data cache, optional
-68020 binaries with other cache sizes or strict writes, and a separate 68000
-compatibility package with limited validation. Select the package for your CPU
-and read the [installation and upgrade guide](docs/handler-install.md).
-The handler integration source is not part of this repository. The external
-handler has been compared with
-original SmartFilesystem 1.279 under Kickstart 3.1, including clean handoff and
-write/flush interruption sweeps. Source changes and published preview binaries
-have separate qualification records: see [validation](docs/validation.md).
-Other ROM versions and physical hardware remain unqualified. Use only a
-disposable volume with an independent backup. Buffered writes are the default
-in preview.4; recent unflushed changes may be lost after a crash.
-
-Source now also provides explicit [manual TRIM](docs/manual-trim.md) through
-optional SCSI UNMAP support and the `CopperSFSTrim` command source. This is not
-in the published preview.3 binaries. Automatic trimming is disabled.
-
-## What is here
-
-- `src/CopperSFS.Core`: read, write and recovery logic for classic `SFS\0`
-  volumes. The caller supplies block I/O, big-endian guest memory and scratch
-  buffers through `IAmigaFileSystemPlatform`.
-- `tests/CopperSFS.Core.Tests`: semantic tests for traversal, mutation,
-  interleaved file operations, interrupted writes, recovery and sparse volumes
-  larger than 4 GiB.
-
-Public types use the `CopperSFS` namespace. Integrators supply their own block
-device and guest-memory adapter through the platform interfaces.
-`BlockCount`, `BlockBytes` and `ReservedBlocks` must match the corresponding
-fields in `Geometry` and remain stable while mounted. Scalar getters let native
-adapters avoid constructing the full device descriptor during traversal.
-
-The engine does not format volumes. It uses classic 32-bit AmigaDOS file sizes
-and seek positions. A partition above 4 GiB additionally needs a block device
-with TD64 or NSD 64-bit I/O; block-device integration is outside this core.
-
-The core provides original-format `TRST` and legacy `CSUN` journals. Current
-classic standalone builds default to buffered TRST with whole-Write atomicity.
-An interrupted legacy CSUN transaction still needs CopperSFS recovery before
-the volume is exposed through another SFS implementation. Recovery requires a
-writable device and an intact journal. See [compatibility and recovery](docs/compatibility.md).
-
-Integrators can select bounded buffered writes or strict per-operation
-durability. Buffered changes are immediately visible to readers; an explicit
-filesystem flush makes the checkpoint durable. Recent unflushed changes may
-be lost after a crash. Both policies use the same recovery protocol. See
-[buffering and integration](docs/transaction-batching.md).
-
-An optional caller-owned [clean-data cache](docs/data-cache.md) can retain file
-data without adding device requests or changing durability. The packaged 68020
-handlers offer fixed cache budgets; choose the executable in the
-[installation guide](docs/handler-install.md). Integrators control memory,
-admission and invalidation in their own adapters.
+CopperFFS supports DOS0 OFS and DOS1 FFS reads, writes and manual TRIM on
+one mount. Its reader also handles DOS2-DOS5; those variants remain read-only.
+CopperSFS supports classic SFS and SFS2 with their existing CSUN/TRST policies.
+CopperTrim uses the same version-1 packet for all four supported writable formats.
+The CopperSFSTrim command remains a byte-identical compatibility alias.
 
 ## Build and test
 
-Install .NET 10 and clone the public
-[CopperSharp68k](https://github.com/ilehtoranta/CopperSharp68k) repository
-beside this one, or provide compatible CopperSharp SDK packages. Then run:
+Install .NET 10 and place CopperSharp68k beside this checkout, or set
+`CopperSharp68kRoot` to its location. The existing SDK package fallback is
+retained. Run:
 
-```sh
-dotnet test CopperSFS.slnx -c Release
+```powershell
+dotnet build CopperFS.slnx -c Release
+dotnet test CopperFS.slnx -c Release
 ```
 
-The default local project reference expects `../CopperSharp68k`. Set
-`CopperSharp68kRoot` when it is elsewhere. These tests exercise host semantics;
-they do not execute a compiled MC68000 handler. See
-[validation](docs/validation.md) for the coverage boundary.
+These are host semantic tests. Optional external media tests can be unavailable;
+that is not native replay coverage. Native handler builds currently require
+CopperStart's OS integration consuming this repository at a pinned revision:
 
-## Name and provenance
+```powershell
+./build/Build-Handler.ps1 -CopperStartRoot <CopperStart-checkout> -Ffs
+./build/Build-Handler.ps1 -CopperStartRoot <CopperStart-checkout>
+./build/Build-Handler.ps1 -CopperStartRoot <CopperStart-checkout> -Sfs2
+./build/Build-Trim.ps1
+```
 
-CopperSFS is a new implementation and is not the original
-[Smart File System C project](https://sourceforge.net/projects/smartfilesystem/).
-That project's source is published under LGPLv2. This repository is
-MIT-licensed; the original C source is not included. The classic format
-references and independent validation sources are listed in
-[provenance](docs/provenance.md).
+The CopperStart build wrappers remain supported and select their pinned CopperFS
+sources. They produce the existing CopperFFS, CopperSFS and CopperTrim names.
+See [integration and migration](docs/copperfs-integration.md) for boundaries,
+validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usage.
 
-Contributions and independent disk-image compatibility reports are welcome.
-Please use disposable images when testing writes and include the exact handler,
-device and system version in bug reports.
+## Compatibility and releases
+
+The repository move does not change filesystem formats, packet ABI, native entry
+names, journal policies or existing CopperSFS package identities. Geometry and
+platform interfaces remain in CopperSFS.Core to preserve existing type identity.
+CopperFFS currently retains its CopperStart.Dos namespace for the same reason.
+CopperStart links the maintained filesystem sources into its native DOS assembly;
+standalone host consumers can reference CopperFFS.Core directly.
+
+Published CopperSFS releases remain in the original repository and are immutable.
+This source migration does not publish a package, handler or ROM release. The
+[previous CopperSFS overview](docs/coppersfs-overview.md) records existing release
+and compatibility guidance. Host HDF storage and sparse deallocation remain in
+CopperDisk/CopperScreen; CopperFS owns guest filesystem behavior.

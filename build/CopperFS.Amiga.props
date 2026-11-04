@@ -1,0 +1,8 @@
+<Project>
+  <!-- OS-facing codecs and extension registration remain supplied by CopperStart. -->
+  <Import Project="CopperFFS.Sources.props" />
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../src/CopperSFS.Core/CopperSFS.Core.csproj" />
+    <Compile Include="$(MSBuildThisFileDirectory)../src/CopperFS.Amiga/*.cs" Link="CopperFS/Amiga/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

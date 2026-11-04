@@ -1,0 +1,59 @@
+# CopperFS integration and migration
+
+## Ownership
+
+CopperFS maintains OFS/FFS and classic SFS/SFS2 cores, shared native filesystem
+handler sources, CopperTrim, semantic tests and handler/command build recipes.
+CopperStart maintains its Exec/DOS services, OS-specific codecs, extension ROM
+registration and native integration replays. CopperDisk and CopperScreen retain
+HDF I/O, sparse host deallocation, profiles, backups and desktop controls.
+
+CopperStart imports build/CopperFS.Amiga.props from external/CopperFS. This
+includes the maintained sources in the existing CopperStart.Dos native assembly.
+It preserves native entry and managed type identities without an extra device
+abstraction or runtime dispatch layer. CopperFFS.Core is also independently
+buildable for host consumers; do not reference that assembly together with a
+CopperStart.Dos assembly which already includes those same types.
+
+CopperSFS.Core remains the owner of existing geometry, platform and TRIM packet
+types. Splitting these into another assembly would be a separate ABI migration.
+The old CopperSFS.slnx remains a compatibility entry for SFS-only work;
+CopperFS.slnx builds and tests both maintained cores.
+
+The native handler build requires an explicit CopperStartRoot. Use a CopperStart
+checkout that pins the intended CopperFS commit, preferably its build wrappers.
+Standalone builds do not qualify full extension/reset-ROM boot. No published
+CopperSFS package identity or historical release URL is changed.
+
+## Provenance
+
+The repository starts from CopperSFS commit
+`ee11ac96dd9aaeb3140b6f55e25b49b96b1aec8c` with its original Git ancestry and
+MIT license retained. CopperFFS and native handler sources and their tests were
+copied without behavior changes from CopperStart commit
+`cdd3935` (the tested OFS writer baseline). Their original history remains in
+CopperStart. New filesystem development belongs here.
+
+Earlier uncommitted CopperSFS research was preserved and pushed as
+`codex/preserve-local-research`, commit
+`4a902a1ff9189bbdff841c23441c66678a6e2427`, in the original CopperSFS repository.
+That branch predates the mainline TRST/TRIM implementation and is retained as
+research, not substituted for the validated mainline. The original checkout was
+fast-forwarded to ee11ac9 and is clean. The unrelated Samsung TV test directory
+was moved intact to a sibling directory; it is not filesystem source.
+
+Historical ProbeDosBase/ProbeDosPut variants in CopperStart contain intentional
+reader/native differences. Byte-identical core files can be linked to CopperFS;
+experimental variants stay explicit in those probes rather than silently changing
+their benchmark inputs. Production uses only the maintained CopperFS sources.
+
+## Validation
+
+The pre-migration OFS writer passed 164 CopperStart filesystem tests and six
+native OFS/FFS cases on Windows/NTFS. The portable suite moves 163 of these tests
+here; the physical MFM clock test remains in CopperStart. Native cases include
+same-mount write/delete/TRIM/rewrite, destructive partial discard, cold boot and
+independent ROM OFS reading. These are correctness results, not throughput data.
+
+Migration build and replay results are recorded below after validation. Linux and
+macOS native replay and full extension/reset-ROM boot remain separate coverage.

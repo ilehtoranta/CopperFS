@@ -1,0 +1,6 @@
+<Project>
+  <!-- Keep existing native type/assembly identities while maintaining one source copy. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../src/CopperFFS.Core/*.cs" Link="CopperFS/Core/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
