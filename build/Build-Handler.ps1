@@ -1,5 +1,4 @@
 param(
-    [Parameter(Mandatory)][string]$CopperStartRoot,
     [string]$CopperSharpRoot = '',
     [string]$Configuration = 'Release',
     [string]$ArtifactRoot = '',
@@ -21,7 +20,7 @@ if ($BufferedTrst -and ($LegacyCsUn -or $Sfs2 -or $StrictWrites)) { throw 'Buffe
 $useTrst = !$LegacyCsUn
 $useBufferedTrst = $useTrst -and !$StrictWrites -and !$Sfs2
 $filesystemRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$repositoryRoot = [IO.Path]::GetFullPath($CopperStartRoot)
+$repositoryRoot = $filesystemRoot
 if ([string]::IsNullOrWhiteSpace($CopperSharpRoot)) {
     $CopperSharpRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot '../CopperSharp68k'))
 }
@@ -30,7 +29,7 @@ $inputRoot = Join-Path $ArtifactRoot 'inputs'
 if ($Sfs2TrstWrites -and !$Sfs2) { throw 'Sfs2TrstWrites requires the Sfs2 integration profile.' }
 New-Item -ItemType Directory -Force -Path $inputRoot | Out-Null
 $cliProject = Join-Path $CopperSharpRoot 'Compiler.Cli/CopperSharp.Compiler.Cli.csproj'
-$dosProject = Join-Path $repositoryRoot 'src/CopperStart.Dos/CopperStart.Dos.csproj'
+$dosProject = Join-Path $repositoryRoot 'src/CopperFS.Amiga/CopperFS.Amiga.csproj'
 if (!$SkipCompilerBuild) {
     dotnet build $cliProject -c $Configuration --verbosity quiet -m:1
     if ($LASTEXITCODE -ne 0) { throw 'CopperSharp compiler build failed.' }
@@ -38,7 +37,7 @@ if (!$SkipCompilerBuild) {
 dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($Sfs2TrstWrites.IsPresent.ToString().ToLowerInvariant())" --output $inputRoot --verbosity quiet -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler input build failed.' }
 $compiler = Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"
-$dos = Join-Path $inputRoot 'CopperStart.Dos.dll'
+$dos = Join-Path $inputRoot 'CopperFS.Amiga.dll'
 $output = Join-Path $ArtifactRoot $(if ($Ffs) { 'CopperFFS' } else { 'CopperSFS' })
 $entry = if ($Ffs) { 'CopperStart.Dos.NativeSfsStandaloneHandler::FfsEntry' } else { 'CopperStart.Dos.NativeSfsStandaloneHandler::Entry' }
 # The handler is a freestanding HUNK. ROM-only policy does not enable these
@@ -52,7 +51,7 @@ $arguments = @($compiler, $dos, '--entry', $entry,
     '--format', 'hunk', '--runtime', 'freestanding', '--memory', 'none', '--exports', 'none',
     '--symbols', 'off', '--output', $output,
     '--compatibility-report', (Join-Path $ArtifactRoot 'CopperSFS.compatibility.json'))
-foreach ($assembly in @('CopperStart.Exec.dll', 'CopperSFS.Core.dll', 'CopperSharp.Sdk.Amiga.dll',
+foreach ($assembly in @('CopperSFS.Core.dll', 'CopperSharp.Sdk.Amiga.dll',
     'CopperSharp.Sdk.Amiga.Support.dll', 'CopperSharp.Compiler.dll')) {
     $file = Join-Path $inputRoot $assembly
     if (!(Test-Path -LiteralPath $file)) { throw "Missing standalone handler input $file" }

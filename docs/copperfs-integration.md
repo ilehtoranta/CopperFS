@@ -20,10 +20,19 @@ types. Splitting these into another assembly would be a separate ABI migration.
 The old CopperSFS.slnx remains a compatibility entry for SFS-only work;
 CopperFS.slnx builds and tests both maintained cores.
 
-The native handler build requires an explicit CopperStartRoot. Use a CopperStart
-checkout that pins the intended CopperFS commit, preferably its build wrappers.
-Standalone builds do not qualify full extension/reset-ROM boot. No published
-CopperSFS package identity or historical release URL is changed.
+Native handlers build from `src/CopperFS.Amiga/CopperFS.Amiga.csproj`, using only
+CopperFS and CopperSharp inputs. `build/Build-Handler.ps1` has no CopperStartRoot
+parameter and imports no CopperStart project or DLL. CopperStart's wrappers remain
+optional consumers of the same build recipe. Standalone builds do not qualify
+full extension/reset-ROM boot. No published CopperSFS package identity or
+historical release URL is changed.
+
+SFS dispatch, record locking, notification layouts and the required Exec/packet
+field constants are maintained here. Only the native-client-service export and
+OS-specific removable-media/bootstrap integration remain in CopperStart. The
+standalone profile excludes those integration paths and uses standard AmigaOS
+library calls. Existing type namespaces, entry names and conditional symbol names
+are retained for compatibility; they do not require CopperStart assemblies.
 
 ## Provenance
 
@@ -32,7 +41,9 @@ The repository starts from CopperSFS commit
 MIT license retained. CopperFFS and native handler sources and their tests were
 copied without behavior changes from CopperStart commit
 `cdd3935` (the tested OFS writer baseline). Their original history remains in
-CopperStart. New filesystem development belongs here.
+CopperStart. New filesystem development belongs here. The subsequent standalone
+extraction imports shared dispatch/support from CopperStart `b5158bf`; the
+OS-specific extension export remains in that repository.
 The [source parity manifest](migration-source-parity.json) records the 27 moved
 core, native and test files and their SHA-256 values after newline normalization.
 

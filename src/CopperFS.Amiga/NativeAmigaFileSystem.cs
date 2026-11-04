@@ -1,5 +1,7 @@
 using Amiga;
+#if !COPPERSTART_SFS_STANDALONE
 using CopperStart.Exec;
+#endif
 using System.Runtime.CompilerServices;
 
 namespace CopperStart.Dos;
@@ -1118,7 +1120,7 @@ public static class NativeAmigaFileSystem
         APTR storage, int storageSize, out DOS.Error error)
     {
         error = DOS.Error.None;
-        var required = DosFileSystemAttributeCore.RequiredSize(attribute);
+        var required = NativeFileSystemAttributeCore.RequiredSize(attribute);
         if (required == 0 || (Smart(state) && attribute == FileSystemQueryAttribute.MaxVolumeNameLength) ||
             (NativeSfs2Bridge.IsSfs2(state) && attribute == FileSystemQueryAttribute.IsCaseSensitive))
         { error = DOS.Error.BadNumber; return 0; }

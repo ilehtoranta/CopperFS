@@ -9,6 +9,9 @@ Native filesystem code remains allocation-free and uses caller-owned scratch
 and single-owner mount execution. CopperStart supplies OS registration and
 integration; CopperDisk/CopperScreen own host storage and sparse deallocation.
 Do not add a dependency from the portable cores to those application projects.
+Standalone native handlers build from CopperFS.Amiga using only CopperSharp.
+Do not reintroduce CopperStart project, assembly or source-path dependencies into
+that project or Build-Handler.ps1. OS integration is a separate source consumer.
 
 Run dotnet build CopperFS.slnx -c Release and dotnet test CopperFS.slnx -c Release.
 For native changes or source integration, rebuild affected handlers and run

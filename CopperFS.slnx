@@ -2,10 +2,12 @@
   <Folder Name="/src/">
     <Project Path="src/CopperSFS.Core/CopperSFS.Core.csproj" />
     <Project Path="src/CopperFFS.Core/CopperFFS.Core.csproj" />
+    <Project Path="src/CopperFS.Amiga/CopperFS.Amiga.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CopperSFS.Core.Tests/CopperSFS.Core.Tests.csproj" />
     <Project Path="tests/CopperFFS.Core.Tests/CopperFFS.Core.Tests.csproj" />
+    <Project Path="tests/CopperFS.Amiga.Tests/CopperFS.Amiga.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/CopperSFS.Trim/CopperSFS.Trim.csproj" />
