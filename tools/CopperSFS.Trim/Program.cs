@@ -28,7 +28,7 @@ public static class TrimCommand
                 result = Run(values);
                 DOS.FreeArgs(parsed);
             }
-            else DOS.PutStr("Usage: CopperSFSTrim VOLUME: [CHECK | DRYRUN]\n");
+            else DOS.PutStr("Usage: CopperTrim VOLUME: [CHECK | DRYRUN]\n");
             DOS.FreeDosObject((uint)DosObjectType.RdArgs, args);
         }
         Exec.FreeMem(memory, 64); Exec.CloseLibrary(library); DOS.DOSLibraryBase = APTR.Null;
@@ -46,7 +46,7 @@ public static class TrimCommand
         if (at == 0 || APTR.ReadUInt8(name, at) != (byte)':' || APTR.ReadUInt8(name, at + 1) != 0)
         { DOS.PutStr("Supply a volume or device name ending in ':', without a path.\n"); return DOS.RETURN_ERROR; }
         var proc = DOS.GetDeviceProc(CString.FromPointer(name.Raw), APTR.Null);
-        if (proc.IsNull) { DOS.PrintFault(DOS.IoErr(), "CopperSFSTrim"); return DOS.RETURN_FAIL; }
+        if (proc.IsNull) { DOS.PrintFault(DOS.IoErr(), "CopperTrim"); return DOS.RETURN_FAIL; }
         var record = APTR.FromPointer(values.Raw + 16);
         APTR.WriteUInt32(record, 0, AmigaSmartFileSystemTrimPacket.Size);
         APTR.WriteUInt32(record, 4, AmigaSmartFileSystemTrimPacket.Version);
@@ -59,7 +59,7 @@ public static class TrimCommand
         {
             if (error == DOS.Error.ActionNotKnown)
                 DOS.PutStr("Manual discard is unsupported by this handler or device.\n");
-            else DOS.PrintFault(error, "CopperSFSTrim");
+            else DOS.PrintFault(error, "CopperTrim");
             return DOS.RETURN_FAIL;
         }
         if (check) DOS.PutStr("Manual SCSI UNMAP is supported. Automatic trimming is disabled.\n");
@@ -68,7 +68,7 @@ public static class TrimCommand
             if (dry) DOS.PutStr("Checkpoint completed; proposed discard only (DRYRUN).\n");
             else DOS.PutStr("Manual discard completed.\n");
             DOS.VPrintf("%lu filesystem blocks in %lu ranges.\n", APTR.FromPointer(record.Raw + 12));
-            DOS.PutStr("These are submitted blocks, not host bytes reclaimed. Host allocation may retain partial units.\n");
+            DOS.PutStr("Counts describe discard requests, not host bytes reclaimed. Host allocation may retain partial units.\n");
         }
         return DOS.RETURN_OK;
     }
