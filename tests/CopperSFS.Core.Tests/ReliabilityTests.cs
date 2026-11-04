@@ -1,0 +1,327 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Amiga;
+using CopperSFS.Check;
+using Xunit.Abstractions;
+using static CopperSFS.Tests.ReliabilityFixture;
+
+namespace CopperSFS.Tests;
+
+public sealed class ReliabilityTests(ITestOutputHelper output)
+{
+    private sealed record Mutation(string Kind, uint Node = 3, string Name = "New", uint Position = 0,
+        uint Size = 0, byte[]? Data = null);
+    private sealed record Expected(string Path, uint Node, bool Directory, byte[] Data,
+        uint Protection = 15, uint Modified = 86461, string Comment = "", byte Flags = 0)
+    {
+        internal ImageEntry Entry => new(Path, Node, Directory, (uint)Data.Length, Protection, Modified,
+            0, 0, Flags, Comment, Directory ? null : Convert.ToHexString(SHA256.HashData(Data)));
+    }
+    private static AmigaSmartFileSystemWriteCore.Work Work() => new()
+    {
+        Meta = APTR.FromPointer(512), Data = APTR.FromPointer(1024), Bitmap = APTR.FromPointer(1536), Journal = APTR.FromPointer(2048)
+    };
+    private static List<Expected> InitialModel() =>
+    [
+        new("/", 1, true, [], Flags: 128),
+        new("/Docs", 2, true, [], Flags: 128),
+        new("/Hello", 3, false, Enumerable.Range(0, 1300).Select(i => (byte)(i * 17)).ToArray(), Comment: "greeting"),
+        new("/Docs/Nested", 4, false, Encoding.ASCII.GetBytes("hello"))
+    ];
+    private static string Manifest(IEnumerable<ImageEntry> entries) =>
+        JsonSerializer.Serialize(entries.OrderBy(e => e.Path, StringComparer.Ordinal));
+    private static string Manifest(List<Expected> model) => Manifest(model.Select(e => e.Entry));
+    private static void Validate(byte[] image, List<Expected> model) =>
+        Assert.Equal(Manifest(model), Manifest(Inspect(image).Entries));
+
+    private static bool Execute(ref ReliabilityDisk disk, Mutation mutation, out uint created, out DOS.Error error)
+    {
+        var work = Work(); created = 0;
+        var request = new AmigaSmartFileSystemWriteCore.Request
+        {
+            Node = mutation.Node, Directory = 1, Name = disk.Name(mutation.Name), Length = (uint)mutation.Name.Length,
+            Position = mutation.Position, Buffer = APTR.FromPointer(4000)
+        };
+        if (mutation.Data is not null) mutation.Data.CopyTo(disk.Ram, 4000);
+        bool success;
+        switch (mutation.Kind)
+        {
+            case "create": case "mkdir":
+                success = AmigaSmartFileSystemWriteCore.Create(ref disk, ref work, ref request, mutation.Kind == "mkdir");
+                created = request.Node; break;
+            case "write":
+                request.Length = (uint)mutation.Data!.Length;
+                success = AmigaSmartFileSystemWriteCore.Write(ref disk, ref work, ref request, out var actual);
+                if (success) Assert.Equal(request.Length, actual);
+                break;
+            case "resize": success = AmigaSmartFileSystemWriteCore.Resize(ref disk, ref work, mutation.Node, mutation.Size); break;
+            case "truncate": success = AmigaSmartFileSystemWriteCore.Truncate(ref disk, ref work, mutation.Node); break;
+            case "remove": success = AmigaSmartFileSystemWriteCore.Remove(ref disk, ref work, mutation.Node); break;
+            case "rename": success = AmigaSmartFileSystemWriteCore.Rename(ref disk, ref work, ref request); break;
+            case "comment":
+                request.Length = (uint)mutation.Data!.Length;
+                success = AmigaSmartFileSystemWriteCore.SetMetadata(ref disk, ref work, ref request, DosPacketAction.SetComment); break;
+            case "protect":
+                request.Position = mutation.Size;
+                success = AmigaSmartFileSystemWriteCore.SetMetadata(ref disk, ref work, ref request, DosPacketAction.SetProtection); break;
+            case "date":
+                disk.WriteUInt32(request.Buffer, 0, 2); disk.WriteUInt32(request.Buffer, 4, 3); disk.WriteUInt32(request.Buffer, 8, 100);
+                success = AmigaSmartFileSystemWriteCore.SetMetadata(ref disk, ref work, ref request, DosPacketAction.SetDate); break;
+            default: throw new ArgumentException(mutation.Kind);
+        }
+        error = work.Error; return success;
+    }
+    private static List<Expected> Update(List<Expected> model, Mutation mutation, uint created)
+    {
+        var updated = model.ToList();
+        if (mutation.Kind is "create" or "mkdir")
+        {
+            updated.Add(new("/" + mutation.Name, created, mutation.Kind == "mkdir", [], Modified: 0,
+                Flags: mutation.Kind == "mkdir" ? (byte)128 : (byte)0));
+            return updated;
+        }
+        var index = updated.FindIndex(e => e.Node == mutation.Node);
+        var current = updated[index];
+        switch (mutation.Kind)
+        {
+            case "write":
+                var data = current.Data.ToArray();
+                Array.Resize(ref data, Math.Max(data.Length, (int)mutation.Position + mutation.Data!.Length));
+                mutation.Data.CopyTo(data, (int)mutation.Position); updated[index] = current with { Data = data }; break;
+            case "resize": case "truncate":
+                var resized = current.Data.ToArray(); Array.Resize(ref resized, mutation.Kind == "truncate" ? 0 : (int)mutation.Size);
+                updated[index] = current with { Data = resized }; break;
+            case "remove": updated.RemoveAt(index); break;
+            case "rename":
+                for (var i = 0; i < updated.Count; i++)
+                    if (updated[i].Path == current.Path || updated[i].Path.StartsWith(current.Path + "/", StringComparison.Ordinal))
+                        updated[i] = updated[i] with { Path = "/" + mutation.Name + updated[i].Path[current.Path.Length..] };
+                break;
+            case "comment": updated[index] = current with { Comment = Encoding.Latin1.GetString(mutation.Data!) }; break;
+            case "protect": updated[index] = current with { Protection = mutation.Size ^ 15 }; break;
+            case "date": updated[index] = current with { Modified = 2 * 86400 + 3 * 60 + 2 }; break;
+        }
+        return updated;
+    }
+    private static void Commit(ref ReliabilityDisk disk, ref List<Expected> model, Mutation mutation)
+    {
+        Assert.True(Execute(ref disk, mutation, out var created, out var error), $"{mutation}: {error}");
+        model = Update(model, mutation, created);
+        Validate(disk.Snapshot(), model);
+    }
+    private static byte[] Pattern(int length, int seed = 7) => Enumerable.Range(0, length).Select(i => (byte)(i * 29 + seed)).ToArray();
+    // Selected basic mutations; growth/packed-container regressions remain tracked in docs/research-port.md.
+    public static IEnumerable<object[]> Scenarios => new[]
+    { "create", "overwrite", "append", "shrink", "truncate", "delete", "rename" }
+    .Select(name => new object[] { name });
+
+    private static (byte[] Image, List<Expected> Before, Mutation Mutation) Prepare(string scenario)
+    {
+        var image = Image(); var model = InitialModel(); Validate(image, model);
+        Mutation mutation = scenario switch
+        {
+            "create" => new("create"),
+            "overwrite" => new("write", Position: 399, Data: Pattern(733)),
+            "append" => new("write", Position: 1300, Data: Pattern(1001)),
+            "shrink" => new("resize", Size: 513),
+            "truncate" => new("truncate"),
+            "delete" => new("remove"),
+            "rename" => new("rename", Name: "Docs/Renamed"),
+            _ => throw new ArgumentException("Unselected research scenario", nameof(scenario))
+        };
+        return (image, model, mutation);
+    }
+
+    private static bool Recover(ref ReliabilityDisk disk)
+    {
+        var work = Work(); return AmigaSmartFileSystemWriteCore.Recover(ref disk, ref work);
+    }
+    internal static void CheckRecovered(byte[] image, string before, string after, string context)
+    {
+        try
+        {
+            var disk = new ReliabilityDisk(image);
+            Assert.True(Recover(ref disk), $"Recovery failed: {context}");
+            var report = Inspect(disk.Snapshot()); var manifest = Manifest(report.Entries);
+            Assert.True(manifest == before || manifest == after, $"Mixed or damaged volume: {context}\n{manifest}");
+            var stable = disk.Snapshot();
+            Assert.True(Recover(ref disk), context);
+            Assert.Equal(stable, disk.Snapshot());
+        }
+        catch
+        {
+            SaveFailure(image, context, before, after);
+            throw;
+        }
+    }
+    private static void SaveFailure(byte[] image, string context, string before, string after)
+    {
+        var destination = Environment.GetEnvironmentVariable("COPPERSFS_RELIABILITY_ARTIFACTS");
+        if (string.IsNullOrEmpty(destination)) return;
+        Directory.CreateDirectory(destination);
+        var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context)))[..16];
+        File.WriteAllBytes(Path.Combine(destination, id + ".img"), image);
+        File.WriteAllText(Path.Combine(destination, id + ".json"), JsonSerializer.Serialize(new { context, before, after }));
+    }
+
+    [Theory]
+    [MemberData(nameof(Scenarios))]
+    public void EveryMutationSurvivesAllWriteAndFlushCutsAndIoFailures(string scenario)
+    {
+        var (image, model, mutation) = Prepare(scenario);
+        var before = Manifest(model); var probe = new ReliabilityDisk(image);
+        var success = Execute(ref probe, mutation, out var created, out var error);
+        var after = before;
+        if (success)
+        {
+            var updated = Update(model, mutation, created); Validate(probe.Snapshot(), updated); after = Manifest(updated);
+        }
+        else Assert.Equal(DOS.Error.DiskFull, error);
+        var images = 0; byte[]? dirty = null;
+        for (var cut = 1; cut <= probe.Events; cut++)
+        {
+            var disk = new ReliabilityDisk(image) { CutAfterEvent = cut };
+            Assert.Throws<SimulatedPowerCut>(() => Execute(ref disk, mutation, out _, out _));
+            foreach (var saved in disk.CrashImages())
+            {
+                CheckRecovered(saved, before, after, $"{scenario}, cut {cut}, image {images++}");
+                if (U32(Block(saved, 4), 0) == 0x54524641) dirty = saved;
+            }
+        }
+        foreach (var persistent in new[] { false, true })
+        {
+            for (var fail = 1; fail <= probe.Events; fail++)
+            {
+                var disk = new ReliabilityDisk(image) { FailAtEvent = fail, PersistentFailure = persistent };
+                Assert.False(Execute(ref disk, mutation, out _, out _), $"Missed I/O failure: {scenario}, {fail}");
+                foreach (var saved in disk.CrashImages())
+                    CheckRecovered(saved, before, after, $"{scenario}, I/O failure {fail}, persistent {persistent}, image {images++}");
+            }
+            for (var fail = 1; fail <= probe.Reads; fail++)
+            {
+                var disk = new ReliabilityDisk(image) { FailAtRead = fail, PersistentFailure = persistent };
+                var completed = Execute(ref disk, mutation, out _, out _);
+                foreach (var saved in disk.CrashImages())
+                    CheckRecovered(saved, completed ? after : before, after,
+                        $"{scenario}, read failure {fail}, persistent {persistent}, image {images++}");
+            }
+        }
+        Assert.NotNull(dirty);
+        var recoveryImages = CheckRecoveryCuts(dirty, before, after, scenario);
+        output.WriteLine($"{scenario}: {probe.Writes} writes, {probe.Events} write/flush points, {probe.Reads} reads; {images} mutation crash images, {recoveryImages} recovery crash images.");
+    }
+    private static int CheckRecoveryCuts(byte[] dirty, string before, string after, string scenario)
+    {
+        var probe = new ReliabilityDisk(dirty); Assert.True(Recover(ref probe));
+        var count = 0;
+        for (var cut = 1; cut <= probe.Events; cut++)
+        {
+            var disk = new ReliabilityDisk(dirty) { CutAfterEvent = cut };
+            Assert.Throws<SimulatedPowerCut>(() => Recover(ref disk));
+            foreach (var saved in disk.CrashImages())
+                CheckRecovered(saved, before, after, $"{scenario}, recovery cut {cut}, image {count++}");
+        }
+        foreach (var persistent in new[] { false, true })
+        {
+            for (var fail = 1; fail <= probe.Events; fail++)
+            {
+                var disk = new ReliabilityDisk(dirty) { FailAtEvent = fail, PersistentFailure = persistent };
+                Assert.False(Recover(ref disk));
+                foreach (var saved in disk.CrashImages())
+                    CheckRecovered(saved, before, after, $"{scenario}, recovery I/O failure {fail}, image {count++}");
+            }
+            for (var fail = 1; fail <= probe.Reads; fail++)
+            {
+                var disk = new ReliabilityDisk(dirty) { FailAtRead = fail, PersistentFailure = persistent };
+                // A failed root read may fall back to the other root copy.
+                Recover(ref disk);
+                foreach (var saved in disk.CrashImages())
+                    CheckRecovered(saved, before, after, $"{scenario}, recovery read failure {fail}, image {count++}");
+            }
+        }
+        return count;
+    }
+
+    [Theory]
+    [InlineData("overwrite")]
+    [InlineData("append")]
+    [InlineData("rename")]
+    [InlineData("delete")]
+    public void TornWriteEitherRecoversWholeVolumeOrRefusesMount(string scenario)
+    {
+        var (image, model, mutation) = Prepare(scenario);
+        var probe = new ReliabilityDisk(image);
+        Assert.True(Execute(ref probe, mutation, out var created, out _));
+        var before = Manifest(model); var after = Manifest(Update(model, mutation, created));
+        var recoveredCount = 0; var refused = 0;
+        for (var write = 1; write <= probe.Writes; write++)
+            foreach (var prefix in new[] { 1, 4, 8, 12, 16, 256, 511 })
+            {
+                var disk = new ReliabilityDisk(image) { TearAtWrite = write, TearBytes = prefix };
+                Assert.Throws<SimulatedPowerCut>(() => Execute(ref disk, mutation, out _, out _));
+                var restarted = new ReliabilityDisk(disk.Snapshot());
+                if (Recover(ref restarted))
+                {
+                    CheckRecovered(restarted.Snapshot(), before, after, $"{scenario}, torn write {write}, prefix {prefix}");
+                    recoveredCount++;
+                }
+                else
+                {
+                    Assert.False(AmigaSmartFileSystemCore.Mount(ref restarted, APTR.FromPointer(512)));
+                    Assert.Throws<InvalidDataException>(() => Inspect(restarted.Snapshot()));
+                    refused++;
+                }
+            }
+        output.WriteLine($"{scenario}: {recoveredCount} torn-write cases recovered, {refused} refused mount.");
+    }
+
+    [Theory]
+    [InlineData(104729)]
+    [InlineData(130363)]
+    [InlineData(155921)]
+    public void SeededRandomWorkloadMatchesReferenceModelAcrossRestarts(int seed)
+    {
+        var random = new Random(seed); var disk = new ReliabilityDisk(Image()); var model = InitialModel();
+        for (var step = 0; step < 300; step++)
+        {
+            var files = model.Where(e => !e.Directory).ToArray();
+            var target = files[random.Next(files.Length)];
+            var name = $"R{step:D4}";
+            var mutation = random.Next(8) switch
+            {
+                0 when files.Length < 15 => new Mutation("create", Name: name),
+                1 => new("write", Node: target.Node, Position: (uint)random.Next(target.Data.Length + 1), Data: Pattern(random.Next(1, 1000), step)),
+                2 => new("resize", Node: target.Node, Size: (uint)random.Next(2500)),
+                3 when files.Length > 2 => new("remove", Node: target.Node),
+                4 => new("rename", Node: target.Node, Name: (random.Next(2) == 0 ? "Docs/" : "") + name),
+                5 => new("comment", Node: target.Node, Data: Encoding.Latin1.GetBytes(name)),
+                6 => new("truncate", Node: target.Node),
+                _ => new("date", Node: target.Node)
+            };
+            var committed = disk.Snapshot(); var probe = new ReliabilityDisk(committed);
+            var succeeded = Execute(ref probe, mutation, out var created, out var error);
+            var nextModel = succeeded ? Update(model, mutation, created) : model;
+            if (!succeeded) Assert.Equal(DOS.Error.DiskFull, error);
+            if (step % 3 == 0 && probe.Events > 0)
+            {
+                var cut = random.Next(1, probe.Events + 1);
+                var interrupted = new ReliabilityDisk(committed) { CutAfterEvent = cut };
+                Assert.Throws<SimulatedPowerCut>(() => Execute(ref interrupted, mutation, out _, out _));
+                var choices = interrupted.CrashImages().ToArray();
+                var saved = choices[random.Next(choices.Length)];
+                var context = $"Seed {seed}, step {step}, cut {cut}, {mutation}";
+                CheckRecovered(saved, Manifest(model), Manifest(nextModel), context);
+                disk = new ReliabilityDisk(saved);
+                Assert.True(Recover(ref disk), context);
+                var actual = Manifest(Inspect(disk.Snapshot()).Entries);
+                Assert.True(actual == Manifest(model) || actual == Manifest(nextModel),
+                    $"Seed {seed}, step {step}, cut {cut}, {mutation}\nBefore: {Manifest(model)}\nAfter: {Manifest(nextModel)}\nActual: {actual}");
+                if (actual == Manifest(nextModel)) model = nextModel;
+            }
+            else { disk = new ReliabilityDisk(probe.Snapshot()); model = nextModel; }
+            Validate(disk.Snapshot(), model);
+        }
+        output.WriteLine($"Seed {seed}: 300 modeled operations, up to 100 power cuts, full manifest checked after every step.");
+    }
+}

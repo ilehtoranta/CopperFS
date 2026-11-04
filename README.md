@@ -50,6 +50,11 @@ the existing CopperFFS, CopperSFS and CopperTrim names.
 See [integration and migration](docs/copperfs-integration.md) for boundaries,
 validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usage.
 
+## Research tools and additional tests
+
+See [the selective research port](docs/research-port.md) for the image checker,
+reliability tests, wide-volume tests, and unresolved research findings.
+
 ## Compatibility and releases
 
 The repository move does not change filesystem formats, packet ABI, native entry

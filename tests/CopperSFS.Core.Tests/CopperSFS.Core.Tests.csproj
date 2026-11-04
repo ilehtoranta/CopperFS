@@ -12,5 +12,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\CopperSFS.Core\CopperSFS.Core.csproj" />
+    <ProjectReference Include="../../tools/CopperSFS.Bench/CopperSFS.Bench.csproj" />
+    <ProjectReference Include="../../tools/CopperSFS.Check/CopperSFS.Check.csproj" />
   </ItemGroup>
 </Project>
