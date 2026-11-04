@@ -9,3 +9,9 @@ test, or native-ROM/media replay.
 Run `dotnet test CopperSFS.slnx -c Release` before proposing a change. Do not
 commit ROMs, disk images, credentials or generated build artifacts. Document
 the origin and license of source or test fixtures taken from other projects.
+
+For changes to writes, allocation or recovery, also run
+`powershell -NoProfile -File scripts/Test-Reliability.ps1` and retain its report.
+Add a mutation scenario or reproducible random seed when it exercises a new
+failure mode. See [reliability testing](docs/reliability.md) for the checker
+boundary and remaining native release gates.

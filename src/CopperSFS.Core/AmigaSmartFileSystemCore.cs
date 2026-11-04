@@ -5,6 +5,8 @@ namespace CopperSFS;
 /// <summary>
 /// Classic SFS (SFS\0) traversal. Keys are SFS object-node numbers.
 /// The caller supplies two block-sized scratch buffers; no state is allocated.
+/// Public file/metadata queries require a clean transaction marker. After a failed
+/// mutation, call AmigaSmartFileSystemWriteCore.Recover before retrying queries.
 /// Layout follows the original SmartFilesystem blockstructure/objects/nodes sources.
 /// </summary>
 public static class AmigaSmartFileSystemCore
@@ -46,11 +48,10 @@ public static class AmigaSmartFileSystemCore
     {
         if (!Root(ref p, metadata)) return false;
         var rootContainer = p.ReadUInt32(metadata, 104);
-        // An unfinished transaction requires the original handler's replay logic.
+        // Readers must not expose intermediate state until Recover finishes.
         var transaction = rootContainer + 2;
-        if (transaction >= p.Geometry.BlockCount || !p.ReadBlock(transaction, metadata) ||
-            p.ReadUInt32(metadata, 8) != transaction || !Checksum(ref p, metadata) ||
-            p.ReadUInt32(metadata) == 0x54524641) return false; // TRFA
+        if (rootContainer >= p.Geometry.BlockCount - 2 ||
+            !Block(ref p, transaction, 0x54524F4B, metadata)) return false; // TROK
         if (!Block(ref p, rootContainer, ObjectId, metadata)) return false;
         return p.ReadUInt32(metadata, 28) == RootNode && (p.ReadUInt8(metadata, 48) & 128) != 0 &&
             p.ReadUInt8(metadata, 49) != 0;
@@ -117,7 +118,7 @@ public static class AmigaSmartFileSystemCore
         out uint parent) where T : struct, IAmigaFileSystemPlatform
     {
         size = 0; directory = false; parent = 0;
-        if (!Object(ref p, node, metadata, out var at)) return false;
+        if (!Mount(ref p, metadata) || !Object(ref p, node, metadata, out var at)) return false;
         var bits = p.ReadUInt8(metadata, at + 24);
         directory = (bits & 128) != 0;
         size = directory ? 0 : p.ReadUInt32(metadata, at + 16);
@@ -130,7 +131,7 @@ public static class AmigaSmartFileSystemCore
     {
         error = DOS.Error.None;
         if (length > 255) { error = DOS.Error.InvalidComponentName; return 0; }
-        if (!Root(ref p, metadata)) { error = DOS.Error.DiskNotValidated; return 0; }
+        if (!Mount(ref p, metadata) || !Root(ref p, metadata)) { error = DOS.Error.DiskNotValidated; return 0; }
         var caseSensitive = (p.ReadUInt8(metadata, 20) & 128) != 0;
         var start = 0u;
         for (var i = 0u; i < length; i++) if (p.ReadUInt8(name, (int)i) == ':') { directory = RootNode; start = i + 1; }
@@ -224,7 +225,8 @@ public static class AmigaSmartFileSystemCore
         APTR metadata, APTR data, out DOS.Error error) where T : struct, IAmigaFileSystemPlatform
     {
         error = DOS.Error.None;
-        if (length > int.MaxValue || !p.IsMapped(destination, length) || !Object(ref p, node, metadata, out var at))
+        if (length > int.MaxValue || !p.IsMapped(destination, length) ||
+            !Mount(ref p, metadata) || !Object(ref p, node, metadata, out var at))
         { error = DOS.Error.DiskNotValidated; return -1; }
         if ((p.ReadUInt8(metadata, at + 24) & (128 | 64)) != 0) { error = DOS.Error.ObjectWrongType; return -1; }
         var size = p.ReadUInt32(metadata, at + 16);
@@ -261,7 +263,8 @@ public static class AmigaSmartFileSystemCore
 
     public static bool Examine<T>(ref T p, uint node, APTR fib, APTR metadata) where T : struct, IAmigaFileSystemPlatform
     {
-        if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes) || !Object(ref p, node, metadata, out var at)) return false;
+        if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes) ||
+            !Mount(ref p, metadata) || !Object(ref p, node, metadata, out var at)) return false;
         p.Clear(fib, FileInfoBlock.SizeInBytes);
         var bits = p.ReadUInt8(metadata, at + 24);
         var type = node == RootNode ? 1u : (bits & 64) != 0 ? 3u : (bits & 128) != 0 ? 2u : 0xFFFFFFFD;
@@ -291,7 +294,9 @@ public static class AmigaSmartFileSystemCore
     public static DOS.Error ExamineNext<T>(ref T p, uint directory, APTR fib, APTR metadata, APTR data)
         where T : struct, IAmigaFileSystemPlatform
     {
-        if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes) || !Object(ref p, directory, metadata, out var at)) return DOS.Error.InvalidLock;
+        if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes)) return DOS.Error.InvalidLock;
+        if (!Mount(ref p, metadata)) return DOS.Error.DiskNotValidated;
+        if (!Object(ref p, directory, metadata, out var at)) return DOS.Error.InvalidLock;
         if ((p.ReadUInt8(metadata, at + 24) & 128) == 0) return DOS.Error.ObjectWrongType;
         var wanted = p.ReadUInt32(fib);
         var next = p.ReadUInt32(metadata, at + 16);
@@ -325,7 +330,7 @@ public static class AmigaSmartFileSystemCore
     public static bool CountUsed<T>(ref T p, APTR buffer, out uint used) where T : struct, IAmigaFileSystemPlatform
     {
         used = 0;
-        if (!Root(ref p, buffer)) return false;
+        if (!Mount(ref p, buffer) || !Root(ref p, buffer)) return false;
         var rootContainer = p.ReadUInt32(buffer, 104);
         if (!Block(ref p, rootContainer, ObjectId, buffer)) return false;
         var free = p.ReadUInt32(buffer, (int)p.Geometry.BlockBytes - 28);

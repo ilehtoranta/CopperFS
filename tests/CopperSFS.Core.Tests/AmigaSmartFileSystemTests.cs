@@ -173,7 +173,7 @@ public sealed class AmigaSmartFileSystemTests
         }
         Sum(bitmap);
         Header(image, 10, Admin);
-        var admin = Block(image, 10); U32(admin, 24, 64); Sum(admin);
+        var admin = Block(image, 10); admin[20] = 32; U32(admin, 24, 64); Sum(admin);
 
         Header(image, 4, TransactionOk); Sum(Block(image, 4));
 
@@ -183,9 +183,9 @@ public sealed class AmigaSmartFileSystemTests
 
         Header(image, 5, Tree);
         var tree = Block(image, 5); U16(tree, 12, 3); tree[14] = 1; tree[15] = 14;
-        U32(tree, 16, 20); U32(tree, 20, 23); U16(tree, 28, 2);
+        U32(tree, 16, 20); U32(tree, 20, 23); U32(tree, 24, 0x80000003); U16(tree, 28, 2);
         U32(tree, 30, 23); U32(tree, 38, 20); U16(tree, 42, 1);
-        U32(tree, 44, 24); U16(tree, 56, 1); Sum(tree);
+        U32(tree, 44, 24); U32(tree, 52, 0x80000004); U16(tree, 56, 1); Sum(tree);
 
         Header(image, 7, Objects);
         var contents = Block(image, 7); U32(contents, 12, 1);

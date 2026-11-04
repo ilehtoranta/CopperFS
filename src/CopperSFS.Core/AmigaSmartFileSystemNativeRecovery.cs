@@ -123,8 +123,15 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (!NativePass(ref p, ref w, first, false)) return false;
-        if (!NativePass(ref p, ref w, first, true) || !p.Flush())
+        if (!NativePass(ref p, ref w, first, true))
             return Fail(ref w, DOS.Error.DiskNotValidated);
+        return CompleteNative(ref p, ref w, marker);
+    }
+
+    private static bool CompleteNative<T>(ref T p, ref Work w, uint marker)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        if (!p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
         p.Clear(w.Meta, p.Geometry.BlockBytes);
         p.WriteUInt32(w.Meta, 0, TransactionOk); p.WriteUInt32(w.Meta, 8, marker);
         Seal(ref p, w.Meta);

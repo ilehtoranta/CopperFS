@@ -15,3 +15,17 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     bool WriteBlock(uint block, APTR source);
     bool Flush();
 }
+
+/// <summary>
+/// Optional contiguous block transfers. Completion has the same visibility and
+/// flush semantics as ReadBlock/WriteBlock; a failed write may have written any
+/// prefix/subset of the range. Ranges are not assumed atomic. Adapters enforce
+/// DMA/address constraints and may implement these methods using scalar I/O.
+/// Successful reads fill the destination before returning; write sources may
+/// be reused immediately on return, even when persistence awaits Flush.
+/// </summary>
+public interface IAmigaBlockRangeFileSystemPlatform : IAmigaWritableFileSystemPlatform
+{
+    bool ReadBlocks(uint first, uint count, APTR destination);
+    bool WriteBlocks(uint first, uint count, APTR source);
+}
