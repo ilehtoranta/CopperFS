@@ -7,13 +7,16 @@ matching newer sources. No package release is implied by these source changes.
 
 ## Command
 
-Install the compiled 68000 HUNK `CopperSFSTrim` in `C:` and the matching handler
+Install the compiled 68000 HUNK `CopperTrim` in `C:` and the matching handler
 in `L:`. The command requires dos.library V37 or newer.
+`CopperSFSTrim` remains a compatibility alias for the same executable and packet.
+CopperTrim also serves CopperStart's DOS1/FFS handler; that scanner and its
+invalid-volume policy are maintained in CopperStart, not this SFS core.
 
 ```text
-CopperSFSTrim SFS0: CHECK
-CopperSFSTrim SFS0: DRYRUN
-CopperSFSTrim SFS0:
+CopperTrim SFS0: CHECK
+CopperTrim SFS0: DRYRUN
+CopperTrim SFS0:
 ```
 
 `CHECK` itself queries support without checkpointing or discarding. Normal
@@ -44,7 +47,9 @@ With a compatible CopperSharp68k compiler, select entry
 `CopperSFS.Tools.TrimCommand::Main`, platform `amiga`, CPU `68000`, HUNK output,
 freestanding runtime, memory `none`, exceptions `yolo`, and no exports or symbols.
 Supply the built core, Amiga SDK, SDK support and compiler assemblies as managed
-inputs. Name the resulting HUNK `CopperSFSTrim`. A successful .NET build alone
+inputs. Name the resulting HUNK `CopperTrim`; copy it as `CopperSFSTrim` for
+existing scripts. CopperStart's `build/Build-Trim.ps1` builds both names.
+A successful .NET build alone
 does not produce a native Amiga executable. Qualify a newly built handler and
 command together before use.
 
