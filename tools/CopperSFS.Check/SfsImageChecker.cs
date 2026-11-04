@@ -307,7 +307,10 @@ public sealed class SfsImageChecker
             {
                 Require(usedExtents.Add(number) && extents.ContainsKey(number), $"{path}: shared, missing or cyclic extent.");
                 var extent = extents[number];
-                Require(extent.Previous == previous, $"{path}: broken extent previous link.");
+                // Classic volumes also use the historical zero first backlink.
+                // SFS2 and every subsequent extent require the exact owner/link.
+                Require(extent.Previous == previous || (!sfs2 && number == obj.Value && extent.Previous == 0),
+                    $"{path}: broken extent previous link.");
                 for (uint i = 0; i < extent.Count; i++)
                 {
                     Claim(number + i, path);

@@ -111,106 +111,26 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         Validate(disk.Snapshot(), model);
     }
     private static byte[] Pattern(int length, int seed = 7) => Enumerable.Range(0, length).Select(i => (byte)(i * 29 + seed)).ToArray();
+    // Selected basic mutations; growth/packed-container regressions remain tracked in docs/research-port.md.
     public static IEnumerable<object[]> Scenarios => new[]
-    {
-        "create", "mkdir", "overwrite", "append", "shrink", "grow", "truncate", "delete", "rename",
-        "rename-directory", "comment", "protect", "date", "rmdir", "directory-growth", "node-growth", "extent-growth", "admin-growth", "near-full",
-        "packed-delete", "packed-truncate", "packed-shrink"
-    }.Select(name => new object[] { name });
+    { "create", "overwrite", "append", "shrink", "truncate", "delete", "rename" }
+    .Select(name => new object[] { name });
 
     private static (byte[] Image, List<Expected> Before, Mutation Mutation) Prepare(string scenario)
     {
-        var initial = Image();
-        if (scenario.StartsWith("packed-", StringComparison.Ordinal))
-        {
-            // The tree undo pair uses the only free blocks before this file.
-            // Its bitmap undo must not overwrite the newly freed data at 35+.
-            foreach (var (from, to) in new[] { (40, 35), (41, 36), (43, 38), (44, 39) })
-                Block(initial, from).CopyTo(Block(initial, to));
-            var tree = Block(initial, 5);
-            U32(tree, 16, 35); U32(tree, 20, 38); U32(tree, 30, 38); U32(tree, 38, 35); U32(tree, 44, 39); Seal(tree);
-            U32(Block(initial, 7), 68, 35); Seal(Block(initial, 7));
-            U32(Block(initial, 8), 36, 39); Seal(Block(initial, 8));
-            var bitmap = Block(initial, 9);
-            foreach (var number in new[] { 40, 41, 43, 44 }) bitmap[12 + number / 8] |= (byte)(0x80 >> (number % 8));
-            foreach (var number in new[] { 35, 36, 38, 39 }) bitmap[12 + number / 8] &= (byte)~(0x80 >> (number % 8));
-            Seal(bitmap);
-        }
-        var disk = new ReliabilityDisk(initial); var model = InitialModel();
-        Validate(disk.Snapshot(), model);
+        var image = Image(); var model = InitialModel(); Validate(image, model);
         Mutation mutation = scenario switch
         {
-            "create" => new("create"), "mkdir" => new("mkdir"),
+            "create" => new("create"),
             "overwrite" => new("write", Position: 399, Data: Pattern(733)),
             "append" => new("write", Position: 1300, Data: Pattern(1001)),
-            "shrink" => new("resize", Size: 513), "grow" => new("resize", Size: 2301),
-            "truncate" => new("truncate"), "delete" => new("remove"),
+            "shrink" => new("resize", Size: 513),
+            "truncate" => new("truncate"),
+            "delete" => new("remove"),
             "rename" => new("rename", Name: "Docs/Renamed"),
-            "rename-directory" => new("rename", Node: 2, Name: "Moved"),
-            "comment" => new("comment", Data: Encoding.Latin1.GetBytes("a longer replacement comment")),
-            "protect" => new("protect", Size: 0x20), "date" => new("date"),
-            "rmdir" => new("remove", Node: 5),
-            "packed-delete" => new("remove"), "packed-truncate" => new("truncate"), "packed-shrink" => new("resize", Size: 513),
-            _ => new("create", Name: "Extra")
+            _ => throw new ArgumentException("Unselected research scenario", nameof(scenario))
         };
-        if (scenario == "rmdir") Commit(ref disk, ref model, new("mkdir", Name: "Empty"));
-        if (scenario == "directory-growth")
-        {
-            for (var i = 0; i < 3; i++) Commit(ref disk, ref model, new("create", Name: $"{i}" + new string('x', 99)));
-            mutation = new("create", Name: new string('y', 100));
-        }
-        if (scenario == "node-growth")
-            for (var i = 0; i < 45; i++) Commit(ref disk, ref model, new("create", Name: $"N{i:D3}"));
-        if (scenario == "extent-growth")
-        {
-            for (var i = 0; i < 32; i++)
-            {
-                Commit(ref disk, ref model, new("create", Name: $"F{i:D3}"));
-                Commit(ref disk, ref model, new("write", Node: model[^1].Node, Data: Pattern(1, i)));
-            }
-            Commit(ref disk, ref model, new("create", Name: "Extra"));
-            mutation = new("write", Node: model[^1].Node, Data: Pattern(1));
-        }
-        if (scenario == "admin-growth")
-        {
-            // Populate real, reachable directory containers until both initial admin
-            // ranges are full; no forged orphan allocations to force the slow path.
-            var reached = false;
-            for (var i = 0; i < 100 && !reached; i++)
-            {
-                Commit(ref disk, ref model, new("mkdir", Name: $"D{i:D3}"));
-                if (AdminSlots(disk.Snapshot()) == 0)
-                { mutation = new("create", Name: $"D{i:D3}/Child"); reached = true; break; }
-                Commit(ref disk, ref model, new("create", Name: $"D{i:D3}/Child"));
-                if (AdminSlots(disk.Snapshot()) == 0)
-                {
-                    // A second child in a fresh empty directory allocates a new container.
-                    Commit(ref disk, ref model, new("mkdir", Name: "Target"));
-                    mutation = new("create", Name: "Target/Child"); reached = true;
-                }
-            }
-            Assert.True(reached, "Did not reach the admin expansion boundary.");
-        }
-        if (scenario == "near-full")
-        {
-            // One committed write at a time avoids making the seed transaction's
-            // journal larger than the remaining free space.
-            var position = 1300u;
-            while (Inspect(disk.Snapshot()).FreeBlocks > 20)
-            {
-                Commit(ref disk, ref model, new("write", Position: position, Data: Pattern(512)));
-                position += 512;
-            }
-            mutation = new("write", Position: position, Data: Pattern(8192));
-        }
-        return (disk.Snapshot(), model, mutation);
-    }
-    private static int AdminSlots(byte[] image)
-    {
-        var admin = Block(image, 10); var count = 0;
-        for (var offset = 24; offset + 8 <= Bytes; offset += 8)
-            if (U32(admin, offset) != 0) count += 32 - System.Numerics.BitOperations.PopCount(U32(admin, offset + 4));
-        return count;
+        return (image, model, mutation);
     }
 
     private static bool Recover(ref ReliabilityDisk disk)

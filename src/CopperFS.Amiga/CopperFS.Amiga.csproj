@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <CopperStartSfsTrstWrites Condition="'$(CopperStartSfsTrstWrites)' == ''">true</CopperStartSfsTrstWrites>
+    <CopperStartSfsTrstBuffered Condition="'$(CopperStartSfsTrstBuffered)' == '' and '$(CopperStartSfsTrstWrites)' == 'true' and '$(CopperStartSfsStrictWrites)' != 'true' and '$(CopperStartNativeSfs2)' != 'true'">true</CopperStartSfsTrstBuffered>
+    <DefineConstants>$(DefineConstants);COPPERSTART_SFS_STANDALONE;COPPERSTART_NATIVE_SFS_WRITES</DefineConstants>
+    <DefineConstants Condition="'$(CopperStartSfsStrictWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS_STRICT_WRITES</DefineConstants>
+    <DefineConstants Condition="'$(CopperStartSfsTrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS_TRST_WRITES</DefineConstants>
+    <DefineConstants Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">$(DefineConstants);COPPERSTART_SFS_TRST_BUFFERED</DefineConstants>
+    <DefineConstants Condition="'$(CopperStartSfs2TrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_WRITES</DefineConstants>
+    <DefineConstants Condition="'$(CopperStartNativeSfs2)' == 'true'">$(DefineConstants);COPPERSTART_NATIVE_SFS2</DefineConstants>
+  </PropertyGroup>
+  <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
+          Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">
+    <Error Condition="'$(CopperStartSfsTrstWrites)' != 'true' or '$(CopperStartSfsStrictWrites)' == 'true' or '$(CopperStartNativeSfs2)' == 'true'"
+           Text="Buffered TRST requires a classic TRST handler without strict writes." />
+  </Target>
+  <ItemGroup>
+    <ProjectReference Include="../CopperSFS.Core/CopperSFS.Core.csproj" />
+    <Using Include="CopperSFS" />
+  </ItemGroup>
+  <Import Project="../../build/CopperFFS.Sources.props" />
+</Project>

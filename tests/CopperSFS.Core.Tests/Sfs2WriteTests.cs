@@ -72,7 +72,7 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
             Write(ref disk, ref w, ref r, out actual);
         Assert.True(ok, w.Error.ToString()); Assert.Equal((uint)bytes.Length, actual);
     }
-    private static (byte[] Image, uint Node) Seed(int bytes = 512)
+    internal static (byte[] Image, uint Node) Seed(int bytes = 512)
     {
         var disk = new StudyDisk(Empty(bytes), bytes);
         var node = CreateFile(ref disk, "Data"); PutFile(ref disk, node, 0, StudyFixture.Pattern(1027, 723), true);
@@ -80,7 +80,7 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
         CreateFile(ref disk, "Docs", directory: true);
         Inspect(disk.Snapshot(), bytes); return (disk.Snapshot(), node);
     }
-    private static bool Mutate(ref StudyDisk disk, uint node, string scenario, bool redo = false)
+    internal static bool Mutate(ref StudyDisk disk, uint node, string scenario, bool redo = false)
     {
         var w = WorkFor(disk); var data = StudyFixture.Pattern(7, 900);
         data.CopyTo(disk.Ram, (int)disk.Payload.Raw); Encoding.ASCII.GetBytes("Changed").CopyTo(disk.Ram, (int)disk.NameBuffer.Raw);

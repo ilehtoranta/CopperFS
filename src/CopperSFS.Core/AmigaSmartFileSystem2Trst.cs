@@ -12,7 +12,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
 
     /// <summary>
     /// Opt-in native SFS redo transaction. Stages ALL changed blocks (including file
-    /// data) in caller-owned memory. Each distinct block uses BlockBytes + 4 bytes.
+    /// data) in caller-owned memory. A 16-byte header precedes slots of BlockBytes + 4 bytes.
     /// Buffer exhaustion fails before publication without changing live blocks.
     /// Request fields match the ordinary APIs; Resize takes its size in Position.
     /// After a failed commit, Recover is required; a published transaction rolls
@@ -30,7 +30,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         // worst case (one literal-run code per 64 longs) before doing any I/O.
         if (bytes < 512 || bytes > 32768 || operation < TrstOperation.Write || operation > TrstOperation.SetDate)
             return Fail(ref w, DOS.Error.BadNumber);
-        if (stagingBuffer.IsNull || stagingBytes < bytes + 4 || !p.IsMapped(stagingBuffer, stagingBytes) ||
+        if (stagingBuffer.IsNull || stagingBytes < bytes + 20 || !p.IsMapped(stagingBuffer, stagingBytes) ||
             w.Meta.IsNull || !p.IsMapped(w.Meta, bytes) || w.Data.IsNull || !p.IsMapped(w.Data, bytes) ||
             w.Bitmap.IsNull || !p.IsMapped(w.Bitmap, bytes) || w.Journal.IsNull || !p.IsMapped(w.Journal, bytes) ||
             Overlap(stagingBuffer, stagingBytes, r.Buffer, r.Length) ||
@@ -45,24 +45,32 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
         // Legacy CSUN and TRST recovery must reach the real device, never the overlay.
         if (!Recover(ref p, ref w)) return false;
-        var staged = new RedoPlatform<T> { Inner = p, Buffer = stagingBuffer, Capacity = stagingBytes / (bytes + 4) };
+        if (p.RedoOverlay.IsNotNull) return Fail(ref w, DOS.Error.NoFreeStore);
+        var staged = new RedoPlatform<T> { Inner = p, Buffer = APTR.FromPointer(stagingBuffer.Raw + 16), Capacity = (stagingBytes - 16) / (bytes + 4) };
+        p.WriteUInt32(stagingBuffer, 0, 0); p.WriteUInt32(stagingBuffer, 4, staged.Capacity);
+        p.WriteUInt32(stagingBuffer, 8, bytes); p.WriteUInt32(stagingBuffer, 12, 0);
+        p.RedoOverlay = stagingBuffer;
+        if (p.RedoOverlay != stagingBuffer) return Fail(ref w, DOS.Error.ActionNotKnown);
         w.RedoStaging = true;
         uint written = 0;
         var success = operation switch
         {
-            TrstOperation.Write => Write(ref staged, ref w, ref r, out written),
-            TrstOperation.CreateFile => Create(ref staged, ref w, ref r, false),
-            TrstOperation.CreateDirectory => Create(ref staged, ref w, ref r, true),
-            TrstOperation.Remove => Remove(ref staged, ref w, r.Node),
-            TrstOperation.Rename => Rename(ref staged, ref w, ref r),
-            TrstOperation.Resize => Resize(ref staged, ref w, r.Node, r.Position),
-            TrstOperation.Truncate => Truncate(ref staged, ref w, r.Node),
-            TrstOperation.SetProtection => SetMetadata(ref staged, ref w, ref r, DosPacketAction.SetProtection),
-            TrstOperation.SetComment => SetMetadata(ref staged, ref w, ref r, DosPacketAction.SetComment),
-            TrstOperation.SetDate => SetMetadata(ref staged, ref w, ref r, DosPacketAction.SetDate),
+            TrstOperation.Write => Write(ref p, ref w, ref r, out written),
+            TrstOperation.CreateFile => Create(ref p, ref w, ref r, false),
+            TrstOperation.CreateDirectory => Create(ref p, ref w, ref r, true),
+            TrstOperation.Remove => Remove(ref p, ref w, r.Node),
+            TrstOperation.Rename => Rename(ref p, ref w, ref r),
+            TrstOperation.Resize => Resize(ref p, ref w, r.Node, r.Position),
+            TrstOperation.Truncate => Truncate(ref p, ref w, r.Node),
+            TrstOperation.SetProtection => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetProtection),
+            TrstOperation.SetComment => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetComment),
+            TrstOperation.SetDate => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate),
             _ => false
         };
-        p = staged.Inner;
+        p.RedoOverlay = APTR.Null;
+        staged.Inner = p;
+        staged.Count = p.ReadUInt32(stagingBuffer, 0);
+        staged.Full = p.ReadUInt32(stagingBuffer, 12) != 0;
         w.RedoStaging = false;
         if (staged.Full) return Fail(ref w, DOS.Error.NoFreeStore);
         if (!success || !CommitTrst(ref p, ref w, ref staged)) return false;
@@ -70,17 +78,15 @@ public static partial class AmigaSmartFileSystem2WriteCore
         return true;
     }
 
-    // A bounded, coalescing block overlay. Reads observe prior staged writes;
-    // neither writes nor flushes reach the underlying device while staging.
-    private struct RedoPlatform<T> : IAmigaWritableFileSystemPlatform
-        where T : struct, IAmigaWritableFileSystemPlatform
+    // Native platforms own the overlay; this descriptor never becomes a
+    // generic platform argument (the native compiler uses four-byte platforms).
+    private struct RedoPlatform<T> where T : struct, IAmigaWritableFileSystemPlatform
     {
         internal T Inner;
         internal APTR Buffer;
         internal uint Capacity, Count;
         internal bool Full;
-        public AmigaVolumeGeometry Geometry => Inner.Geometry;
-        internal APTR Slot(uint index) => APTR.FromPointer(Buffer.Raw + index * (Geometry.BlockBytes + 4));
+        internal APTR Slot(uint index) => APTR.FromPointer(Buffer.Raw + index * (Inner.BlockBytes + 4));
         internal APTR Image(uint index) => APTR.FromPointer(Slot(index).Raw + 4);
         internal bool Find(uint block, out APTR image)
         {
@@ -88,31 +94,6 @@ public static partial class AmigaSmartFileSystem2WriteCore
                 if (Inner.ReadUInt32(Slot(i)) == block) { image = Image(i); return true; }
             image = APTR.Null; return false;
         }
-        public bool ReadBlock(uint block, APTR destination)
-        {
-            if (!Find(block, out var image)) return Inner.ReadBlock(block, destination);
-            Inner.Copy(image, destination, Geometry.BlockBytes); return true;
-        }
-        public bool WriteBlock(uint block, APTR source)
-        {
-            if (!Find(block, out var image))
-            {
-                if (Count == Capacity) { Full = true; return false; }
-                Inner.WriteUInt32(Slot(Count), 0, block); image = Image(Count++);
-            }
-            Inner.Copy(source, image, Geometry.BlockBytes); return true;
-        }
-        public bool Flush() => true;
-        public bool WriteProtected() => Inner.WriteProtected();
-        public byte ReadUInt8(APTR a, int offset = 0) => Inner.ReadUInt8(a, offset);
-        public ushort ReadUInt16(APTR a, int offset = 0) => Inner.ReadUInt16(a, offset);
-        public uint ReadUInt32(APTR a, int offset = 0) => Inner.ReadUInt32(a, offset);
-        public void WriteUInt8(APTR a, int offset, byte value) => Inner.WriteUInt8(a, offset, value);
-        public void WriteUInt16(APTR a, int offset, ushort value) => Inner.WriteUInt16(a, offset, value);
-        public void WriteUInt32(APTR a, int offset, uint value) => Inner.WriteUInt32(a, offset, value);
-        public void Clear(APTR a, uint length) => Inner.Clear(a, length);
-        public void Copy(APTR a, APTR b, uint length) => Inner.Copy(a, b, length);
-        public bool IsMapped(APTR a, uint length) => Inner.IsMapped(a, length);
     }
 
     private struct RedoStream

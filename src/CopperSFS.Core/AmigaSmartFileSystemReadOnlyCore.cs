@@ -13,12 +13,12 @@ public enum AmigaSmartFileSystemFormat : uint
 /// This API never writes or recovers a volume. Existing classic APIs remain unchanged.
 /// The caller supplies distinct block-sized metadata/data buffers and mapped guest memory.
 /// </summary>
-public static class AmigaSmartFileSystemReadOnlyCore
+public static partial class AmigaSmartFileSystemReadOnlyCore
 {
     private const uint Objects = 0x4F424A43, Nodes = 0x4E444320, Tree = 0x424E4443, Clean = 0x54524F4B;
 
     /// <summary>Name and Comment point into the metadata buffer, until it is reused.</summary>
-    public struct Entry
+    public struct ReadEntry
     {
         public uint Node, Parent, Protection, ModifiedSeconds;
         public ulong Size;
@@ -175,7 +175,7 @@ public static class AmigaSmartFileSystemReadOnlyCore
             Header(ref p, container, Objects, buffer, v.Format) && Scan(ref p, v, buffer, node, out at, out _);
     }
 
-    private static bool Describe<T>(ref T p, Volume v, uint node, APTR metadata, out Entry entry)
+    private static bool Describe<T>(ref T p, Volume v, uint node, APTR metadata, out ReadEntry entry)
         where T : struct, IAmigaFileSystemPlatform
     {
         entry = default;
@@ -185,7 +185,7 @@ public static class AmigaSmartFileSystemReadOnlyCore
         var size = (flags & 128) != 0 ? 0ul : v.Extra == 0 ? p.ReadUInt32(metadata, at + 16) :
             ((ulong)p.ReadUInt32(metadata, at + 16) << 16) | p.ReadUInt16(metadata, at + 20);
         if (size > (ulong)(p.Geometry.BlockCount - p.Geometry.ReservedBlocks - 1) * p.Geometry.BlockBytes) return false;
-        entry = new Entry
+        entry = new ReadEntry
         {
             Node = node, Parent = p.ReadUInt32(metadata, 12), Flags = flags, Size = size,
             Protection = p.ReadUInt32(metadata, at + 8) ^ 15,
@@ -197,7 +197,7 @@ public static class AmigaSmartFileSystemReadOnlyCore
         return true;
     }
 
-    public static bool Describe<T>(ref T p, uint node, APTR metadata, out Entry entry)
+    public static bool Describe<T>(ref T p, uint node, APTR metadata, out ReadEntry entry)
         where T : struct, IAmigaFileSystemPlatform
     {
         entry = default;
@@ -319,8 +319,8 @@ public static class AmigaSmartFileSystemReadOnlyCore
         error = DOS.Error.DiskNotValidated; return copied == 0 ? -1 : (int)copied;
     }
 
-    /// <summary>Initialize cursor to the directory node. Hidden entries are skipped. Entry strings use metadata.</summary>
-    public static DOS.Error ExamineNext<T>(ref T p, uint directory, ref uint cursor, APTR metadata, out Entry entry)
+    /// <summary>Initialize cursor to the directory node. Hidden entries are skipped. ReadEntry strings use metadata.</summary>
+    public static DOS.Error ExamineNext<T>(ref T p, uint directory, ref uint cursor, APTR metadata, out ReadEntry entry)
         where T : struct, IAmigaFileSystemPlatform
     {
         entry = default;

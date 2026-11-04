@@ -110,15 +110,15 @@ static BenchSample Sample(BenchCase item, int bytes)
 static string FindRoot()
 {
     var directory = new DirectoryInfo(AppContext.BaseDirectory);
-    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CopperSFS.slnx"))) directory = directory.Parent;
-    return directory?.FullName ?? throw new DirectoryNotFoundException("Run from a checkout containing CopperSFS.slnx");
+    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CopperFS.slnx"))) directory = directory.Parent;
+    return directory?.FullName ?? throw new DirectoryNotFoundException("Run from a checkout containing CopperFS.slnx");
 }
 static FileHash[] HashSources(string root)
 {
-    var files = new[] { "src", "tools", "tests", "scripts" }.SelectMany(folder => Directory.EnumerateFiles(Path.Combine(root, folder), "*", SearchOption.AllDirectories))
+    var files = new[] { "src", "tools", "tests", "build" }.SelectMany(folder => Directory.EnumerateFiles(Path.Combine(root, folder), "*", SearchOption.AllDirectories))
         .Where(path => !Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj" or "TestResults"))
         .Where(path => Path.GetExtension(path) is ".cs" or ".csproj" or ".props" or ".ps1")
-        .Concat(new[] { Path.Combine(root, "Directory.Build.props"), Path.Combine(root, "CopperSFS.slnx") });
+        .Concat(new[] { Path.Combine(root, "Directory.Build.props"), Path.Combine(root, "CopperFS.slnx") });
     return HashFiles(root, files);
 }
 static FileHash[] HashFiles(string root, IEnumerable<string> files) => files.Order(StringComparer.Ordinal).Select(path =>
@@ -150,7 +150,7 @@ internal sealed class StudyReport
     public bool SourceChangedDuringRun { get; set; }
     public FileHash[] SourceHashes { get; init; } = [];
     public FileHash[] BinaryHashes { get; init; } = [];
-    public string Boundary { get; init; } = "Portable-core host study on synthetic images and an in-memory device. Timings are host CPU costs, not disk or Amiga throughput. Device counts include scalar requests, optional read-through caches and optional batched writes; production device integration remains external. The Recovery array covers scalar operations across block sizes: trusted flushes, exhaustive pending whole-block versions, and 512-byte sector-prefix tears. Batched crash/failure coverage is recorded separately by BatchedWriteTests in the reliability report. No real device or compiled MC68000 qualification.";
+    public string Boundary { get; init; } = "Portable-core host study on synthetic images and an in-memory device. Timings are host CPU costs, not disk or Amiga throughput. Device counts include scalar requests, optional read-through caches and optional batched writes; production device integration remains external. The Recovery array covers scalar operations across block sizes: trusted flushes, exhaustive pending whole-block versions, and 512-byte sector-prefix tears. Batched paths require separate tests; this report does not qualify them. No real device or compiled MC68000 qualification.";
     public List<SpaceUsage> Space { get; } = new();
     public List<BenchResult> Benchmarks { get; } = new();
     public List<RecoveryResult> Recovery { get; } = new();

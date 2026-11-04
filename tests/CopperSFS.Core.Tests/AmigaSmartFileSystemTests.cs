@@ -5,48 +5,170 @@ using CopperSFS;
 
 namespace CopperSFS.Tests;
 
-public sealed class AmigaSmartFileSystemTests
+public sealed partial class AmigaSmartFileSystemTests
 {
     private const int Blocks = 128, Bytes = 512;
     private const uint Root = 0x53465300, Objects = 0x4F424A43, Nodes = 0x4E444320, Tree = 0x424E4443, TransactionOk = 0x54524F4B;
     private const uint Bitmap = 0x42544D50, Admin = 0x41444D43;
     private sealed class PowerCut : Exception;
 
-    private struct Disk(byte[] image) : IAmigaWritableFileSystemPlatform
+    private struct Disk(byte[] image) : IAmigaWritableFileSystemPlatform, IAmigaDiscardFileSystemPlatform
     {
-        public readonly byte[] Ram = new byte[8192];
-        public int Writes, FailAtWrite, IoEvents, CutAfterIo;
+        public readonly byte[] Ram = new byte[524288];
+        public int Writes, FailAtWrite, IoEvents, CutAfterIo, Flushes, FailAtFlush;
+        public int GeometryReads;
+        public uint SectorBytesOverride;
+        public List<(uint Block, byte[] Data)>? WrittenSectors;
+        public List<int>? FlushWriteCounts;
+        public APTR Batch;
+        public APTR WriteBack;
+        public APTR WriteQueue;
+        public APTR RedoOverlay { get; set; }
+        public readonly List<(uint Block, uint Count)> PhysicalWrites = [];
         public bool Buffered;
+        public bool ReadOnly;
+        public bool RequireAlignedBlockBuffers;
+        public bool CheckReadOnlyViews;
+        public bool ReturnScratchMetadataViews;
+        private APTR readOnlyViewAddress;
+        private byte[]? readOnlyView;
+        public uint FailReadBlock = uint.MaxValue;
+        public int DurableReads, FailAtDurableRead;
+        public readonly List<(uint Block, uint Count)> DataReads = [];
+        public readonly List<(uint Block, uint Count)> DataWrites = [];
         private Dictionary<uint, byte[]>? pending;
-        public AmigaVolumeGeometry Geometry { get { AmigaVolumeGeometry.Create(Blocks, Bytes, 1, out var geometry); return geometry; } }
+        public bool DiscardSupported = true;
+        public int DiscardQueries, DiscardSectors, FailAtDiscardSector, DiscardPattern;
+        public bool Protected;
+        public AmigaFileSystemDiscardLimits DiscardLimits = new() { MaximumBlocks = 16, Granularity = 1 };
+        public readonly List<(uint Block, uint Count)> DiscardRequests = [];
+        public Action? BeforeDiscard;
+        public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits)
+        { DiscardQueries++; limits = DiscardLimits; return DiscardSupported; }
+        public bool DiscardBlocks(APTR control, uint block, uint count)
+        {
+            BeforeDiscard?.Invoke();
+            Assert.True(block >= ReservedBlocks && count != 0 && count <= BlockCount - 1 - block);
+            Assert.Equal(0u, AmigaFileSystemWriteCombiner.Count(ref this, WriteQueue));
+            Assert.Equal(0u, AmigaSmartFileSystemWriteBuffer.Count(ref this, WriteBack));
+            Assert.True(pending is null || pending.Count == 0);
+            Assert.Equal(TransactionOk, BinaryPrimitives.ReadUInt32BigEndian(image.AsSpan(4 * Bytes)));
+            DiscardRequests.Add((block, count));
+            for (var i = 0u; i < count; i++)
+            {
+                var target = block + i;
+                var bitmapBase = BinaryPrimitives.ReadUInt32BigEndian(image.AsSpan(96));
+                var mapIndex = target / ((Bytes - 12) * 8);
+                var bit = target % ((Bytes - 12) * 8);
+                var word = BinaryPrimitives.ReadUInt32BigEndian(image.AsSpan((int)(bitmapBase + mapIndex) * Bytes + 12 + (int)(bit / 32) * 4));
+                Assert.NotEqual(0u, word & (1u << (int)(31 - bit % 32)));
+                // Irreversible, including after a failed command or power cut.
+                for (var at = 0; at < Bytes; at++) image[target * Bytes + at] = DiscardPattern switch
+                { 0 => 0, 1 => 255, _ => (byte)(target * 29 + at * 17 + DiscardSectors) };
+                pending?.Remove(target); DiscardSectors++; IoEvents++;
+                if (CutAfterIo != 0 && IoEvents == CutAfterIo) throw new PowerCut();
+                if (FailAtDiscardSector != 0 && DiscardSectors == FailAtDiscardSector) return false;
+            }
+            return true;
+        }
+        public uint BlockCount => (uint)(image.Length / Bytes);
+        public uint BlockBytes => Bytes;
+        public uint ReservedBlocks => 1;
+        public AmigaVolumeGeometry Geometry { get { GeometryReads++; AmigaVolumeGeometry.Create(BlockCount, Bytes, 1, out var geometry); if (SectorBytesOverride != 0) geometry.SectorBytes = SectorBytesOverride; return geometry; } }
+        // One reusable cache slot deliberately expires the previous view on
+        // every lookup, exercising the platform's minimum lifetime contract.
+        public APTR ReadMetadataView(uint block, uint id, APTR scratch)
+        {
+            var view = ReturnScratchMetadataViews ? scratch : APTR.FromPointer(125000);
+            if (!ReadMetadataBlock(block, id, view)) return APTR.Null;
+            if (CheckReadOnlyViews)
+            { readOnlyViewAddress = view; readOnlyView = Ram.AsSpan((int)view.Raw, Bytes).ToArray(); }
+            return view;
+        }
+        private void CheckView()
+        {
+            if (readOnlyView is not null) Assert.Equal(readOnlyView, Ram.AsSpan((int)readOnlyViewAddress.Raw, Bytes).ToArray());
+            readOnlyView = null;
+        }
+        public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target)
+        { DataReads.Add((block, count)); return AmigaFileSystemBlockIo.Read(ref this, block, count, target); }
         public bool ReadBlock(uint block, APTR destination)
         {
-            if (block >= Blocks || !IsMapped(destination, Bytes)) return false;
+            CheckView();
+            if (RedoOverlay.IsNotNull)
+            {
+                if (!AmigaSmartFileSystemRedoArena.TryFind(ref this, RedoOverlay, block, out var redo)) return false;
+                if (redo.IsNotNull) { Copy(redo, destination, Bytes); return true; }
+            }
+            if (RequireAlignedBlockBuffers) Assert.Equal(0u, destination.Raw & 3);
+            if (RedoOverlay.IsNull && ++DurableReads == FailAtDurableRead) return false;
+            if (block == FailReadBlock || block >= BlockCount || !IsMapped(destination, Bytes)) return false;
+            if (!AmigaSmartFileSystemWriteBuffer.TryRead(ref this, WriteBack, Bytes,
+                block, destination, 0, out var dirty)) return false;
+            if (dirty) return true;
+            if (!AmigaSmartFileSystemTransactionBuffer.TryRead(ref this, Batch, Bytes,
+                block, destination, out var staged)) return false;
+            if (staged) return true;
+            var queued = AmigaFileSystemWriteCombiner.ReadView(ref this, WriteQueue, block);
+            if (queued.IsNotNull) { Copy(queued, destination, Bytes); return true; }
             if (Buffered && pending is not null && pending.TryGetValue(block, out var volatileBlock))
                 volatileBlock.CopyTo(Ram, (int)destination.Raw);
             else image.AsSpan((int)block * Bytes, Bytes).CopyTo(Ram.AsSpan((int)destination.Raw, Bytes));
             return true;
         }
-        public bool WriteProtected() => false;
+        public bool WriteProtected() => ReadOnly || Protected;
         public bool Flush()
         {
+            if (RedoOverlay.IsNotNull) return true;
+            if (!DrainWrites()) return false;
+            Flushes++;
+            if (FailAtFlush != 0 && Flushes >= FailAtFlush) return false;
             if (Buffered && pending is not null)
             {
                 foreach (var (block, bytes) in pending)
                     bytes.CopyTo(image, (int)block * Bytes);
                 pending.Clear();
             }
+            FlushWriteCounts?.Add(WrittenSectors?.Count ?? Writes);
             IoEvents++;
             if (CutAfterIo != 0 && IoEvents == CutAfterIo) throw new PowerCut();
             return true;
         }
+        public bool WriteDataBlocks(uint block, uint count, APTR source)
+        { DataWrites.Add((block, count)); return AmigaFileSystemBlockIo.Write(ref this, block, count, source); }
         public bool WriteBlock(uint block, APTR source)
         {
+            CheckView();
+            if (RedoOverlay.IsNotNull) return AmigaSmartFileSystemRedoArena.Store(ref this, RedoOverlay, block, source);
+            if (WriteQueue.IsNull) return RawWriteBlock(block, source);
+            return AmigaFileSystemWriteCombiner.TryStore(ref this, WriteQueue, block, 1, source) ||
+                (DrainWrites() && AmigaFileSystemWriteCombiner.TryStore(ref this, WriteQueue, block, 1, source));
+        }
+        public bool DrainWrites()
+        {
+            var used = AmigaFileSystemWriteCombiner.Count(ref this, WriteQueue);
+            if (used == 0) return true;
+            AmigaFileSystemWriteCombiner.Sort(ref this, WriteQueue);
+            for (var ordinal = 0u; ordinal < used;)
+            {
+                var data = AmigaFileSystemWriteCombiner.Run(ref this, WriteQueue, ordinal, out var block, out var count);
+                PhysicalWrites.Add((block, count));
+                for (var i = 0u; i < count; i++) if (!RawWriteBlock(block + i, APTR.FromPointer(data.Raw + i * Bytes))) return false;
+                ordinal += count;
+            }
+            AmigaFileSystemWriteCombiner.Discard(ref this, WriteQueue);
+            return true;
+        }
+        private bool RawWriteBlock(uint block, APTR source)
+        {
+            if (RequireAlignedBlockBuffers) Assert.Equal(0u, source.Raw & 3);
             Writes++;
             if (FailAtWrite != 0 && Writes >= FailAtWrite) return false;
-            if (block < Geometry.ReservedBlocks || block >= Blocks || !IsMapped(source, Bytes)) return false;
+            if (block < ReservedBlocks || block >= BlockCount || !IsMapped(source, Bytes)) return false;
             if (Buffered) (pending ??= new())[block] = Ram.AsSpan((int)source.Raw, Bytes).ToArray();
             else Ram.AsSpan((int)source.Raw, Bytes).CopyTo(image.AsSpan((int)block * Bytes, Bytes));
+            WrittenSectors?.Add((block, Ram.AsSpan((int)source.Raw, Bytes).ToArray()));
             IoEvents++;
             if (CutAfterIo != 0 && IoEvents == CutAfterIo) throw new PowerCut();
             return true;
@@ -85,10 +207,16 @@ public sealed class AmigaSmartFileSystemTests
     {
         public readonly byte[] Ram = new byte[8192];
         public uint CutAfterBlock;
+        public uint BlockCount => Geometry.BlockCount;
+        public uint BlockBytes => Geometry.BlockBytes;
+        public uint ReservedBlocks => Geometry.ReservedBlocks;
         public AmigaVolumeGeometry Geometry
         {
             get { AmigaVolumeGeometry.Create(LargeBlocks, Bytes, 1, out var geometry); return geometry; }
         }
+        public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
+        public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
         public bool ReadBlock(uint block, APTR destination)
         {
             if (block >= LargeBlocks || !IsMapped(destination, Bytes)) return false;
@@ -97,6 +225,7 @@ public sealed class AmigaSmartFileSystemTests
             else target.Clear();
             return true;
         }
+        public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
         public bool WriteBlock(uint block, APTR source)
         {
             if (block < Geometry.ReservedBlocks || block >= LargeBlocks - 1 || !IsMapped(source, Bytes)) return false;
@@ -173,7 +302,7 @@ public sealed class AmigaSmartFileSystemTests
         }
         Sum(bitmap);
         Header(image, 10, Admin);
-        var admin = Block(image, 10); admin[20] = 32; U32(admin, 24, 64); Sum(admin);
+        var admin = Block(image, 10); U32(admin, 24, 64); Sum(admin);
 
         Header(image, 4, TransactionOk); Sum(Block(image, 4));
 
@@ -183,9 +312,9 @@ public sealed class AmigaSmartFileSystemTests
 
         Header(image, 5, Tree);
         var tree = Block(image, 5); U16(tree, 12, 3); tree[14] = 1; tree[15] = 14;
-        U32(tree, 16, 20); U32(tree, 20, 23); U32(tree, 24, 0x80000003); U16(tree, 28, 2);
+        U32(tree, 16, 20); U32(tree, 20, 23); U16(tree, 28, 2);
         U32(tree, 30, 23); U32(tree, 38, 20); U16(tree, 42, 1);
-        U32(tree, 44, 24); U32(tree, 52, 0x80000004); U16(tree, 56, 1); Sum(tree);
+        U32(tree, 44, 24); U16(tree, 56, 1); Sum(tree);
 
         Header(image, 7, Objects);
         var contents = Block(image, 7); U32(contents, 12, 1);
@@ -349,6 +478,24 @@ public sealed class AmigaSmartFileSystemTests
     }
 
     [Fact]
+    public void CreatedMixedCaseNameResolvesCaseInsensitively()
+    {
+        var p = new Disk(Image());
+        var work = new AmigaSmartFileSystemWriteCore.Work
+        {
+            Meta = APTR.FromPointer(512), Data = APTR.FromPointer(1024),
+            Bitmap = APTR.FromPointer(1536), Journal = APTR.FromPointer(2048)
+        };
+        var request = new AmigaSmartFileSystemWriteCore.Request
+        { Directory = 1, Name = p.Name("ABWrite"), Length = 7 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Create(ref p, ref work, ref request, false));
+        var node = AmigaSmartFileSystemCore.Resolve(ref p, 1, p.Name("abwrite"), 7,
+            APTR.FromPointer(512), out var error);
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal(request.Node, node);
+    }
+
+    [Fact]
     public void MountResolveEnumerateAndReadFragmentedFile()
     {
         var p = new Disk(Image()); var meta = APTR.FromPointer(512); var data = APTR.FromPointer(1024);
@@ -484,6 +631,7 @@ public sealed class AmigaSmartFileSystemTests
     public void AppendUsesNewExtentWhenNextPhysicalBlockIsOccupied()
     {
         var p = new Disk(Image());
+        var occupied = p.Snapshot().AsSpan(24 * Bytes, Bytes).ToArray();
         var meta = APTR.FromPointer(512); var data = APTR.FromPointer(1024); var bitmap = APTR.FromPointer(1536);
         for (var i = 0; i < 300; i++) p.Ram[4000 + i] = (byte)(255 - i % 251);
         var work = new AmigaSmartFileSystemWriteCore.Work { Meta = meta, Data = data, Bitmap = bitmap, Journal = APTR.FromPointer(2048) };
@@ -491,9 +639,7 @@ public sealed class AmigaSmartFileSystemTests
         { Node = 3, Position = 1300, Buffer = APTR.FromPointer(4000), Length = 300 };
         Assert.True(AmigaSmartFileSystemWriteCore.Write(ref p, ref work, ref write, out var actual));
         Assert.Equal(300u, actual);
-        Assert.True(p.ReadBlock(5, meta));
-        Assert.NotEqual(0u, p.ReadUInt32(meta, 48)); // key 23 links to the new extent
-        Assert.NotEqual(24u, p.ReadUInt32(meta, 48)); // block 24 belongs to another file
+        Assert.Equal(occupied, p.Snapshot().AsSpan(24 * Bytes, Bytes).ToArray());
         Assert.True(AmigaSmartFileSystemCore.Mount(ref p, meta));
         Assert.Equal(1600, AmigaSmartFileSystemCore.Read(ref p, 3, 0, APTR.FromPointer(4000), 1600,
             meta, data, out var error));
@@ -873,6 +1019,30 @@ public sealed class AmigaSmartFileSystemTests
     }
 
     [Fact]
+    public void ReplaysOriginalSfsTrstStoredDirectlyInTransactionMarker()
+    {
+        var image = Image();
+        var marker = Block(image, 4);
+        Header(image, 4, 0x54525354); // Original SFS uses TRST at root container + 2.
+        U16(marker, 16, 7); U32(marker, 18, 20); marker[22] = 0;
+        marker[23] = 0xC0;
+        marker[24] = (byte)'T'; marker[25] = (byte)'E';
+        marker[26] = (byte)'S'; marker[27] = (byte)'T';
+        marker[28] = 0x7F; marker[29] = 0x7E;
+        Sum(marker);
+        var p = new Disk(image);
+        var meta = APTR.FromPointer(512); var data = APTR.FromPointer(1024);
+        var work = new AmigaSmartFileSystemWriteCore.Work
+        { Meta = meta, Data = data, Bitmap = APTR.FromPointer(1536), Journal = APTR.FromPointer(2048) };
+        Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref p, ref work));
+        Assert.True(AmigaSmartFileSystemCore.Mount(ref p, meta));
+        Assert.Equal(4, AmigaSmartFileSystemCore.Read(ref p, 3, 0,
+            APTR.FromPointer(4000), 4, meta, data, out var error));
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal("TEST", Encoding.ASCII.GetString(p.Ram, 4000, 4));
+    }
+
+    [Fact]
     public void ReplaysOriginalSfsRecordAcrossTrstBlocks()
     {
         var image = Image();
@@ -972,6 +1142,30 @@ public sealed class AmigaSmartFileSystemTests
         Block(image, (int)saved)[40] ^= 0x5A;
         var restarted = new Disk(image);
         work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+        Assert.False(AmigaSmartFileSystemWriteCore.Recover(ref restarted, ref work));
+        Assert.Equal(0x54524641u, BinaryPrimitives.ReadUInt32BigEndian(Block(image, 4)));
+    }
+
+    [Theory]
+    [InlineData(true, 16)]
+    [InlineData(true, 508)]
+    [InlineData(false, 28)]
+    [InlineData(false, 508)]
+    public void RecoveryChecksTheZeroTailOfJournalHeaders(bool marker, int offset)
+    {
+        var image = Image();
+        var p = new Disk(image) { FailAtWrite = 5 };
+        var work = new AmigaSmartFileSystemWriteCore.Work
+        { Meta = APTR.FromPointer(512), Data = APTR.FromPointer(1024),
+            Bitmap = APTR.FromPointer(1536), Journal = APTR.FromPointer(2048) };
+        var request = new AmigaSmartFileSystemWriteCore.Request
+        { Directory = 1, Name = p.Name("Interrupted"), Length = 11 };
+        Assert.False(AmigaSmartFileSystemWriteCore.Create(ref p, ref work, ref request, false));
+        var head = BinaryPrimitives.ReadUInt32BigEndian(Block(image, 4)[12..]);
+        var target = marker ? 4 : (int)head;
+        Assert.Equal(0, Block(image, target)[offset]);
+        Block(image, target)[offset] = 1;
+        var restarted = new Disk(image);
         Assert.False(AmigaSmartFileSystemWriteCore.Recover(ref restarted, ref work));
         Assert.Equal(0x54524641u, BinaryPrimitives.ReadUInt32BigEndian(Block(image, 4)));
     }
@@ -1142,6 +1336,156 @@ public sealed class AmigaSmartFileSystemTests
                 Assert.Equal(DOS.Error.None, error);
                 Assert.Equal(otherBytes, recovered.Ram.AsSpan(5000, otherBytes.Length).ToArray());
                 Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref recovered, ref work));
+            }
+        }
+    }
+
+    [Fact]
+    public void NewlyAllocatedDataDoesNotNeedUndoImagesForOldFreeSpace()
+    {
+        var seeded = new Disk(Image());
+        var meta = APTR.FromPointer(512); var data = APTR.FromPointer(1024);
+        var bitmap = APTR.FromPointer(1536); var journal = APTR.FromPointer(2048);
+        var work = new AmigaSmartFileSystemWriteCore.Work
+        { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+        var created = new AmigaSmartFileSystemWriteCore.Request
+        { Directory = 1, Name = seeded.Name("Fresh"), Length = 5 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Create(ref seeded, ref work, ref created, false));
+        var committed = seeded.Snapshot();
+        var bytes = Enumerable.Range(0, 900).Select(i => (byte)(i * 37 + 3)).ToArray();
+        var probe = new Disk(committed.ToArray()) { Buffered = true };
+        bytes.CopyTo(probe.Ram, 4000);
+        work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+        var write = new AmigaSmartFileSystemWriteCore.Request
+        { Node = created.Node, Buffer = APTR.FromPointer(4000), Length = (uint)bytes.Length };
+        Assert.True(AmigaSmartFileSystemWriteCore.Write(ref probe, ref work, ref write, out _));
+
+        for (var cut = 1; cut <= probe.IoEvents; cut++)
+        {
+            var interrupted = new Disk(committed.ToArray()) { Buffered = true, CutAfterIo = cut };
+            bytes.CopyTo(interrupted.Ram, 4000);
+            work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+            write = new() { Node = created.Node, Buffer = APTR.FromPointer(4000), Length = (uint)bytes.Length };
+            Assert.Throws<PowerCut>(() => AmigaSmartFileSystemWriteCore.Write(ref interrupted, ref work, ref write, out _));
+            foreach (var saved in interrupted.CrashImages())
+            {
+                var recovered = new Disk(saved);
+                work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+                Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref recovered, ref work));
+                Assert.True(AmigaSmartFileSystemCore.Mount(ref recovered, meta));
+                var count = AmigaSmartFileSystemCore.Read(ref recovered, created.Node, 0,
+                    APTR.FromPointer(5000), (uint)bytes.Length, meta, data, out var error);
+                Assert.Equal(DOS.Error.None, error);
+                Assert.True(count == 0 || count == bytes.Length, $"Cut after I/O {cut}: {count}");
+                if (count != 0) Assert.Equal(bytes, recovered.Ram.AsSpan(5000, bytes.Length).ToArray());
+            }
+        }
+    }
+
+    [Fact]
+    public void AlignedAppendReservesRunOnceAndRecoversAfterEachIo()
+    {
+        var seeded = new Disk(Image());
+        var meta = APTR.FromPointer(512); var data = APTR.FromPointer(1024);
+        var bitmap = APTR.FromPointer(1536); var journal = APTR.FromPointer(2048);
+        var work = new AmigaSmartFileSystemWriteCore.Work
+        { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+        var created = new AmigaSmartFileSystemWriteCore.Request
+        { Directory = 1, Name = seeded.Name("Run"), Length = 3 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Create(ref seeded, ref work, ref created, false));
+        var committed = seeded.Snapshot();
+        var bytes = Enumerable.Range(0, 4096).Select(i => (byte)(i * 19 + 7)).ToArray();
+
+        var probe = new Disk(committed.ToArray()) { Buffered = true };
+        bytes.CopyTo(probe.Ram, 4000);
+        work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal,
+            AllocationCursor = 25 };
+        var write = new AmigaSmartFileSystemWriteCore.Request
+        { Node = created.Node, Buffer = APTR.FromPointer(4000), Length = 4096 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Write(ref probe, ref work, ref write, out var actual));
+        Assert.Equal(4096u, actual);
+        Assert.Equal(33u, work.AllocationCursor);
+        Assert.Equal(4096, AmigaSmartFileSystemCore.Read(ref probe, created.Node, 0,
+            APTR.FromPointer(4000), 4096, meta, data, out var error));
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal(bytes, probe.Ram.AsSpan(4000, 4096).ToArray());
+
+        var fallback = new Disk(committed.ToArray());
+        bytes.CopyTo(fallback.Ram, 4000);
+        work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+        write = new() { Node = created.Node, Buffer = APTR.FromPointer(4000), Length = 4096 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Write(ref fallback, ref work, ref write, out actual));
+        Assert.Equal(4096u, actual);
+        // An unavailable preferred run now searches for another whole run.
+        // Both cases must retain bulk I/O without extra per-sector metadata.
+        Assert.Contains(fallback.DataWrites, run => run.Count == 8);
+        Assert.Equal(probe.Writes, fallback.Writes);
+
+        var unaligned = new Disk(committed.ToArray());
+        bytes.CopyTo(unaligned.Ram, 4001);
+        work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal,
+            AllocationCursor = 25 };
+        write = new() { Node = created.Node, Buffer = APTR.FromPointer(4001), Length = 4096 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Write(ref unaligned, ref work, ref write, out actual));
+        Assert.Equal(4096u, actual);
+        Assert.Equal(4096, AmigaSmartFileSystemCore.Read(ref unaligned, created.Node, 0,
+            APTR.FromPointer(4000), 4096, meta, data, out error));
+        Assert.Equal(bytes, unaligned.Ram.AsSpan(4000, 4096).ToArray());
+
+        for (var cut = 1; cut <= probe.IoEvents; cut++)
+        {
+            var interrupted = new Disk(committed.ToArray()) { Buffered = true, CutAfterIo = cut };
+            bytes.CopyTo(interrupted.Ram, 4000);
+            work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal,
+                AllocationCursor = 25 };
+            write = new() { Node = created.Node, Buffer = APTR.FromPointer(4000), Length = 4096 };
+            Assert.Throws<PowerCut>(() => AmigaSmartFileSystemWriteCore.Write(
+                ref interrupted, ref work, ref write, out _));
+            var recovered = new Disk(interrupted.Snapshot());
+            work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+            Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref recovered, ref work));
+            Assert.True(AmigaSmartFileSystemCore.Mount(ref recovered, meta));
+            var count = AmigaSmartFileSystemCore.Read(ref recovered, created.Node, 0,
+                APTR.FromPointer(4000), 4096, meta, data, out error);
+            Assert.Equal(DOS.Error.None, error);
+            Assert.True(count == 0 || count == 4096, $"Cut after I/O {cut}: {count}");
+            if (count != 0) Assert.Equal(bytes, recovered.Ram.AsSpan(4000, 4096).ToArray());
+        }
+
+        var firstCommitted = probe.Snapshot();
+        var nextBytes = Enumerable.Range(0, 4096).Select(i => (byte)(i * 23 + 11)).ToArray();
+        var appended = new Disk(firstCommitted.ToArray()) { Buffered = true };
+        nextBytes.CopyTo(appended.Ram, 4000);
+        work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal,
+            AllocationCursor = 33 };
+        write = new() { Node = created.Node, Position = 4096, Buffer = APTR.FromPointer(4000), Length = 4096 };
+        Assert.True(AmigaSmartFileSystemWriteCore.Write(ref appended, ref work, ref write, out actual));
+        Assert.Equal(4096u, actual);
+        Assert.Equal(41u, work.AllocationCursor);
+        for (var cut = 1; cut <= appended.IoEvents; cut++)
+        {
+            var interrupted = new Disk(firstCommitted.ToArray()) { Buffered = true, CutAfterIo = cut };
+            nextBytes.CopyTo(interrupted.Ram, 4000);
+            work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal,
+                AllocationCursor = 33 };
+            write = new() { Node = created.Node, Position = 4096, Buffer = APTR.FromPointer(4000), Length = 4096 };
+            Assert.Throws<PowerCut>(() => AmigaSmartFileSystemWriteCore.Write(
+                ref interrupted, ref work, ref write, out _));
+            var recovered = new Disk(interrupted.Snapshot());
+            work = new() { Meta = meta, Data = data, Bitmap = bitmap, Journal = journal };
+            Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref recovered, ref work));
+            Assert.True(AmigaSmartFileSystemCore.Mount(ref recovered, meta));
+            Assert.True(AmigaSmartFileSystemCore.Describe(ref recovered, created.Node, meta,
+                out var size, out _, out _));
+            Assert.True(size == 4096 || size == 8192, $"Cut after I/O {cut}: size {size}");
+            Assert.Equal(4096, AmigaSmartFileSystemCore.Read(ref recovered, created.Node, 0,
+                APTR.FromPointer(4000), 4096, meta, data, out error));
+            Assert.Equal(bytes, recovered.Ram.AsSpan(4000, 4096).ToArray());
+            if (size == 8192)
+            {
+                Assert.Equal(4096, AmigaSmartFileSystemCore.Read(ref recovered, created.Node, 4096,
+                    APTR.FromPointer(4000), 4096, meta, data, out error));
+                Assert.Equal(nextBytes, recovered.Ram.AsSpan(4000, 4096).ToArray());
             }
         }
     }

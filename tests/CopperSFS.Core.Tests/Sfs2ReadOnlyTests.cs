@@ -24,6 +24,13 @@ public sealed class Sfs2ReadOnlyTests
         public readonly byte[] Ram = new byte[32768];
         public int Writes, Flushes, Reads;
         public uint PatternStart, PatternEnd;
+        public uint BlockCount => Geometry.BlockCount;
+        public uint BlockBytes => Geometry.BlockBytes;
+        public uint ReservedBlocks => Geometry.ReservedBlocks;
+        public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public APTR ReadMetadataView(uint block, uint id, APTR target) => ReadMetadataBlock(block, id, target) ? target : APTR.Null;
+        public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+        public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
         public AmigaVolumeGeometry Geometry { get { AmigaVolumeGeometry.Create(blockCount, blockBytes, reservedBlocks, out var g); return g; } }
         public bool ReadBlock(uint block, APTR destination)
         {

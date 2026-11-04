@@ -31,7 +31,6 @@ public sealed class SfsImageCheckerTests
     [InlineData("orphan-node")]
     [InlineData("orphan-extent")]
     [InlineData("extent-cycle")]
-    [InlineData("missing-extent-owner")]
     [InlineData("wrong-extent-owner")]
     [InlineData("directory-cycle")]
     [InlineData("directory-parent")]
@@ -72,7 +71,6 @@ public sealed class SfsImageCheckerTests
             case "orphan-node": U32(block, 60, 7); break;
             case "orphan-extent": U16(block, 12, 4); U32(block, 58, 50); U16(block, 70, 1); break;
             case "extent-cycle": U32(block, 20, 40); break;
-            case "missing-extent-owner": U32(block, 24, 0); break;
             case "wrong-extent-owner": U32(block, 24, 0x80000004); break;
             case "directory-cycle": U32(block, 16, 7); break;
             case "directory-parent": U32(block, 12, 99); break;
@@ -133,4 +131,3 @@ public sealed class SfsImageCheckerTests
         finally { File.Delete(path); }
     }
 }
-

@@ -23,10 +23,19 @@ public sealed class Sfs2WideWriteTests(ITestOutputHelper output)
         private readonly Dictionary<uint, List<byte[]>> pending = new();
         internal readonly byte[] Ram = new byte[131072];
         internal int Events, CutAfter;
+        public uint BlockCount => Geometry.BlockCount;
+        public uint BlockBytes => Geometry.BlockBytes;
+        public uint ReservedBlocks => Geometry.ReservedBlocks;
+        public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public APTR ReadMetadataView(uint block, uint id, APTR target) => ReadMetadataBlock(block, id, target) ? target : APTR.Null;
+        public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+        public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
         public AmigaVolumeGeometry Geometry { get { AmigaVolumeGeometry.Create(volumeBlocks, 512, 1, out var g); return g; } }
         public bool WriteProtected() => false;
+        public APTR RedoOverlay { get; set; }
         public bool ReadBlock(uint block, APTR target)
         {
+            if (RedoOverlay.IsNotNull) { if (!AmigaSmartFileSystemRedoArena.TryFind(ref this, RedoOverlay, block, out var view)) return false; if (view.IsNotNull) { Copy(view, target, BlockBytes); return true; } }
             Assert.True(block < volumeBlocks);
             if (pending.TryGetValue(block, out var versions)) versions[^1].CopyTo(Ram, (int)target.Raw);
             else if (durable.TryGetValue(block, out var bytes)) bytes.CopyTo(Ram, (int)target.Raw);
@@ -37,6 +46,7 @@ public sealed class Sfs2WideWriteTests(ITestOutputHelper output)
         }
         public bool WriteBlock(uint block, APTR source)
         {
+            if (RedoOverlay.IsNotNull) return AmigaSmartFileSystemRedoArena.Store(ref this, RedoOverlay, block, source);
             Assert.InRange(block, 1u, volumeBlocks - 2);
             if (!pending.TryGetValue(block, out var versions)) pending.Add(block, versions = new());
             versions.Add(Ram.AsSpan((int)source.Raw, 512).ToArray());
@@ -134,6 +144,27 @@ public sealed class Sfs2WideWriteTests(ITestOutputHelper output)
             content = Convert.ToHexString(disk.Ram.AsSpan((int)Payload.Raw, read)),
             tree = Convert.ToHexString(snapshot[5]),
             map = Convert.ToHexString(snapshot[MapBase + (First + ExtentBlocks) / 4000]) });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void WideWriteResizeAndReopenPreserveContents(bool batched, bool redo)
+    {
+        var disk = new Disk(Image());
+        Assert.True(WriteWide(ref disk, batched, redo));
+        var expected = State(ref disk);
+        var reopened = new Disk(disk.Snapshot()); var work = Work();
+        Assert.True(Recover(ref reopened, ref work), work.Error.ToString());
+        Assert.Equal(expected, State(ref reopened));
+        Assert.True(AmigaSmartFileSystemReadOnlyCore.Describe(ref reopened, 2, Meta, out var entry));
+        Assert.Equal(Position + 1027, entry.Size);
+        Assert.Equal(ExtentBlocks + 1, U32(reopened.Snapshot()[5], 28));
+        Assert.True(Resize(ref reopened, ref work, 2, OldSize));
+        Assert.Equal(ExtentBlocks, U32(reopened.Snapshot()[5], 28));
+        Assert.False(Resize(ref reopened, ref work, 2, MaxFileSize + 1));
+        Assert.Equal(DOS.Error.ObjectTooLarge, work.Error);
     }
 
     [Theory]

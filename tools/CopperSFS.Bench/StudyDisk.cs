@@ -10,7 +10,7 @@ internal sealed record IoCounts(long BlockReads, long BlockWrites, long Flushes,
 
 // In-memory device, not a storage speed emulator. The optional read-through LRU
 // cache is experimental host-adapter code, not a change to the filesystem core.
-internal struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
+internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
 {
     private readonly byte[] device;
     private readonly int bytes;
@@ -24,6 +24,11 @@ internal struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     internal int Events, CutAfterEvent, TearAtWrite, TearBytes, FailAtEvent, FailAtRead;
     internal bool BatchedWrites, ScalarRanges, PersistentFailure, ReadOnly;
     internal bool RelocateFragmented = true;
+    public APTR RedoOverlay { get; set; }
+    internal bool DiscardSupported = true;
+    internal int Discarded, FailDiscardAt;
+    internal AmigaFileSystemDiscardLimits DiscardLimits = new() { MaximumBlocks = 32, Granularity = 1 };
+    internal List<(uint Block, uint Count)> DiscardRequests = new();
     internal bool ReserveOverwrites = true;
     internal uint BatchBytes = 65536;
     internal readonly byte[] Ram;
@@ -76,6 +81,11 @@ internal struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     }
     public bool ReadBlock(uint block, APTR destination)
     {
+        if (RedoOverlay.IsNotNull)
+        {
+            if (!AmigaSmartFileSystemRedoArena.TryFind(ref this, RedoOverlay, block, out var view)) return false;
+            if (view.IsNotNull) { Copy(view, destination, Geometry.BlockBytes); return true; }
+        }
         CheckBlock(block); reads++;
         if (Failed(reads, FailAtRead)) return false;
         if (!IsMapped(destination, (uint)bytes)) return false;
@@ -111,6 +121,7 @@ internal struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     }
     private bool WriteOne(uint block, APTR source)
     {
+        if (RedoOverlay.IsNotNull) return AmigaSmartFileSystemRedoArena.Store(ref this, RedoOverlay, block, source);
         CheckBlock(block);
         if (block < Geometry.ReservedBlocks || block >= Geometry.BlockCount - 1)
             throw new InvalidOperationException($"Write to reserved block {block}");
@@ -138,6 +149,7 @@ internal struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     }
     public bool Flush()
     {
+        if (RedoOverlay.IsNotNull) return true;
         flushes++; Events++;
         if (Failed(Events, FailAtEvent)) return false;
         foreach (var (block, versions) in pending) versions[^1].CopyTo(device, bytes + (int)block * bytes);

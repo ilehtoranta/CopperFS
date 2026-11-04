@@ -20,6 +20,7 @@ public sealed class Sfs2BatchedWriteTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [Trait("Category", "Extended")]
     [InlineData(false)]
     [InlineData(true)]
     public void FullBatchesRelocationAndCutsPreserveEveryFile(bool relocate)
