@@ -74,7 +74,7 @@ available at the source commit. No assertions were weakened to hide these cases.
 
 | Research suites / cases | Observation and follow-up |
 | --- | --- |
-| FileSystemCompatibilityTests | Packed containers, embedded-null comments, new extent owner tags and metadata relocation need focused investigation. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
+| FileSystemCompatibilityTests | Packed containers and embedded-null comments are resolved by the correction below. New extent owner tags and metadata relocation still need focused investigation. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
 | FileSystemRegressionTests | Node-branch growth failure scenario needs comparison with current tree allocation behavior. |
 | TransactionRegressionTests | Archive-bit updates, empty directory-container unlinking and reads after failed writes differ. Check current mount/read contracts before porting fixes. |
 | ReliabilityTests advanced growth scenarios | Admin-growth setup failed; advanced growth and packed cases are not part of the selected basic-mutation matrix. |
@@ -115,6 +115,47 @@ Current validation receipts are under `artifacts/node-fullness-*`. The benchmark
 is a synthetic in-memory host study; passing it establishes workload integrity,
 not real-disk or Amiga performance. Other deferred compatibility findings above
 are outside this fix.
+
+## Packed-container and comment correction (2026-11-04)
+
+Classic SFS now accepts complete object records up to the block boundary, including
+containers with fewer than 27 unused tail bytes. Insertion and comment growth can
+use that final space without reserving an extra sentinel record. Every occupied
+record must still have a nonempty, terminated name and a terminated comment;
+malformed strings fail validation. The on-disk format is unchanged.
+
+Length-delimited comments containing NUL are rejected with BadNumber before the
+metadata operation prepares or edits disk state. Empty comments and the maximum
+79-byte comment remain supported. SFS2 already rejects embedded NULs and is unchanged.
+
+The parser correction and compatibility fixtures were selectively adapted from
+research commit 4a902a1ff9189bbdff841c23441c66678a6e2427, specifically
+FileSystemCompatibilityTests. The original 13 imported cases reproduce 11 failures
+on unmodified main and all pass with the correction. Expanded coverage checks
+exact-end insertion/comment growth, empty/maximum comments, every write/flush cut
+and failure for create/remove/rename/comment under CSUN and TRST, and buffered
+mutations followed by rejection, flush and reopen. A rejected buffered comment
+must preserve previously acknowledged edits and neighbouring objects.
+
+The Release solution build passed with one existing CS8602 warning in the sibling
+CopperSharp compiler. The complete solution suite, including both extended batch
+cases, passed 1,153 tests; three external-media tests were unavailable. The focused selection passed 30 tests (26 new cases and four
+existing packed-object cases). The combined study passed 98 benchmark configurations
+and 40 recovery scenarios with unchanged source hashes. Concurrent host builds mean
+these results establish integrity only; no timing or throughput claim is made.
+
+Both default TRST and legacy CSUN 68000 handlers compiled successfully and passed
+CopperStart's classic write/delete/manual-TRIM/rewrite/cold-reboot replay on
+Windows/NTFS, one pass per variant with no skips. CopperTrim was rebuilt as well.
+Native builds used isolated intermediates after a shared-build collision; no build
+script changes were needed. These guest replays are integration coverage; the new
+packed-boundary and invalid-comment checks are managed regressions. Linux/macOS
+and external original-handler images were not exercised.
+
+General metadata relocation when a container genuinely lacks space remains
+outside this correction. Validation receipts use the ignored artifacts/packed-*
+paths; managed boundary/crash tests and native integration replays are reported
+separately.
 
 ## Original selective-port validation
 
