@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 namespace CopperStart.Dos;
 
 /// <summary>Exec-owned DOS packet handler over an Exec block device.</summary>
-public static class NativeAmigaFileSystem
+public static partial class NativeAmigaFileSystem
 {
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2
     public const uint StateBytes = 2452;
@@ -236,50 +236,24 @@ public static class NativeAmigaFileSystem
         var type = 0u;
         if (!AmigaDiskFileSystemCore.Mount(ref p, Metadata(s), out type))
         {
-            if (!NativeSfsExtension.Root(s)) { Destroy(s); return APTR.Null; }
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartCreationDateOffset, APTR.ReadUInt32(Metadata(s), 16));
-            // Retain validated mount/recovery reads, including the transaction
-            // marker, in the same cache subsequently used by DOS operations.
-            MoreCache(s, 32, out _);
-#if COPPERSTART_NATIVE_SFS_WRITES
-            // Recovery mutates media and belongs to the native SFS writer profile.
-            var journal = global::Amiga.Exec.AllocMem(geometry.BlockBytes,
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.JournalScratchOffset, journal);
-            if (journal == 0) { Destroy(s); return APTR.Null; }
-#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_SFS_TRST_WRITES || COPPERSTART_NATIVE_SFS2
-            var batch = global::Amiga.Exec.AllocMem(
-                AmigaSmartFileSystemTransactionBuffer.StorageBytes(geometry.BlockBytes,
-                    AmigaSmartFileSystemTransactionBuffer.MaximumCapacity),
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartTransactionBufferOffset, batch);
-            // Low-memory mounts can retain the unbuffered undo protocol.
-            if (batch != 0 && !AmigaSmartFileSystemTransactionBuffer.Initialize(ref p,
-                APTR.FromPointer(batch), geometry.BlockBytes, AmigaSmartFileSystemTransactionBuffer.MaximumCapacity))
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION
+            // A failed device read is not evidence of another filesystem.
+            // Declared SFS mounts still get their secondary-root recovery path.
+            if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) != 0 &&
+                (environment.IsNull || APTR.ReadUInt32(environment, 0) < 16 ||
+                 APTR.ReadUInt32(environment, 64) is not (AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType)))
             { Destroy(s); return APTR.Null; }
 #endif
-            // Standalone classic TRST uses its redo arena for every mutation.
-            // Legacy CSUN recovery already supports an absent undo batch.
-            InitializeSmartWriteWork(s, out var smartWork);
-            if (!NativeSfsExtension.Recover(s, ref smartWork)) { Destroy(s); return APTR.Null; }
-            var combine = global::Amiga.Exec.AllocMem(
-                AmigaFileSystemWriteCombiner.StorageBytes(geometry.BlockBytes, SmartWriteQueueCapacity),
-                global::Amiga.Exec.MemoryFlags.Public);
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartWriteCombinerOffset, combine);
-            // This optional physical queue never changes a transaction barrier.
-            if (combine != 0 && !AmigaFileSystemWriteCombiner.Initialize(ref p, APTR.FromPointer(combine),
-                geometry.BlockBytes, SmartWriteQueueCapacity)) { Destroy(s); return APTR.Null; }
-#if !COPPERSTART_SFS_STRICT_WRITES && !COPPERSTART_SFS_TRST_WRITES
-            APTR writeBuffer = NativeSfs2Bridge.IsSfs2(s) ? APTR.Null : global::Amiga.Exec.AllocMem(
-                AmigaSmartFileSystemWriteBuffer.StorageBytes(geometry.BlockBytes, AmigaSmartFileSystemWriteBuffer.MaximumCapacity),
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartWriteBufferOffset, writeBuffer);
-            // Allocation failure retains the strict engine's existing guarantees.
-            if (writeBuffer != 0 && !AmigaSmartFileSystemWriteBuffer.Initialize(ref p, APTR.FromPointer(writeBuffer),
-                geometry.BlockBytes, AmigaSmartFileSystemWriteBuffer.MaximumCapacity)) { Destroy(s); return APTR.Null; }
+            if (!MountSmart(s))
+            {
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION
+                // Keep a readable, unformatted configured device addressable by Format().
+                if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
+                    APTR.ReadUInt32(s, NativeFileSystemStateCodec.DosTypeOffset) == 0)
+                { ReleaseSmart(s); APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, 0); return s; }
 #endif
-#endif
-            if (!NativeSfsExtension.Mount(s)) { Destroy(s); return APTR.Null; }
+                Destroy(s); return APTR.Null;
+            }
             type = APTR.ReadUInt32(s, NativeFileSystemStateCodec.DosTypeOffset);
         }
         else
@@ -291,15 +265,7 @@ public static class NativeAmigaFileSystem
             MoreCache(s, 16, out _);
         }
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
-        if (Smart(s))
-        {
-            // The SFS tree, bitmap, and undo chain are revisited between data
-            // blocks. Keep them in the existing block LRU; a failed optional
-            // cache allocation affects speed, not mountability.
-            var enumeration = global::Amiga.Exec.AllocMem(SmartEnumerationCacheBytes,
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, enumeration);
-        }
+
         return s;
     }
 
@@ -317,11 +283,97 @@ public static class NativeAmigaFileSystem
         return ((address | varying) & ~(mask | alignmentBits)) == 0;
     }
 
+    private static bool MountSmart(APTR s)
+    {
+        var geometry = ReadGeometry(s);
+        var p = new NativeFileSystemPlatform(s);
+            if (!NativeSfsExtension.Root(s)) { return false; }
+            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartCreationDateOffset, APTR.ReadUInt32(Metadata(s), 16));
+            // Retain validated mount/recovery reads, including the transaction
+            // marker, in the same cache subsequently used by DOS operations.
+            if (APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset) < 32)
+                MoreCache(s, 32 - (int)APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset), out _);
+#if COPPERSTART_NATIVE_SFS_WRITES
+            // Recovery mutates media and belongs to the native SFS writer profile.
+            var journal = global::Amiga.Exec.AllocMem(geometry.BlockBytes,
+                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+            APTR.WriteUInt32(s, NativeFileSystemStateCodec.JournalScratchOffset, journal);
+            if (journal == 0) { return false; }
+#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_SFS_TRST_WRITES || COPPERSTART_NATIVE_SFS2
+            var batch = global::Amiga.Exec.AllocMem(
+                AmigaSmartFileSystemTransactionBuffer.StorageBytes(geometry.BlockBytes,
+                    AmigaSmartFileSystemTransactionBuffer.MaximumCapacity),
+                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartTransactionBufferOffset, batch);
+            // Low-memory mounts can retain the unbuffered undo protocol.
+            if (batch != 0 && !AmigaSmartFileSystemTransactionBuffer.Initialize(ref p,
+                APTR.FromPointer(batch), geometry.BlockBytes, AmigaSmartFileSystemTransactionBuffer.MaximumCapacity))
+            { return false; }
+#endif
+            // Standalone classic TRST uses its redo arena for every mutation.
+            // Legacy CSUN recovery already supports an absent undo batch.
+            InitializeSmartWriteWork(s, out var smartWork);
+            if (!NativeSfsExtension.Recover(s, ref smartWork)) { return false; }
+            var combine = global::Amiga.Exec.AllocMem(
+                AmigaFileSystemWriteCombiner.StorageBytes(geometry.BlockBytes, SmartWriteQueueCapacity),
+                global::Amiga.Exec.MemoryFlags.Public);
+            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartWriteCombinerOffset, combine);
+            // This optional physical queue never changes a transaction barrier.
+            if (combine != 0 && !AmigaFileSystemWriteCombiner.Initialize(ref p, APTR.FromPointer(combine),
+                geometry.BlockBytes, SmartWriteQueueCapacity)) { return false; }
+#if !COPPERSTART_SFS_STRICT_WRITES && !COPPERSTART_SFS_TRST_WRITES
+            APTR writeBuffer = NativeSfs2Bridge.IsSfs2(s) ? APTR.Null : global::Amiga.Exec.AllocMem(
+                AmigaSmartFileSystemWriteBuffer.StorageBytes(geometry.BlockBytes, AmigaSmartFileSystemWriteBuffer.MaximumCapacity),
+                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartWriteBufferOffset, writeBuffer);
+            // Allocation failure retains the strict engine's existing guarantees.
+            if (writeBuffer != 0 && !AmigaSmartFileSystemWriteBuffer.Initialize(ref p, APTR.FromPointer(writeBuffer),
+                geometry.BlockBytes, AmigaSmartFileSystemWriteBuffer.MaximumCapacity)) { return false; }
+#endif
+#endif
+            if (!NativeSfsExtension.Mount(s)) { return false; }
+
+        if (Smart(s))
+        {
+            // The SFS tree, bitmap, and undo chain are revisited between data
+            // blocks. Keep them in the existing block LRU; a failed optional
+            // cache allocation affects speed, not mountability.
+            var enumeration = global::Amiga.Exec.AllocMem(SmartEnumerationCacheBytes,
+                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, enumeration);
+        }
+        return true;
+    }
+
     public static void Destroy(APTR state)
     {
         if (state.IsNull) return;
         var recordPlatform = new NativeRecordLockPlatform();
         NativeRecordLockCore.Destroy(ref recordPlatform, state);
+        ReleaseSmart(state);
+        var cache = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
+        while (cache.IsNotNull)
+        {
+            var next = APTR.FromPointer(APTR.ReadUInt32(cache, 0));
+            global::Amiga.Exec.FreeMem(cache.Raw, ExtraCacheBytes(state)); cache = next;
+        }
+        var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
+        if (request.IsNotNull)
+        {
+            if (APTR.ReadUInt32(request, NativeExecFieldCodec.IoDeviceOffset) != 0) global::Amiga.Exec.CloseDevice(request);
+            global::Amiga.Exec.DeleteIORequest(request);
+        }
+        var port = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.IoPortOffset));
+        if (port.IsNotNull) global::Amiga.Exec.DeleteMsgPort(port);
+        var io = APTR.ReadUInt32(state, NativeFileSystemStateCodec.IoBufferOffset);
+        if (io != 0) global::Amiga.Exec.FreeMem(io, APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBytesOffset));
+        var buffers = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BuffersOffset);
+        if (buffers != 0) global::Amiga.Exec.FreeMem(buffers, ReadGeometry(state).BlockBytes * 3);
+        global::Amiga.Exec.FreeMem(state.Raw, StateBytes);
+    }
+
+    private static void ReleaseSmart(APTR state)
+    {
 #if COPPERSTART_NATIVE_SFS_WRITES
         var timer = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset));
         if (timer.IsNotNull)
@@ -359,24 +411,6 @@ public static class NativeAmigaFileSystem
         if (combine != 0) global::Amiga.Exec.FreeMem(combine,
             AmigaFileSystemWriteCombiner.StorageBytes(APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset), SmartWriteQueueCapacity));
 #endif
-        var cache = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
-        while (cache.IsNotNull)
-        {
-            var next = APTR.FromPointer(APTR.ReadUInt32(cache, 0));
-            global::Amiga.Exec.FreeMem(cache.Raw, ExtraCacheBytes(state)); cache = next;
-        }
-        var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
-        if (request.IsNotNull)
-        {
-            if (APTR.ReadUInt32(request, NativeExecFieldCodec.IoDeviceOffset) != 0) global::Amiga.Exec.CloseDevice(request);
-            global::Amiga.Exec.DeleteIORequest(request);
-        }
-        var port = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.IoPortOffset));
-        if (port.IsNotNull) global::Amiga.Exec.DeleteMsgPort(port);
-        var io = APTR.ReadUInt32(state, NativeFileSystemStateCodec.IoBufferOffset);
-        if (io != 0) global::Amiga.Exec.FreeMem(io, APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBytesOffset));
-        var buffers = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BuffersOffset);
-        if (buffers != 0) global::Amiga.Exec.FreeMem(buffers, ReadGeometry(state).BlockBytes * 3);
 #if COPPERSTART_NATIVE_SFS_WRITES
         var journal = APTR.ReadUInt32(state, NativeFileSystemStateCodec.JournalScratchOffset);
         if (journal != 0) global::Amiga.Exec.FreeMem(journal, ReadGeometry(state).BlockBytes);
@@ -385,7 +419,20 @@ public static class NativeAmigaFileSystem
             AmigaSmartFileSystemTransactionBuffer.StorageBytes(ReadGeometry(state).BlockBytes,
                 AmigaSmartFileSystemTransactionBuffer.MaximumCapacity));
 #endif
-        global::Amiga.Exec.FreeMem(state.Raw, StateBytes);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartWriteCombinerOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.JournalScratchOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartDeviceDirtyOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRedoOverlayOffset, 0);
+        APTR.WriteUInt32(state, SmartReservationsOffset, 0);
     }
 
     private static int MoreCache(APTR state, int delta, out DOS.Error error)
@@ -1161,6 +1208,24 @@ public static class NativeAmigaFileSystem
         var metadata = Metadata(state);
         var data = Data(state);
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION
+        if (action == DosPacketAction.Format || (uint)action == 0xF00067)
+        {
+            var formatted = FormatVolume(state, packet, out var formatError);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, formatted ? uint.MaxValue : 0);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)formatError);
+            return;
+        }
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) == 0 &&
+            action is not (DosPacketAction.IsFileSystem or DosPacketAction.CurrentVolume or
+                DosPacketAction.DiskType or DosPacketAction.MoreCache or DosPacketAction.Inhibit or DosPacketAction.Flush))
+        {
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset,
+                action is DosPacketAction.Read or DosPacketAction.Write or DosPacketAction.Seek ? uint.MaxValue : 0);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.NotADosDisk);
+            return;
+        }
+#endif
         if (Smart(state) && SmartMutation(action)) InvalidateDirectoryCursors(state);
         if (Smart(state) && APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 &&
             SmartMediaAccess(action) && action is not
@@ -1665,7 +1730,11 @@ public static class NativeAmigaFileSystem
 
 }
 
-public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform, IAmigaFileSystemDevicePlatform,
+public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION
+    IAmigaFormatFileSystemPlatform,
+#endif
+    IAmigaFileSystemDevicePlatform,
     IAmigaDiscardFileSystemPlatform, IAmigaScsiDirectPlatform
 {
     private APTR state;
@@ -2636,6 +2705,21 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform, IAm
         }
     }
 
+
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION
+    public bool WriteFormatBlock(uint block, APTR source)
+    {
+        if (block >= BlockCount || WriteProtected()) return false;
+        InvalidateBlocks(block, 1);
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return WriteRamBlock(block, source);
+        var buffer = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset));
+        if (CanTransferDirect(source, BlockBytes)) buffer = source;
+        else CopyBlock(source, buffer, BlockBytes);
+        return TransferBlock(true, block, buffer);
+    }
+
+
+#endif
     // Formatting alone may write block zero; normal filesystem writes retain
     // their reserved-block restriction in WriteBlock.
     public bool WriteRamBlock(uint block, APTR source)

@@ -28,8 +28,10 @@ public sealed class SfsImageChecker
     private readonly HashSet<uint> objects = new(), usedExtents = new();
     private readonly List<ImageEntry> entries = new();
     private readonly List<(uint Block, uint Parent, List<(uint Node, string Name)> Children)> hashes = new();
-    private bool caseSensitive;
+    private bool caseSensitive, recycling;
     private uint rootContainer;
+    private ulong recycledFiles, recycledBlocks;
+    private bool recycledDirectory;
     private sealed record Node(uint Container, uint Next, ushort Hash);
     private sealed record Extent(uint Next, uint Previous, uint Count);
     private sealed record Obj(uint Node, uint Container, uint Value, ulong Size, uint Protection,
@@ -100,6 +102,7 @@ public sealed class SfsImageChecker
         var first = Root(0); var last = Root(blocks - 1);
         var root = unchecked((short)(U16(last, 14) - U16(first, 14))) > 0 ? last : first;
         caseSensitive = (root[20] & 128) != 0;
+        recycling = (root[20] & 64) != 0;
         for (uint i = 0; i < reserved; i++) Claim(i, "reserved");
         Claim(blocks - 1, "secondary root");
         rootContainer = U32(root, 104);
@@ -112,12 +115,12 @@ public sealed class SfsImageChecker
         var rootData = Meta(rootContainer, "OBJC");
         Require(U32(rootData, 12) == 0 && U32(rootData, 16) == 0 && U32(rootData, 20) == 0,
             "Root object container has unexpected links.");
-        Require(U32(rootData, bytes - 36) == 0 && U32(rootData, bytes - 32) == 0,
-            "Recycled/deleted-file accounting is not supported by this checker.");
         var rootObjects = ParseObjects(rootData, rootContainer, bytes - 36);
         Require(rootObjects.Count == 1 && rootObjects[0].Node == 1 && (rootObjects[0].Flags & 128) != 0,
             "Expected exactly one root directory object.");
         Walk(rootObjects[0], "/", 0);
+        Require((!recycling || recycledDirectory) && recycledBlocks == U32(rootData, bytes - 36) &&
+            recycledFiles == U32(rootData, bytes - 32), "Recycled/deleted-file accounting disagrees with directory contents.");
         Require(objects.SetEquals(nodes.Keys), "Object node table contains orphan or missing objects.");
         Require(usedExtents.SetEquals(extents.Keys), "Extent tree contains orphan extents.");
         CheckHashes();
@@ -193,11 +196,12 @@ public sealed class SfsImageChecker
             {
                 var container = U32(data, offset);
                 if (container == 0) { full = false; continue; }
-                // Original SFS reserves nodes 3..6 with sentinel pointers.
+                // Original SFS reserves nodes 3..6; node 2 is also reserved
+                // when formatted with NORECYCLED (filesystemmain.c ACTION_FORMAT).
                 if (container == uint.MaxValue)
                 {
                     var reservedNode = (ulong)first + (uint)((offset - 20) / 10);
-                    Require(reservedNode is >= 3 and <= 6 && U32(data, offset + 4) == 0 && U16(data, offset + 8) == 0,
+                    Require((reservedNode is >= 2 and <= 6) && (reservedNode != 2 || !recycling) && U32(data, offset + 4) == 0 && U16(data, offset + 8) == 0,
                         "Invalid reserved object-node sentinel.");
                     continue;
                 }
@@ -272,12 +276,14 @@ public sealed class SfsImageChecker
         }
         return result;
     }
-    private void Walk(Obj obj, string path, int depth)
+    private void Walk(Obj obj, string path, int depth, uint parent = 0)
     {
         Require(depth < 256, "Directory nesting exceeds checker limit.");
         Require(objects.Add(obj.Node) && nodes.TryGetValue(obj.Node, out var node) && node.Container == obj.Container,
             $"{path}: duplicate object or incorrect node mapping.");
         var directory = (obj.Flags & 128) != 0;
+        if (recycling && obj.Node == 2)
+        { Require(directory && parent == 1, "Recycled node is not a root child directory."); recycledDirectory = true; }
         string? digest = null;
         if (directory)
         {
@@ -295,7 +301,7 @@ public sealed class SfsImageChecker
             foreach (var child in children)
             {
                 Require(names.Add(Fold(child.Name)), $"{path}: duplicate directory name.");
-                Walk(child, path == "/" ? "/" + child.Name : path + "/" + child.Name, depth + 1);
+                Walk(child, path == "/" ? "/" + child.Name : path + "/" + child.Name, depth + 1, obj.Node);
             }
             if (obj.Value != 0) hashes.Add((obj.Value, obj.Node, children.Select(c => (c.Node, c.Name)).ToList()));
         }
@@ -323,6 +329,7 @@ public sealed class SfsImageChecker
             }
             Require(remaining == 0 && allocated == ((ulong)obj.Size + (uint)bytes - 1) / (uint)bytes,
                 $"{path}: file size and extent allocation disagree.");
+            if (recycling && parent == 2) { recycledFiles++; recycledBlocks += allocated; }
             digest = Convert.ToHexString(hash.GetHashAndReset());
         }
         entries.Add(new(path, obj.Node, directory, directory ? 0 : obj.Size, obj.Protection,

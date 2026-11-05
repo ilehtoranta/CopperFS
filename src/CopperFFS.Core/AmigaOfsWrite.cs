@@ -68,21 +68,24 @@ public static partial class AmigaFfsWriteCore
         var end = r.Position + r.Length; var newSize = end > size ? end : size;
         var oldBlocks = size == 0 ? 0 : AmigaGeometryMath.Divide(size - 1, payload) + 1;
         if (!OfsChain(ref p, ref w, r.Header, false, out var previousData)) return false;
+        var newBlocks = oldBlocks;
         if (end > size)
         {
-            var newBlocks = AmigaGeometryMath.Divide(end - 1, payload) + 1;
+            newBlocks = AmigaGeometryMath.Divide(end - 1, payload) + 1;
             var oldExt = oldBlocks == 0 ? 0 : AmigaGeometryMath.Divide(oldBlocks - 1, g.TableEntries);
             var newExt = AmigaGeometryMath.Divide(newBlocks - 1, g.TableEntries);
             if (!Prepare(ref p, ref w, newBlocks - oldBlocks + newExt - oldExt)) return false;
         }
         if (!Begin(ref p, ref w, ref g)) return false;
         var table = r.Header; var tableIndex = 0u;
+        uint runFirst = 0, runCount = 0;
         while (actual < r.Length)
         {
             var position = r.Position + actual; var index = AmigaGeometryMath.Divide(position, payload);
             var targetTable = AmigaGeometryMath.Divide(index, g.TableEntries);
             while (tableIndex < targetTable)
             {
+                runCount = 0;
                 if (!p.ReadBlock(table, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
                 var next = p.ReadUInt32(w.Meta, g.Tail + 504);
                 if (next == 0)
@@ -101,7 +104,12 @@ public static partial class AmigaFfsWriteCore
             var key = p.ReadUInt32(w.Meta, at); var allocate = index >= oldBlocks;
             if (allocate)
             {
-                key = Allocate(ref p, ref w); if (key == 0) return false;
+                var wanted = newBlocks - index;
+                var slots = g.TableEntries - AmigaGeometryMath.Remainder(index, g.TableEntries);
+                if (wanted > slots) wanted = slots;
+                key = AllocateData(ref p, ref w, ref g, (previousData == 0 ? r.Header : previousData) + 1,
+                    wanted, ref runFirst, ref runCount);
+                if (key == 0) return false;
                 p.Clear(w.Data, g.BlockBytes); p.WriteUInt32(w.Data, 0, 8);
                 p.WriteUInt32(w.Data, 4, r.Header); p.WriteUInt32(w.Data, 8, index + 1);
             }

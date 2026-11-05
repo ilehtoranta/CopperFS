@@ -13,7 +13,10 @@ public static partial class NativeSfsExtension
     // The extension image is never a reset ROM;
     // its first longword is used as a signature instead of a stack pointer.
     public const uint Base = 0x00E0_0000;
-#if COPPERSTART_NATIVE_SFS2
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION
+    // CopperStart's Full ROM also supplies its shared filesystem task.
+    public const uint Bytes = 0x0008_0000, Magic = 0x4353_4545;
+#elif COPPERSTART_NATIVE_SFS2
     public const uint Bytes = 0x0008_0000, Magic = 0x4353_4543;
 #else
     public const uint Bytes = 0x0004_0000, Magic = 0x4353_4542;

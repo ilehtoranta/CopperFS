@@ -2,6 +2,24 @@
 
 ## Ownership
 
+CopperStart's A1200 Full ROM consumer defines
+`COPPERSTART_FULL_FILESYSTEM_EXTENSION`. Its CSEE/15 profile keeps the common
+packet task in a 512 KiB extension, while standalone handlers retain their own
+ABI and code paths. A device read failure during initial DOS probing does not
+trigger unrelated filesystem probes; declared SFS mounts retain secondary-root
+recovery. CopperStart owns the extension registration and graphics/task entry
+metadata. This profile does not add a standalone-handler dependency on CopperStart.
+
+The Full consumer source-links `AmigaDiskFileSystemFormatCore`,
+`AmigaSmartFileSystemFormatCore` and `NativeFileSystemFormat` from CopperFS.
+The portable formatters allocate no managed state and use explicit reserved-block
+writes through `IAmigaFormatFileSystemPlatform`. CopperStart owns packet/DOS-list
+integration and enables it only for the Full ROM pair. Classic SFS formatting
+includes its recycled-directory options; SFS2 uses a clean version-4 volume
+without recycling. The independent checker recognizes the original NORECYCLED
+node-2 sentinel and rejects that sentinel when recycling is enabled. It also
+reconciles recycled-file/block counters against the walked directory and extents.
+
 CopperFS maintains OFS/FFS and classic SFS/SFS2 cores, shared native filesystem
 handler sources, CopperTrim, semantic tests and handler/command build recipes.
 CopperStart maintains its Exec/DOS services, OS-specific codecs, extension ROM
