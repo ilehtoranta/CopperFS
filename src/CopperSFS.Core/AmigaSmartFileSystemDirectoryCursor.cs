@@ -25,8 +25,8 @@ public static partial class AmigaSmartFileSystemCore
             cursor.Wanted = 0;
             if (wanted == directory)
             {
-                var initial = ObjectView(ref p, directory, metadata, out var at);
-                if (initial.IsNull) return DOS.Error.InvalidLock;
+                var initial = ObjectView(ref p, directory, metadata, out var at, out var lookupError);
+                if (initial.IsNull) return lookupError;
                 if ((p.ReadUInt8(initial, at + 24) & 128) == 0) return DOS.Error.ObjectWrongType;
                 var first = p.ReadUInt32(initial, at + 16);
 
@@ -48,7 +48,7 @@ public static partial class AmigaSmartFileSystemCore
                 var result = ExamineNext(ref p, directory, fib, metadata, data);
                 if (result != DOS.Error.None) return result;
                 var found = p.ReadUInt32(fib);
-                var initial = ObjectView(ref p, found, metadata, out var at);
+                var initial = ObjectView(ref p, found, metadata, out var at, out _);
                 if (initial.IsNull) return DOS.Error.DiskNotValidated;
 
                 cursor.BlockBytes = p.BlockBytes; cursor.BlockCount = p.BlockCount;

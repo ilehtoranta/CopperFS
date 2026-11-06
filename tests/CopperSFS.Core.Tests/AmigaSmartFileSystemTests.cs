@@ -90,6 +90,9 @@ public sealed partial class AmigaSmartFileSystemTests
             if (readOnlyView is not null) Assert.Equal(readOnlyView, Ram.AsSpan((int)readOnlyViewAddress.Raw, Bytes).ToArray());
             readOnlyView = null;
         }
+        public bool HasAcknowledgedCheckpoint(uint rootContainer) =>
+            AmigaSmartFileSystemWriteBuffer.HasAcknowledgedCheckpoint(ref this, WriteBack, rootContainer) ||
+            AmigaSmartFileSystemWriteCore.HasAcknowledgedTrstCheckpoint(ref this, GroupAddress, rootContainer);
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
         public uint ReadDataBlocks(uint block, uint count, APTR target)
         { DataReads.Add((block, count)); return AmigaFileSystemBlockIo.Read(ref this, block, count, target); }
@@ -1034,6 +1037,12 @@ public sealed partial class AmigaSmartFileSystemTests
         var meta = APTR.FromPointer(512); var data = APTR.FromPointer(1024);
         var work = new AmigaSmartFileSystemWriteCore.Work
         { Meta = meta, Data = data, Bitmap = APTR.FromPointer(1536), Journal = APTR.FromPointer(2048) };
+        Assert.False(AmigaSmartFileSystemCore.Mount(ref p, meta));
+        p.Ram.AsSpan(4000, 4).Fill(0xCC);
+        Assert.Equal(-1, AmigaSmartFileSystemCore.Read(ref p, 3, 0, APTR.FromPointer(4000),
+            4, meta, data, out var dirtyError));
+        Assert.Equal(DOS.Error.DiskNotValidated, dirtyError);
+        Assert.All(p.Ram.AsSpan(4000, 4).ToArray(), value => Assert.Equal((byte)0xCC, value));
         Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref p, ref work));
         Assert.True(AmigaSmartFileSystemCore.Mount(ref p, meta));
         Assert.Equal(4, AmigaSmartFileSystemCore.Read(ref p, 3, 0,

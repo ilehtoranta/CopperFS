@@ -2447,6 +2447,20 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     }
 
     public bool ReadBlock(uint block, APTR destination) => ReadCached(block, 0, destination);
+    public bool HasAcknowledgedCheckpoint(uint rootContainer)
+    {
+#if COPPERSTART_SFS_TRST_BUFFERED
+        var group = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset));
+        if (AmigaSmartFileSystemWriteCore.HasAcknowledgedTrstCheckpoint(ref this, group, rootContainer)) return true;
+#endif
+#if COPPERSTART_NATIVE_SFS_WRITES && (!COPPERSTART_SFS_STANDALONE || !COPPERSTART_SFS_TRST_WRITES || COPPERSTART_NATIVE_SFS2)
+        var dirty = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset));
+        return AmigaSmartFileSystemWriteBuffer.HasAcknowledgedCheckpoint(ref this, dirty, rootContainer);
+#else
+        return false;
+#endif
+    }
+
     public APTR ReadRetainedBlock(uint block)
     {
         if (block >= BlockCount || RedoOverlay.IsNotNull ||

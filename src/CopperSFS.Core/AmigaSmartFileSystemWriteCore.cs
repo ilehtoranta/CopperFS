@@ -1568,6 +1568,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (!Begin(ref p, ref w) || !FreeFile(ref p, ref w, first) ||
             !Object(ref p, ref w, node, w.Meta, out at)) return false;
         p.WriteUInt32(w.Meta, at + 12, 0); p.WriteUInt32(w.Meta, at + 16, 0);
+        p.WriteUInt32(w.Meta, at + 8, p.ReadUInt32(w.Meta, at + 8) & ~16u);
         return Put(ref p, ref w, p.ReadUInt32(w.Meta, 8), w.Meta) && Finish(ref p, ref w);
     }
 
@@ -1657,6 +1658,43 @@ public static partial class AmigaSmartFileSystemWriteCore
         return Fail(ref w, DOS.Error.DiskNotValidated);
     }
 
+    private static bool UnlinkEmptyContainer<T>(ref T p, ref Work w, uint container, APTR image)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        // Preserve Data: rename/comment relocation
+        // retain the removed object's contents there until insertion completes.
+        var parent = p.ReadUInt32(image, 12);
+        var next = p.ReadUInt32(image, 16);
+        var previous = p.ReadUInt32(image, 20);
+        if (parent == 0 || container == w.RootContainer || next == container || previous == container)
+            return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (next != 0)
+        {
+            if (!Read(ref p, ref w, next, ObjectId, w.Meta)) return false;
+            if (p.ReadUInt32(w.Meta, 12) != parent || p.ReadUInt32(w.Meta, 20) != container)
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            p.WriteUInt32(w.Meta, 20, previous);
+            if (!Put(ref p, ref w, next, w.Meta)) return false;
+        }
+        if (previous != 0)
+        {
+            if (!Read(ref p, ref w, previous, ObjectId, w.Meta)) return false;
+            if (p.ReadUInt32(w.Meta, 12) != parent || p.ReadUInt32(w.Meta, 16) != container)
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            p.WriteUInt32(w.Meta, 16, next);
+            if (!Put(ref p, ref w, previous, w.Meta)) return false;
+        }
+        else
+        {
+            if (!Object(ref p, ref w, parent, w.Meta, out var parentAt) ||
+                p.ReadUInt32(w.Meta, parentAt + 16) != container)
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            p.WriteUInt32(w.Meta, parentAt + 16, next);
+            if (!Put(ref p, ref w, p.ReadUInt32(w.Meta, 8), w.Meta)) return false;
+        }
+        return FreeAdmin(ref p, ref w, container);
+    }
+
     private static bool ExciseObject<T>(ref T p, ref Work w, uint container, int at, uint node)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
@@ -1670,6 +1708,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         while (comment < endAt && p.ReadUInt8(image, comment) != 0) comment++;
         var after = (comment + 2) & ~1;
         if (after > endAt) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (at == 24 && after == endAt) return UnlinkEmptyContainer(ref p, ref w, container, image);
         var count = after - at;
         var before = RecordSum(ref p, image, at, endAt);
         // Records are even-sized and even-aligned. Forward word copies safely
@@ -1968,6 +2007,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (((p.ReadUInt32(original, at + 8) ^ 15) & 4) != 0) return Fail(ref w, DOS.Error.WriteProtected);
         var size = p.ReadUInt32(original, at + 16); var first = p.ReadUInt32(original, at + 12);
         var oldFirst = first;
+        var archived = (p.ReadUInt32(original, at + 8) & 16) != 0;
         var objectBlock = p.ReadUInt32(original, 8);
         var parent = p.ReadUInt32(original, 12);
         if (hint.IsNotNull)
@@ -2067,9 +2107,10 @@ public static partial class AmigaSmartFileSystemWriteCore
             actual += count; position += count;
         }
         // Extent/allocation updates do not relocate this object's record.
-        if (w.RedoStaging && first == oldFirst && end <= size) return Finish(ref p, ref w);
+        if (w.RedoStaging && first == oldFirst && end <= size && !archived) return Finish(ref p, ref w);
         var objectImage = Edit(ref p, ref w, objectBlock, ObjectId, w.Meta);
         if (objectImage.IsNull) return false;
+        if (archived) ReplaceWord(ref p, objectImage, at + 8, p.ReadUInt32(objectImage, at + 8) & ~16u);
         if (first != p.ReadUInt32(objectImage, at + 12)) ReplaceWord(ref p, objectImage, at + 12, first);
         if (end > size) ReplaceWord(ref p, objectImage, at + 16, end);
         if (!PutSealed(ref p, ref w, objectBlock, objectImage)) return false;
@@ -2167,6 +2208,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (!Object(ref p, ref w, node, w.Meta, out at))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         p.WriteUInt32(w.Meta, at + 12, first); p.WriteUInt32(w.Meta, at + 16, newSize);
+        p.WriteUInt32(w.Meta, at + 8, p.ReadUInt32(w.Meta, at + 8) & ~16u);
         return Put(ref p, ref w, p.ReadUInt32(w.Meta, 8), w.Meta) && Finish(ref p, ref w);
     }
 }

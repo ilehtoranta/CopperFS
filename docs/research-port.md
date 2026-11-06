@@ -76,7 +76,7 @@ available at the source commit. No assertions were weakened to hide these cases.
 | --- | --- |
 | FileSystemCompatibilityTests | Packed containers and embedded-null comments are resolved by the correction below. The extent-owner and metadata-relocation correction below covers the remaining two cases. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
 | FileSystemRegressionTests | Node-branch growth and recovery regressions are ported. The historical failure was the node-fullness flag corrected in 6979849. |
-| TransactionRegressionTests | Archive-bit updates, empty directory-container unlinking and reads after failed writes differ. Check current mount/read contracts before porting fixes. |
+| TransactionRegressionTests | Archive-bit updates, empty-container unlinking and read visibility are covered by the classic transaction correction below. |
 | ReliabilityTests advanced growth scenarios | Admin-growth setup failed; advanced growth and packed cases are not part of the selected basic-mutation matrix. |
 | BatchedWriteTests, RelocationTests, ReservedOverwriteTests | Old range-count and scratch-buffer assumptions differ from current scalar/range APIs and small-write policy. Main's existing batching/relocation tests remain intact. |
 | TrstWriteTests | Hard-coded marker position, four-flush expectation and journal-space assumptions differ from current TRST placement and reservation. Main's existing TRST tests remain intact. |
@@ -191,6 +191,32 @@ node 99 in the existing index. Across 36 write/flush boundaries, the test checke
 321 crash images from power cuts and transient or persistent I/O failures.
 Recovery produced either the complete old or new directory and was byte-stable
 on a second recovery.
+
+## Classic transaction correction (2026-11-06)
+
+TransactionRegressionTests was ported from research commit 4a902a1. Eleven of
+its 24 cases failed on main at 8f06e4c. A successful nonempty write or size
+change now clears the archive bit inside the content transaction. Zero-length
+writes, same-size resizes and truncation of an empty file preserve the bit.
+
+Removing the last object from a container repairs the adjacent links or the
+parent's first-container pointer, then frees the admin slot in the same
+transaction. The tests exercise head, middle, tail and only-child removal,
+same-directory rename with immediate reuse, and recovery after interrupted
+writes and flushes.
+
+Classic file and metadata queries check the transaction marker before starting
+traversal. A failed strict mutation blocks reads with DiskNotValidated until
+recovery. The live mount may still read a complete acknowledged version after
+a failed write-back or grouped TRST checkpoint while its matching overlay is
+visible. A remount must recover from the on-disk marker. Callers invalidate
+read and enumeration cursors on mutation and media change.
+
+The Windows Release build passed. The solution suite passed 1,250 tests and
+skipped three external-media cases. CopperStart's native classic SFS replay
+passed separately with rebuilt 68000 TRST and CSUN handlers. Each replay
+covered writing, deleting, manual TRIM, rewriting and a cold reboot on NTFS.
+The managed regression suite exercised transaction fault injection.
 
 ## Original selective-port validation
 
