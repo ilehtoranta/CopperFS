@@ -75,7 +75,7 @@ available at the source commit. No assertions were weakened to hide these cases.
 | Research suites / cases | Observation and follow-up |
 | --- | --- |
 | FileSystemCompatibilityTests | Packed containers and embedded-null comments are resolved by the correction below. The extent-owner and metadata-relocation correction below covers the remaining two cases. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
-| FileSystemRegressionTests | Node-branch growth failure scenario needs comparison with current tree allocation behavior. |
+| FileSystemRegressionTests | Node-branch growth and recovery regressions are ported. The historical failure was the node-fullness flag corrected in 6979849. |
 | TransactionRegressionTests | Archive-bit updates, empty directory-container unlinking and reads after failed writes differ. Check current mount/read contracts before porting fixes. |
 | ReliabilityTests advanced growth scenarios | Admin-growth setup failed; advanced growth and packed cases are not part of the selected basic-mutation matrix. |
 | BatchedWriteTests, RelocationTests, ReservedOverwriteTests | Old range-count and scratch-buffer assumptions differ from current scalar/range APIs and small-write policy. Main's existing batching/relocation tests remain intact. |
@@ -176,6 +176,21 @@ rename of files and directories, admin-pool expansion and recovery after each
 write or flush interruption. Additional cases check contiguous allocation and
 reopen after buffered and TRST relocation. Local validation logs are under
 `artifacts/owner-*`.
+
+## Node-branch growth investigation (2026-11-06)
+
+The three classic SFS cases in NodeBranchGrowthTests are adapted from
+FileSystemRegressionTests at 4a902a1. All three reproduced an incorrect parent
+fullness flag on ec93282, passed on the immediately following fullness fix
+6979849, and passed on main at 536b882.
+
+The flat and nested fixtures each create 300 files and resolve every name to its
+original node after remount. The failure-injection fixture fills two 49-node
+leaves, then verifies that the next create installs a third leaf starting at
+node 99 in the existing index. Across 36 write/flush boundaries, the test checked
+321 crash images from power cuts and transient or persistent I/O failures.
+Recovery produced either the complete old or new directory and was byte-stable
+on a second recovery.
 
 ## Original selective-port validation
 
