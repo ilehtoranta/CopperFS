@@ -55,6 +55,7 @@ public static partial class NativeAmigaFileSystem
     internal const int SmartRecoveryPendingOffset = 56;
     internal const int SmartCreationDateOffset = 60;
     internal const int GeometryOffset = 1600, BuffersOffset = 1648, IoBufferOffset = 1652, CacheBlocksOffset = 1656, CacheBytesOffset = 1660;
+    private const int FixedHardDiskOffset = GeometryOffset + 40;
     internal const int ExtensionScratchOffset = 1664;
     internal const int InhibitedOffset = 1744;
     internal const int SmartJournalCursorOffset = 1748, SmartAllocationCursorOffset = 1752;
@@ -177,6 +178,17 @@ public static partial class NativeAmigaFileSystem
         return success;
     }
 
+    private static bool DeviceNamed(APTR name, CString expected)
+    {
+        var literal = APTR.FromPointer(expected);
+        for (var at = 0; ; at++)
+        {
+            var ch = APTR.ReadUInt8(name, at);
+            if (ch != APTR.ReadUInt8(literal, at)) return false;
+            if (ch == 0) return true;
+        }
+    }
+
     public static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment)
     {
         var state = global::Amiga.Exec.AllocMem(StateBytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
@@ -192,12 +204,19 @@ public static partial class NativeAmigaFileSystem
         { Destroy(s); return APTR.Null; }
         var p = new NativeFileSystemPlatform(s);
         var probe = APTR.FromPointer(state + MetadataOffset);
+        APTR.WriteUInt16(probe, 28, 0xFFFF);
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, 22); // TD_GETGEOMETRY
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoDataOffset, probe.Raw);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoLengthOffset, 32);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
         global::Amiga.Exec.DoIO(request);
         var haveDevice = APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 && APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) >= 32;
+        // Direct access alone also describes floppies. Require a known disk
+        // driver and affirmative fixed, direct-access geometry for this unit.
+        if (haveDevice && APTR.ReadUInt32(probe, 0) != 0 && APTR.ReadUInt8(probe, 28) == 0 &&
+            (APTR.ReadUInt8(probe, 29) & 1) == 0 && (DeviceNamed(deviceName, "scsi.device") ||
+            DeviceNamed(deviceName, "copperhdf.device") || DeviceNamed(deviceName, "uaehf.device")))
+            APTR.WriteUInt32(s, FixedHardDiskOffset, 1);
         AmigaVolumeGeometry geometry;
         if (environment.IsNotNull)
         {
@@ -1634,7 +1653,7 @@ public static partial class NativeAmigaFileSystem
 #endif
                 InitializeWriteWork(state, out var work);
                 var write = new AmigaFfsWriteCore.Request { Header = APTR.ReadUInt32(file, 4), Position = APTR.ReadUInt32(file, 12), Buffer = APTR.FromPointer(b), Length = c };
-                if (!AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written)) { error = work.Error; break; }
+                if (!AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written, APTR.ReadUInt32(state, FixedHardDiskOffset) != 0)) { error = work.Error; break; }
                 APTR.WriteUInt32(file, 12, write.Position + written);
                 if (write.Position + written > APTR.ReadUInt32(file, 8)) APTR.WriteUInt32(file, 8, write.Position + written);
                 if (written != 0) APTR.WriteUInt32(file, 40, 1);

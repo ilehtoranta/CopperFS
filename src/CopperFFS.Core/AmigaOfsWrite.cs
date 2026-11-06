@@ -54,7 +54,24 @@ public static partial class AmigaFfsWriteCore
     }
 
     // Called after Prepare has selected DOS0. FFS retains its existing writer.
-    private static bool WriteOfs<T>(ref T p, ref Work w, ref Request r, out uint actual)
+    // A complete single-table file has one publication point for both the
+    // pointer table and the head of the OFS forward chain.
+    private static bool WriteReplacementOfsData<T>(ref T p, ref Work w, ref Request r, uint first, uint count)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var payload = p.BlockBytes - 24;
+        for (var i = 0u; i < count; i++)
+        {
+            p.WriteUInt32(w.Data, 0, 8); p.WriteUInt32(w.Data, 4, r.Header);
+            p.WriteUInt32(w.Data, 8, i + 1); p.WriteUInt32(w.Data, 12, payload);
+            p.WriteUInt32(w.Data, 16, i + 1 == count ? 0 : first + i + 1);
+            p.Copy(APTR.FromPointer(r.Buffer.Raw + i * payload), APTR.FromPointer(w.Data.Raw + 24), payload);
+            if (!Put(ref p, ref w, first + i, w.Data, 20)) return false;
+        }
+        return true;
+    }
+
+    private static bool WriteOfs<T>(ref T p, ref Work w, ref Request r, out uint actual, bool fixedHardDisk)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0; var g = p.Geometry; var payload = g.BlockBytes - 24;
@@ -77,6 +94,13 @@ public static partial class AmigaFfsWriteCore
             if (!Prepare(ref p, ref w, newBlocks - oldBlocks + newExt - oldExt)) return false;
         }
         if (!Begin(ref p, ref w, ref g)) return false;
+        if (fixedHardDisk && g.BlockBytes == 512 && r.Position == 0 && r.Length == size &&
+            oldBlocks >= 64 && oldBlocks <= g.TableEntries && size == oldBlocks * payload)
+        {
+            if (!Header(ref p, ref w, r.Header) ||
+                !RelocateOverwrite(ref p, ref w, ref g, ref r, r.Header, 0, oldBlocks, ref actual, out var moved)) return false;
+            if (moved) return Finish(ref p, ref w, ref g);
+        }
         var table = r.Header; var tableIndex = 0u;
         uint runFirst = 0, runCount = 0;
         while (actual < r.Length)

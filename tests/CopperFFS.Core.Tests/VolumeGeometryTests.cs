@@ -15,6 +15,8 @@ public sealed partial class VolumeGeometryTests
         public readonly List<(ushort Command, ulong Offset, uint Bytes)> Transfers = new();
         public ulong FailWrite = ulong.MaxValue;
         public int WriteCalls, FailWriteCall;
+        public bool BulkTransfers;
+        public int FailFlushCall;
         public long LongReads, GeometryReads;
     }
 
@@ -25,12 +27,16 @@ public sealed partial class VolumeGeometryTests
         public uint ReservedBlocks => Geometry.ReservedBlocks;
         public AmigaVolumeGeometry Geometry { get { storage.GeometryReads++; return geometry; } }
         public bool WriteProtected() => storage.Protected;
-        public bool Flush() { storage.Flushes++; return !storage.FailFlush; }
+        public bool Flush() { storage.Flushes++; return !storage.FailFlush && storage.Flushes != storage.FailFlushCall; }
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
-        public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target) => storage.BulkTransfers
+            ? (AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, block, count, target) ? count : 0)
+            : AmigaFileSystemBlockIo.Read(ref this, block, count, target);
         public bool ReadBlock(uint block, APTR target) => AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, block, 1, target);
-        public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
+        public bool WriteDataBlocks(uint block, uint count, APTR source) => storage.BulkTransfers
+            ? AmigaFileSystemDeviceCore.Transfer(ref this, geometry, true, block, count, source)
+            : AmigaFileSystemBlockIo.Write(ref this, block, count, source);
         public bool WriteBlock(uint block, APTR source) => AmigaFileSystemDeviceCore.Transfer(ref this, geometry, true, block, 1, source);
         public bool Transfer(ushort command, ulong offset, uint bytes, APTR buffer)
         {

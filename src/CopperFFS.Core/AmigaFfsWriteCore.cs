@@ -56,8 +56,8 @@ public static partial class AmigaFfsWriteCore
         if (scan && !AmigaDiskFileSystemCore.CountUsed(ref p, w.Data, w.Bitmap, out used))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         if (IsFree(ref p, ref w, geometry.RootBlock)) return Fail(ref w, DOS.Error.DiskNotValidated);
-        // An overwrite cannot allocate. Validate its bitmap pages on demand;
-        // growth and other metadata operations still inspect the whole map.
+        // Overwrites validate the touched pages on demand. Growth and other
+        // metadata operations still inspect the whole map.
         if (!scan) return w.Error == DOS.Error.None;
         var maps = AmigaGeometryMath.Divide(geometry.BlockCount - geometry.ReservedBlocks - 1, bitmapBits) + 1;
         var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
@@ -452,6 +452,10 @@ public static partial class AmigaFfsWriteCore
     }
 
     public static bool Write<T>(ref T p, ref Work w, ref Request r, out uint actual) where T : struct, IAmigaWritableFileSystemPlatform
+        => Write(ref p, ref w, ref r, out actual, false);
+
+    // Opt in only when the mount has positively identified a fixed hard disk.
+    public static bool Write<T>(ref T p, ref Work w, ref Request r, out uint actual, bool fixedHardDisk) where T : struct, IAmigaWritableFileSystemPlatform
     {
         var geometry = p.Geometry;
         actual = 0;
@@ -459,7 +463,7 @@ public static partial class AmigaFfsWriteCore
         if (blockBytes == 0 || tableEntries == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (r.Length > int.MaxValue || !p.IsMapped(r.Buffer, r.Length)) return Fail(ref w, DOS.Error.BadNumber);
         if (!Prepare(ref p, ref w, 0, false)) return false;
-        if (w.DosType == 0x444F5300) return WriteOfs(ref p, ref w, ref r, out actual);
+        if (w.DosType == 0x444F5300) return WriteOfs(ref p, ref w, ref r, out actual, fixedHardDisk);
         if (!Header(ref p, ref w, r.Header)) return false;
         if (p.ReadUInt32(w.Meta, geometry.Tail + 508) != 0xFFFFFFFD) return Fail(ref w, DOS.Error.ObjectWrongType);
         if ((p.ReadUInt32(w.Meta, geometry.Tail + 320) & 4) != 0) return Fail(ref w, DOS.Error.WriteProtected);
@@ -487,6 +491,9 @@ public static partial class AmigaFfsWriteCore
         if (!Begin(ref p, ref w, ref geometry)) return false;
         var table = r.Header; var tableIndex = 0u;
         uint runFirst = 0, runCount = 0;
+        // A failed fit is final for this table. Never probe again per sector.
+        var probeAt = fixedHardDisk && end <= size && ((r.Position | r.Length) & (blockBytes - 1)) == 0
+            ? first : uint.MaxValue;
         while (actual < r.Length)
         {
             var position = r.Position + actual; var index = AmigaGeometryMath.Divide(position, blockBytes);
@@ -509,7 +516,20 @@ public static partial class AmigaFfsWriteCore
                 table = next; tableIndex++;
             }
             if (!p.ReadBlock(table, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
-            var at = geometry.Tail + 308 - (int)(AmigaGeometryMath.Remainder(index, tableEntries)) * 4; var key = p.ReadUInt32(w.Meta, at);
+            var slot = AmigaGeometryMath.Remainder(index, tableEntries);
+            var at = geometry.Tail + 308 - (int)slot * 4; var key = p.ReadUInt32(w.Meta, at);
+            if (index == probeAt)
+            {
+                var countInTable = tableEntries - slot;
+                if (countInTable > limit - index) countInTable = limit - index;
+                probeAt += countInTable;
+                if (!RelocateOverwrite(ref p, ref w, ref geometry, ref r, table, slot, countInTable, ref actual, out var moved)) return false;
+                if (moved)
+                {
+                    if (actual == r.Length) return Finish(ref p, ref w, ref geometry);
+                    continue;
+                }
+            }
             if (index >= oldBlocks)
             {
                 var wanted = newBlocks - index;
@@ -534,5 +554,105 @@ public static partial class AmigaFfsWriteCore
         if (!Header(ref p, ref w, r.Header)) return false;
         p.WriteUInt32(w.Meta, geometry.Tail + 324, newSize);
         return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, ref geometry);
+    }
+
+    // Limit the first hard-disk policy to a single bitmap page per table
+    // segment. Reservation and release then each cost just one bitmap write.
+    private static bool RelocateOverwrite<T>(ref T p, ref Work w, ref AmigaVolumeGeometry g,
+        ref Request r, uint table, uint slot, uint count, ref uint actual, out bool moved)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        moved = false;
+        if (count < 8) return true;
+        var at = g.Tail + 308 - (int)slot * 4;
+        var first = p.ReadUInt32(w.Meta, at);
+        var last = first;
+        var breaks = 0u;
+        for (var i = 1u; i < count; i++)
+        {
+            var key = p.ReadUInt32(w.Meta, at - (int)i * 4);
+            if (w.DosType == 0x444F5300)
+            {
+                if ((key > last ? key - last : last - key) >= 128) breaks++;
+            }
+            else if (key != last + 1) breaks++;
+            last = key;
+        }
+        // Charge both ends for potentially severing an existing run. At a
+        // table boundary the reader already starts a separate transfer.
+        var entries = p.ReadUInt32(w.Meta, 8);
+        var cuts = slot != 0 && p.ReadUInt32(w.Meta, at + 4) + 1 == first ? 1u : 0u;
+        if (slot + count < entries && p.ReadUInt32(w.Meta, at - (int)count * 4) == last + 1) cuts++;
+        // The 32-block/four-run benchmark amortized publication on the
+        // overwrite itself. Keep the higher read-savings margin below it.
+        var requiredBreaks = count >= 32 ? 3u : 4u;
+        if (w.DosType == 0x444F5300) requiredBreaks = 7;
+        if (breaks < requiredBreaks + cuts) return true;
+        if (!LoadBitmap(ref p, ref w, first)) return false;
+        for (var i = 1u; i < count; i++)
+            if (unchecked(p.ReadUInt32(w.Meta, at - (int)i * 4) - w.BitmapFirst) >= w.BitmapCount) return true;
+
+        // Try just past the last old block, then the beginning of the same
+        // page. The second window can find space before a crowded file.
+        var offset = last - w.BitmapFirst + 1;
+        var destination = OverwriteRun(ref p, ref w, g.RootBlock, offset, w.BitmapCount, count);
+        if (destination == 0) destination = OverwriteRun(ref p, ref w, g.RootBlock, 0, w.BitmapCount, count);
+        if (destination == 0) return true;
+
+        // Validate source ownership within this table before releasing any
+        // pointers. Data is scratch until the new pointer image is assembled.
+        p.Clear(w.Data, g.BlockBytes);
+        var next = p.ReadUInt32(w.Meta, g.Tail + 504);
+        for (var i = 0u; i < entries; i++)
+        {
+            var key = p.ReadUInt32(w.Meta, g.Tail + 308 - (int)i * 4);
+            var bit = unchecked(key - w.BitmapFirst);
+            if (bit >= w.BitmapCount) continue;
+            var word = (int)(bit / 32) * 4;
+            var mask = 1u << (int)(bit % 32);
+            var seen = p.ReadUInt32(w.Data, word);
+            if ((seen & mask) != 0 || key == table || key == r.Header || key == next ||
+                key == w.BitmapBlock || key == g.RootBlock || SearchFree(ref p, ref w, key, g.RootBlock))
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            p.WriteUInt32(w.Data, word, seen | mask);
+        }
+
+        // Keep the invalid marker durable while the two sets of blocks coexist.
+        if (!p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+        for (var i = 0u; i < count; i++) Bit(ref p, ref w, destination + i, false);
+        if (!FlushBitmap(ref p, ref w)) return false;
+        if (w.DosType == 0x444F5300)
+        {
+            if (!WriteReplacementOfsData(ref p, ref w, ref r, destination, count)) return false;
+        }
+        else if (!p.WriteDataBlocks(destination, count, APTR.FromPointer(r.Buffer.Raw + actual)))
+            return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (!p.Flush())
+            return Fail(ref w, DOS.Error.DiskNotValidated);
+        // Keep the old table in Meta until the replacement table is on disk.
+        p.Copy(w.Meta, w.Data, g.BlockBytes);
+        for (var i = 0u; i < count; i++) p.WriteUInt32(w.Data, at - (int)i * 4, destination + i);
+        if (table == r.Header && slot == 0) p.WriteUInt32(w.Data, 16, destination);
+        if (!Put(ref p, ref w, table, w.Data, 20)) return false;
+        actual += w.DosType == 0x444F5300 ? r.Length : count * g.BlockBytes;
+        if (!p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+        for (var i = 0u; i < count; i++) Bit(ref p, ref w, p.ReadUInt32(w.Meta, at - (int)i * 4), true);
+        moved = true;
+        return FlushBitmap(ref p, ref w) && (p.Flush() || Fail(ref w, DOS.Error.DiskNotValidated));
+    }
+
+    private static uint OverwriteRun<T>(ref T p, ref Work w, uint root, uint offset, uint limit, uint count)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var window = limit - offset;
+        if (window > count + 128) window = count + 128;
+        uint length = 0;
+        for (var i = 0u; i < window; i++)
+        {
+            var key = w.BitmapFirst + offset + i;
+            if (key == w.BitmapBlock || !SearchFree(ref p, ref w, key, root)) length = 0;
+            else if (++length == count) return key - (count - 1);
+        }
+        return 0;
     }
 }
