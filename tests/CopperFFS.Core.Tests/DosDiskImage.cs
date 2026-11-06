@@ -207,7 +207,7 @@ internal sealed class DosDiskImage(bool ffs, bool highDensity = false, uint firs
         if (remaining < 0 || budget < 1) throw new ArgumentOutOfRangeException(nameof(remaining));
         var dataBlocks = 0;
         while (1 + dataBlocks + 1 + dataBlocks / 72 <= budget) dataBlocks++;
-        AddDataFile("DiskFullFiller", new byte[dataBlocks * 512]);
+        AddDataFile("DiskFullFiller", new byte[dataBlocks * (ffs ? 512 : 488)]);
         var consumed = 1 + dataBlocks + (dataBlocks == 0 ? 0 : (dataBlocks - 1) / 72);
         if (consumed < budget) AddDataFile("DiskFullRemainder", []);
     }
@@ -216,8 +216,8 @@ internal sealed class DosDiskImage(bool ffs, bool highDensity = false, uint firs
     // the upper HD half; no orphan bitmap reservations stand in for file data.
     public void FillBeforeBlock(uint firstFreeBlock)
     {
-        if (!ffs || firstFreeBlock >= BlockCount || next >= firstFreeBlock)
-            throw new InvalidOperationException("FFS filler must advance within the disk.");
+        if (firstFreeBlock >= BlockCount || next >= firstFreeBlock)
+            throw new InvalidOperationException("DOS filler must advance within the disk.");
         var dataBlocks = 1;
         while (true)
         {
