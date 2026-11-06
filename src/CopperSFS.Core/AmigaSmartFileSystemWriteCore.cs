@@ -828,21 +828,22 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         end = 24;
-        var limit = (int)w.BlockBytes;
-        while (end + 27 <= limit)
+        while (end + 27 <= w.BlockBytes)
         {
             if (p.ReadUInt32(buffer, end + 4) == 0) return true;
             var nameEnd = end + 25;
-            while (nameEnd < limit && p.ReadUInt8(buffer, nameEnd) != 0) nameEnd++;
-            if (nameEnd == limit) break;
+            while (nameEnd < w.BlockBytes && p.ReadUInt8(buffer, nameEnd) != 0) nameEnd++;
+            if (nameEnd == end + 25 || nameEnd >= w.BlockBytes)
+                return Fail(ref w, DOS.Error.DiskNotValidated);
             var commentEnd = nameEnd + 1;
-            while (commentEnd < limit && p.ReadUInt8(buffer, commentEnd) != 0) commentEnd++;
-            if (commentEnd == limit) break;
+            while (commentEnd < w.BlockBytes && p.ReadUInt8(buffer, commentEnd) != 0) commentEnd++;
+            if (commentEnd >= w.BlockBytes) return Fail(ref w, DOS.Error.DiskNotValidated);
             var next = (commentEnd + 2) & ~1;
-            if (next <= end) break;
+            if (next <= end || next > w.BlockBytes) return Fail(ref w, DOS.Error.DiskNotValidated);
             end = next;
         }
-        return Fail(ref w, DOS.Error.DiskNotValidated);
+        // Native SFS may fill the block completely, without a spare sentinel entry.
+        return true;
     }
 
     private static bool FindFreeNodeIn<T>(ref T p, ref Work w, uint block, uint depth, bool grow,
@@ -1035,7 +1036,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                 var view = View(ref p, ref w, current, ObjectId, w.Meta);
                 if (view.IsNull || p.ReadUInt32(view, 12) != r.Directory ||
                     !ContainerEnd(ref p, ref w, view, out var end)) return false;
-                if (end + entryBytes + 27 <= w.BlockBytes)
+                if (end + entryBytes <= w.BlockBytes)
                 {
                     container = current; at = end;
                     image = Edit(ref p, ref w, current, ObjectId, w.Meta);
@@ -1862,6 +1863,11 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (action == DosPacketAction.SetComment && r.Length > 79) return Fail(ref w, DOS.Error.CommentTooBig);
         if (action == DosPacketAction.SetDate && !p.IsMapped(r.Buffer, 12)) return Fail(ref w, DOS.Error.BadNumber);
         if (action == DosPacketAction.SetComment && !p.IsMapped(r.Buffer, r.Length)) return Fail(ref w, DOS.Error.BadNumber);
+        // Comments are stored as NUL-terminated strings; an interior NUL would
+        // make following record bytes look like the end of the container.
+        if (action == DosPacketAction.SetComment)
+            for (var i = 0u; i < r.Length; i++)
+                if (p.ReadUInt8(r.Buffer, (int)i) == 0) return Fail(ref w, DOS.Error.BadNumber);
         if (!Prepare(ref p, ref w)) return false;
         var original = AmigaSmartFileSystemCore.ObjectViewFromRoots(ref p, r.Node, w.RootContainer,
             w.NodeRoot, w.BlockCount, w.BlockBytes, w.Meta, out var at);
@@ -1900,7 +1906,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         var oldAfter = (oldCommentEnd + 2) & ~1;
         var newAfter = (commentAt + (int)r.Length + 2) & ~1;
         var shift = newAfter - oldAfter;
-        if (end + shift + 27 > w.BlockBytes) return Fail(ref w, DOS.Error.DiskFull);
+        if (end + shift > w.BlockBytes) return Fail(ref w, DOS.Error.DiskFull);
         if (!Begin(ref p, ref w) || !Object(ref p, ref w, r.Node, w.Meta, out at) ||
             !ContainerEnd(ref p, ref w, w.Meta, out end)) return false;
         if (shift > 0)
