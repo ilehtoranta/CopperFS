@@ -111,14 +111,15 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         Validate(disk.Snapshot(), model);
     }
     private static byte[] Pattern(int length, int seed = 7) => Enumerable.Range(0, length).Select(i => (byte)(i * 29 + seed)).ToArray();
-    // Selected basic mutations; growth/packed-container regressions remain tracked in docs/research-port.md.
+    // Additional research scenarios are tracked in docs/research-port.md.
     public static IEnumerable<object[]> Scenarios => new[]
-    { "create", "overwrite", "append", "shrink", "truncate", "delete", "rename" }
+    { "create", "overwrite", "append", "shrink", "truncate", "delete", "rename", "admin-growth" }
     .Select(name => new object[] { name });
 
     private static (byte[] Image, List<Expected> Before, Mutation Mutation) Prepare(string scenario)
     {
         var image = Image(); var model = InitialModel(); Validate(image, model);
+        if (scenario == "admin-growth") return PrepareAdminGrowth(image, model);
         Mutation mutation = scenario switch
         {
             "create" => new("create"),
@@ -131,6 +132,40 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
             _ => throw new ArgumentException("Unselected research scenario", nameof(scenario))
         };
         return (image, model, mutation);
+    }
+
+    private static (byte[] Image, List<Expected> Before, Mutation Mutation) PrepareAdminGrowth(
+        byte[] image, List<Expected> model)
+    {
+        var disk = new ReliabilityDisk(image);
+        // Research fixture 4a902a1 seeds two 32-block ranges in ADMC block 10.
+        const int thirdRange = 24 + 2 * 8;
+        for (var i = 0; i < 100; i++)
+        {
+            var directory = $"D{i:D3}";
+            foreach (var mutation in new[] { new Mutation("mkdir", Name: directory),
+                         new Mutation("create", Name: directory + "/Child") })
+            {
+                var before = disk.Snapshot();
+                var previous = model;
+                Commit(ref disk, ref model, mutation);
+                var after = disk.Snapshot();
+                if (U32(Block(after, 10), thirdRange) == 0) continue;
+                Assert.Equal(uint.MaxValue, U32(Block(after, 10), 28));
+                Assert.Equal(uint.MaxValue, U32(Block(after, 10), 36));
+                Assert.NotEqual(0u, U32(Block(after, 10), thirdRange + 4));
+
+                Assert.Equal(0u, U32(Block(before, 10), thirdRange));
+                var reopened = new ReliabilityDisk(before);
+                Assert.True(Recover(ref reopened));
+                Validate(reopened.Snapshot(), previous);
+                var expanded = new ReliabilityDisk(after);
+                Assert.True(Recover(ref expanded));
+                Validate(expanded.Snapshot(), model);
+                return (before, previous, mutation);
+            }
+        }
+        throw new InvalidOperationException("No third admin range allocated.");
     }
 
     private static bool Recover(ref ReliabilityDisk disk)
@@ -172,6 +207,7 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         var (image, model, mutation) = Prepare(scenario);
         var before = Manifest(model); var probe = new ReliabilityDisk(image);
         var success = Execute(ref probe, mutation, out var created, out var error);
+        if (scenario == "admin-growth") Assert.True(success, $"Admin growth failed after reopen: {error}");
         var after = before;
         if (success)
         {
