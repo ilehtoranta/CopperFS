@@ -58,7 +58,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         var hash = r.Length;
         for (var i = 0u; i < r.Length; i++)
         {
-            var value = (uint)RecycledNameByte(ref p, w.Bitmap, nameAt, i, r.Length, r.Position);
+            var value = (uint)RecycledNameByte(ref p, w.Data, nameAt, i, r.Length, r.Position);
             if (!w.CaseSensitive && ((value >= 97 && value <= 122) ||
                 (value >= 224 && value <= 246) || (value >= 248 && value <= 254))) value -= 32;
             hash = unchecked(hash * 13 + value) & 65535;
@@ -69,14 +69,13 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool RecycleFile<T>(ref T p, ref Work w, uint node, APTR source, int at, uint nameLength)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        p.Copy(source, w.Bitmap, w.BlockBytes);
-        w.PreserveBitmap = true;
+        p.Copy(source, w.Data, w.BlockBytes);
         var stem = nameLength > 96 ? 96u : nameLength;
         for (var attempt = 0u; attempt <= 4096; attempt++)
         {
             var length = stem + (attempt == 0 ? 0u : 4u);
-            CopyRecycledName(ref p, w.Bitmap, at + 25, w.Data, length, attempt);
-            var found = AmigaSmartFileSystemCore.ResolveFromRoots(ref p, RecycledNode, w.Data, length, w.Meta, w.RootContainer, w.NodeRoot,
+            CopyRecycledName(ref p, w.Data, at + 25, w.Bitmap, length, attempt);
+            var found = AmigaSmartFileSystemCore.ResolveFromRoots(ref p, RecycledNode, w.Bitmap, length, w.Meta, w.RootContainer, w.NodeRoot,
                 w.BlockCount, w.BlockBytes, w.CaseSensitive, out var error, out _, out _);
             if (found == 0)
             {

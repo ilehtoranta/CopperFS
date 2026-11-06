@@ -74,7 +74,7 @@ available at the source commit. No assertions were weakened to hide these cases.
 
 | Research suites / cases | Observation and follow-up |
 | --- | --- |
-| FileSystemCompatibilityTests | Packed containers and embedded-null comments are resolved by the correction below. New extent owner tags and metadata relocation still need focused investigation. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
+| FileSystemCompatibilityTests | Packed containers and embedded-null comments are resolved by the correction below. The extent-owner and metadata-relocation correction below covers the remaining two cases. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
 | FileSystemRegressionTests | Node-branch growth failure scenario needs comparison with current tree allocation behavior. |
 | TransactionRegressionTests | Archive-bit updates, empty directory-container unlinking and reads after failed writes differ. Check current mount/read contracts before porting fixes. |
 | ReliabilityTests advanced growth scenarios | Admin-growth setup failed; advanced growth and packed cases are not part of the selected basic-mutation matrix. |
@@ -156,6 +156,26 @@ General metadata relocation when a container genuinely lacks space remains
 outside this correction. Validation receipts use the ignored artifacts/packed-*
 paths; managed boundary/crash tests and native integration replays are reported
 separately.
+
+## Extent owner tags and metadata relocation (2026-11-06)
+
+Classic SFS now records the owning object node with its high bit set in every
+new first extent. Later extents point back to the previous extent. The insertion
+helper applies this rule to scalar and batched writes, contiguous allocation and
+resize. Older files with a zero first backlink remain readable and writable.
+
+When a longer comment no longer fits, SetComment moves the object within its
+parent directory in the same transaction and updates its node's container pointer.
+The object keeps its node, name, hash-chain position, attributes and file data.
+Rename and recycling also keep the source record in the data scratch block so
+the allocator can use bitmap scratch when the directory needs more admin space.
+
+The compatibility and crash regressions in ExtentOwnerAndMetadataTests come
+from research commit 4a902a1. They cover native first backlinks, comment growth,
+rename of files and directories, admin-pool expansion and recovery after each
+write or flush interruption. Additional cases check contiguous allocation and
+reopen after buffered and TRST relocation. Local validation logs are under
+`artifacts/owner-*`.
 
 ## Original selective-port validation
 

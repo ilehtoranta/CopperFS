@@ -120,7 +120,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                 }
                 else
                 {
-                    if (!InsertExtent(ref p, ref w, block, last == 0 ? r.Node | 0x80000000 : last)) return false;
+                    if (!InsertExtent(ref p, ref w, block, last, r.Node)) return false;
                     if (count > 1 && !GrowExtentRun(ref p, ref w, block, block + 1, count - 1)) return false;
                 }
                 if (first == 0) first = block;
