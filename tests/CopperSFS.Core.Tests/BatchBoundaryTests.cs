@@ -110,18 +110,15 @@ public sealed class BatchBoundaryTests(ITestOutputHelper output)
         output.WriteLine($"{probe.Events} write/flush cuts, {cases} recovered images.");
     }
 
-    // The research fixture leaves room for one contiguous 64 KiB replacement.
-    private static (byte[] Image, uint Node) FragmentedRelocationSeed()
+    private static (byte[] Image, uint Node) FragmentedRelocationSeed(int[] starts, ushort length, int capacity)
     {
-        var disk = new StudyDisk(StudyFixture.Empty(Bytes, 256 * 1024), Bytes);
+        var disk = new StudyDisk(StudyFixture.Empty(Bytes, capacity), Bytes);
         var node = FsOps.Create(ref disk, "Data");
         var keep = FsOps.Create(ref disk, "Keep");
         FsOps.Write(ref disk, keep, 0, StudyFixture.Pattern(513, 110));
         var image = disk.Snapshot();
         var tree = Block(image, 5);
         var existing = BinaryPrimitives.ReadUInt16BigEndian(tree[12..]);
-        int[] starts = [64, 144, 224, 304];
-        const int length = 64;
         var contents = StudyFixture.Pattern(starts.Length * length * Bytes, 111);
         U16(tree, 12, checked((ushort)(existing + starts.Length)));
         for (var i = 0; i < starts.Length; i++)
@@ -155,7 +152,7 @@ public sealed class BatchBoundaryTests(ITestOutputHelper output)
     [Fact]
     public void DiskFullAfterRelocationRestoresOriginalExtentOwnershipAndData()
     {
-        var (image, node) = FragmentedRelocationSeed();
+        var (image, node) = FragmentedRelocationSeed([64, 144, 224, 304], 64, 256 * 1024);
         var before = StudyFixture.Inspect(image, Bytes);
         var replacement = StudyFixture.Pattern(128 * 1024, 119);
         var probe = new StudyDisk(image, Bytes, crashModel: true);
@@ -212,5 +209,86 @@ public sealed class BatchBoundaryTests(ITestOutputHelper output)
         }
         Assert.InRange(relocationCut, 1, probe.Events - 1);
         output.WriteLine($"Relocated prefix at cut {relocationCut}; {probe.Events} cuts, {cases} sampled recoveries.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IndexedExtentReplacementSurvivesCutsAndWriteFailures(bool alreadyIndexed)
+    {
+        // Research commit 4a902a1: leave an unaligned prefix and suffix around the replacement.
+        var starts = Enumerable.Range(0, 33).Select(i => 64 + i * 32).ToArray();
+        var (image, node) = FragmentedRelocationSeed(starts, 16, 1024 * 1024);
+        Assert.Equal(1, Block(image, 5)[14]);
+        Assert.Equal(35, BinaryPrimitives.ReadUInt16BigEndian(Block(image, 5)[12..]));
+        if (alreadyIndexed)
+        {
+            var seed = new StudyDisk(image, Bytes);
+            var extra = FsOps.Create(ref seed, "Extra");
+            FsOps.Write(ref seed, extra, 0, StudyFixture.Pattern(Bytes, 120));
+            image = seed.Snapshot();
+            Assert.Equal(0, Block(image, 5)[14]);
+        }
+
+        var before = StudyFixture.Inspect(image, Bytes);
+        var replacement = StudyFixture.Pattern(65536, 122);
+        var expected = StudyFixture.Pattern(starts.Length * 16 * Bytes, 111);
+        replacement.CopyTo(expected, 13);
+        var probe = new StudyDisk(image, Bytes, crashModel: true);
+        Assert.True(Write(ref probe, node, 13, replacement, out var actual, out var error), error.ToString());
+        Assert.Equal((uint)replacement.Length, actual);
+        var committed = probe.Snapshot();
+        var after = StudyFixture.Inspect(committed, Bytes);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(expected)), after.Entries.Single(e => e.Node == node).Sha256);
+        Assert.Equal(before.Entries.Where(e => e.Node != node), after.Entries.Where(e => e.Node != node));
+        Assert.Equal(0, Block(committed, 5)[14]);
+        // The original first block now ends a one-block extent. Its successor
+        // supplies logical block one from a different physical address.
+        var root = Block(committed, 5);
+        var leaf = Block(committed, checked((int)U32(root, 20)));
+        var count = BinaryPrimitives.ReadUInt16BigEndian(leaf[12..]);
+        var offset = 16;
+        var end = offset + count * 14;
+        while (offset < end && U32(leaf, offset) != starts[0]) offset += 14;
+        Assert.True(offset < end, "The original first extent disappeared.");
+        var first = leaf[offset..];
+        Assert.Equal(1, BinaryPrimitives.ReadUInt16BigEndian(first[12..]));
+        Assert.NotEqual((uint)starts[0] + 1, U32(first, 4));
+        Assert.NotEqual(0u, U32(first, 4));
+
+        var cases = 0;
+        void Verify(StudyDisk disk)
+        {
+            foreach (var snapshot in disk.SampledCrashImages())
+            {
+                var reopened = new StudyDisk(snapshot, Bytes, crashModel: true);
+                FsOps.Recover(ref reopened);
+                var stable = reopened.Snapshot();
+                var report = StudyFixture.Inspect(stable, Bytes);
+                var expectedReport = report.Entries.Single(e => e.Node == node).Sha256 ==
+                    after.Entries.Single(e => e.Node == node).Sha256 ? after : before;
+                Assert.Equal(expectedReport.FreeBlocks, report.FreeBlocks);
+                Assert.Equal(expectedReport.Entries.ToArray(), report.Entries.ToArray());
+                FsOps.Recover(ref reopened);
+                Assert.True(stable.AsSpan().SequenceEqual(reopened.Snapshot()));
+                cases++;
+            }
+        }
+
+        for (var cut = 1; cut <= probe.Events; cut++)
+        {
+            var disk = new StudyDisk(image, Bytes, crashModel: true) { CutAfterEvent = cut };
+            Assert.Throws<StudyPowerCut>(() => Write(ref disk, node, 13, replacement, out _, out _));
+            Verify(disk);
+        }
+        foreach (var persistent in new[] { false, true })
+        for (var fail = 1; fail <= probe.Events; fail++)
+        {
+            var disk = new StudyDisk(image, Bytes, crashModel: true) { FailAtEvent = fail, PersistentFailure = persistent };
+            Assert.False(Write(ref disk, node, 13, replacement, out actual, out _));
+            Assert.Equal(0u, actual);
+            Verify(disk);
+        }
+        output.WriteLine($"{probe.Events} write/flush points, {cases} sampled recoveries.");
     }
 }

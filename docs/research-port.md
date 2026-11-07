@@ -131,6 +131,14 @@ persistence states at all 303 write/flush cuts and after failure (3,040 images
 in this run), checking both files, extent records, allocation bitmap, free
 space and repeat recovery.
 
+The indexed extent replacement regression from 4a902a1 overwrites 64 KiB
+starting at byte 13. One fixture starts with a full 35-record leaf and the
+replacement splits it. The other starts with an indexed root. Both check the
+relocated successor of the retained first block and the hash of the entire
+file, including its untouched edges. At every write/flush cut and transient
+or persistent write/flush failure, sampled images recover the complete old or
+new manifest and free-block count, and a second recovery preserves the image.
+
 ## Node-fullness correction (2026-11-04)
 
 Classic node allocation and removal now recompute fullness along the modified
