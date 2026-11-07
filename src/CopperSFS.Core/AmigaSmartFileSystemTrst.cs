@@ -7,7 +7,7 @@ public static partial class AmigaSmartFileSystemWriteCore
     public enum TrstOperation
     {
         Write, CreateFile, CreateDirectory, Remove, Rename, Resize, Truncate,
-        SetProtection, SetComment, SetDate
+        SetProtection, SetComment, SetDate, ReplaceFile
     }
 
     /// <summary>
@@ -31,7 +31,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         w.Error = DOS.Error.None;
         // A native operation's compressed payload length is a UWORD. Bound the
         // worst case (one literal-run code per 64 longs) before doing any I/O.
-        if (bytes < 512 || bytes > 32768 || operation < TrstOperation.Write || operation > TrstOperation.SetDate)
+        if (bytes < 512 || bytes > 32768 || operation < TrstOperation.Write || operation > TrstOperation.ReplaceFile)
             return Fail(ref w, DOS.Error.BadNumber);
         if (stagingBuffer.IsNull || stagingBytes < bytes + 40 || !p.IsMapped(stagingBuffer, stagingBytes) ||
             w.Meta.IsNull || !p.IsMapped(w.Meta, bytes) || w.Data.IsNull || !p.IsMapped(w.Data, bytes) ||
@@ -74,6 +74,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             TrstOperation.SetProtection => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetProtection),
             TrstOperation.SetComment => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetComment),
             TrstOperation.SetDate => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate),
+            TrstOperation.ReplaceFile => ReplaceFile(ref p, ref w, ref r),
             _ => false
         };
         p.RedoOverlay = APTR.Null;

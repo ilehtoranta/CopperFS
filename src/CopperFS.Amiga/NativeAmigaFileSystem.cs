@@ -900,7 +900,10 @@ public static partial class NativeAmigaFileSystem
             if (directory) { error = DOS.Error.ObjectWrongType; return 0; }
             if (action == DosPacketAction.FindOutput)
             {
-                if (!NativeSfsExtension.Truncate(state, ref w, found)) { error = w.Error; return 0; }
+                var request = new AmigaSmartFileSystemWriteCore.Request
+                { Node = found, Directory = name.Directory, Name = name.Name, Length = name.Length };
+                if (!NativeSfsExtension.ReplaceFile(state, ref w, ref request)) { error = w.Error; return 0; }
+                found = request.Node;
                 size = 0;
             }
         }
@@ -991,6 +994,12 @@ public static partial class NativeAmigaFileSystem
         if (action != DosPacketAction.SetProtection)
         {
             r.Buffer = APTR.FromPointer(value << 2);
+            // Kickstart 3.1's SetFileDate path supplies an expanded address.
+            // CopperStart's DOS path supplies a BPTR. Match the SFS adapter:
+            // use the expanded form when only that form is in guest memory.
+            if (action == DosPacketAction.SetDate && !p.IsMapped(r.Buffer, 12) &&
+                p.IsMapped(APTR.FromPointer(value), 12))
+                r.Buffer = APTR.FromPointer(value);
             if (action == DosPacketAction.SetComment)
             {
                 r.Length = p.ReadUInt8(r.Buffer);
@@ -1723,7 +1732,11 @@ public static partial class NativeAmigaFileSystem
                 if ((int)action == AmigaSmartFileSystemTrimPacket.Action && !Smart(state))
                 {
                     if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0) error = DOS.Error.NoDisk;
+#if COPPERSTART_NATIVE_SFS_WRITES
                     else result = NativeSfsTrim.Execute(state, packet, out error, ffs: true);
+#else
+                    else result = NativeSfsTrim.ExecuteFfs(state, packet, out error);
+#endif
                     break;
                 }
 #if COPPERSTART_NATIVE_SFS_WRITES

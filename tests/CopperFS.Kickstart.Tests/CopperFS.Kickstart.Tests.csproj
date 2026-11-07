@@ -18,5 +18,9 @@
     <ProjectReference Include="$(CopperScreenRoot)/CopperMod.Amiga.Lightweight/CopperMod.Amiga.Lightweight.csproj" />
     <!-- Original repository fixtures/checker; source-linked, with their provenance retained. -->
     <Compile Include="../CopperFFS.Core.Tests/DosDiskImage.cs" Link="Fixtures/DosDiskImage.cs" />
+    <Compile Include="../../tools/CopperSFS.Bench/StudyFixture.cs" Link="Fixtures/StudyFixture.cs" />
+    <Compile Include="../../tools/CopperSFS.Bench/StudyDisk.cs" Link="Fixtures/StudyDisk.cs" />
+    <Compile Include="../../tools/CopperSFS.Bench/StudyDiscard.cs" Link="Fixtures/StudyDiscard.cs" />
+    <Compile Include="../../tools/CopperSFS.Check/SfsImageChecker.cs" Link="Fixtures/SfsImageChecker.cs" />
   </ItemGroup>
 </Project>
