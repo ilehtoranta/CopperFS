@@ -110,6 +110,19 @@ With CopperSharp68k and CopperScreen beside CopperFS, run:
 dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~OriginalHandlerRecoversCopperSfsTrst
 ```
 
+## Classic batching boundaries
+
+The two boundary cases from research commit 4a902a1 run in
+`BatchBoundaryTests`. With four free blocks, a 4 KiB overwrite uses 1 KiB
+batches. The regression observes the first batch in a crash image, checks
+the disk-full error and zero reported bytes, then verifies the original file
+hash, metadata and allocation count after recovery at every write/flush cut.
+
+A second fixture starts with a single 65,535-block extent. The two-block
+append from the research suite and an eight-block append exercise the current
+small-write and batched paths. Both must retain the full extent, link its
+successor in both directions, and preserve the complete file across reopen.
+
 ## Node-fullness correction (2026-11-04)
 
 Classic node allocation and removal now recompute fullness along the modified
