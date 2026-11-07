@@ -12,15 +12,12 @@
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <Using Include="Xunit" />
+    <ProjectReference Include="../../tools/CopperSFS.Bench/CopperSFS.Bench.csproj" />
     <ProjectReference Include="../../src/CopperFS.Amiga/CopperFS.Amiga.csproj" />
     <ProjectReference Include="$(CopperSharp68kRoot)/Targets.Amiga/CopperSharp.Targets.Amiga.csproj" />
     <ProjectReference Include="$(CopperSharp68kRoot)/Compiler.BootAdf/CopperSharp.Compiler.BootAdf.csproj" />
     <ProjectReference Include="$(CopperScreenRoot)/CopperMod.Amiga.Lightweight/CopperMod.Amiga.Lightweight.csproj" />
     <!-- Original repository fixtures/checker; source-linked, with their provenance retained. -->
     <Compile Include="../CopperFFS.Core.Tests/DosDiskImage.cs" Link="Fixtures/DosDiskImage.cs" />
-    <Compile Include="../../tools/CopperSFS.Bench/StudyFixture.cs" Link="Fixtures/StudyFixture.cs" />
-    <Compile Include="../../tools/CopperSFS.Bench/StudyDisk.cs" Link="Fixtures/StudyDisk.cs" />
-    <Compile Include="../../tools/CopperSFS.Bench/StudyDiscard.cs" Link="Fixtures/StudyDiscard.cs" />
-    <Compile Include="../../tools/CopperSFS.Check/SfsImageChecker.cs" Link="Fixtures/SfsImageChecker.cs" />
   </ItemGroup>
 </Project>
