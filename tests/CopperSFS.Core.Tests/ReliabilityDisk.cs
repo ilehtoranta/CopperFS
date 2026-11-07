@@ -30,8 +30,11 @@ internal struct ReliabilityDisk
     internal readonly byte[] Ram = new byte[16384];
     internal int Events, Writes, Reads, CutAfterEvent, FailAtEvent, FailAtRead, TearAtWrite, TearBytes;
     internal bool PersistentFailure;
-    internal ReliabilityDisk(byte[] image)
+    private readonly HashSet<uint>? originalReads, overwritten;
+    internal ReliabilityDisk(byte[] image, HashSet<uint>? originalReads = null)
     {
+        this.originalReads = originalReads;
+        overwritten = originalReads is null ? null : new();
         blocks = (uint)(image.Length / Bytes);
         device = new byte[image.Length + Bytes * 2];
         device.AsSpan(0, Bytes).Fill(0xA5);
@@ -56,6 +59,7 @@ internal struct ReliabilityDisk
         if (block >= blocks) throw new InvalidOperationException($"Read outside partition: {block}");
         if (Failed(++Reads, FailAtRead)) return false;
         if (!IsMapped(destination, Bytes)) return false;
+        ObserveOriginal(block);
         if (pending.TryGetValue(block, out var versions)) versions[^1].CopyTo(Ram, (int)destination.Raw);
         else device.AsSpan(Bytes + (int)block * Bytes, Bytes).CopyTo(Ram.AsSpan((int)destination.Raw));
         return true;
@@ -66,6 +70,7 @@ internal struct ReliabilityDisk
         Writes++;
         if (Failed(++Events, FailAtEvent)) return false;
         if (!IsMapped(source, Bytes)) return false;
+        overwritten?.Add(block);
         var value = Ram.AsSpan((int)source.Raw, Bytes).ToArray();
         if (Writes == TearAtWrite)
         {
@@ -93,11 +98,15 @@ internal struct ReliabilityDisk
             throw new InvalidOperationException("Partition guard was overwritten.");
         return device.AsSpan(Bytes, (int)blocks * Bytes).ToArray();
     }
-    internal IEnumerable<byte[]> CrashImages()
+    internal void ObserveOriginal(uint block)
+    {
+        if (overwritten is not null && !overwritten.Contains(block)) originalReads!.Add(block);
+    }
+    internal IEnumerable<byte[]> CrashImages(HashSet<uint>? relevant = null)
     {
         // A pending block can retain its old value or any complete version written
         // since the last barrier. Enumerate the Cartesian product across blocks.
-        var writes = pending.ToArray();
+        var writes = relevant is null ? pending.ToArray() : pending.Where(pair => relevant.Contains(pair.Key)).ToArray();
         long combinations = 1;
         foreach (var pair in writes) combinations = checked(combinations * (pair.Value.Count + 1));
         if (combinations > CrashStateLimit)
