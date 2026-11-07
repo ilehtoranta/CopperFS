@@ -35,3 +35,31 @@ For direct invocation, set `COPPERFS_CORRECTNESS_MANIFEST` to the script's
 manifest and select `FullyQualifiedName~OriginalHandlerCorrectnessTests`.
 Direct tests skip when the ROM or manifest is absent; invalid configured inputs
 fail. Reference binaries and images are never added to the repository.
+
+## Native SFS2 TRST crash recovery
+
+`NativeSfs2RecoveryMatrix` ports the six single-mutation cases from the
+CopperSFS research snapshot `4a902a1`. It boots Kickstart with a synthetic
+16 MiB SFS2 partition, performs each mutation through DOS with the standalone
+CopperSFS TRST handler, and checks the uninterrupted result. The mutations
+overwrite across a sector boundary, truncate, rename, delete, create an empty
+file, and set a comment.
+
+The device model accepts atomic 512-byte writes into volatile storage and
+makes them durable on flush. The test traces every sector write and flush,
+then repeats the guest workload and interrupts it once per distinct durable
+image. It compares the interrupted disk byte for byte with the traced image.
+CopperSFS and original SmartFilesystem 1.279 independently mount copies of
+that disk. A published TRST journal must recover the complete committed
+manifest, including free space and file hashes. Each handler must leave a
+clean marker and preserve the disk byte for byte on its next boot.
+
+Build the handler and set the local input paths before running:
+
+```powershell
+./build/Build-Handler.ps1 -Sfs2 -Sfs2TrstWrites -ArtifactRoot "$PWD/artifacts/sfs2-trst"
+$env:COPPERFS_SFS2_TRST_HANDLER = "$PWD/artifacts/sfs2-trst/CopperSFS"
+$env:COPPERFS_ORIGINAL_SFS = '<path to original SmartFilesystem 1.279>'
+$env:COPPERSHARP_KICKSTART31_ROM = '<path to decoded Kickstart 3.1 ROM>'
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2RecoveryMatrix
+```

@@ -100,7 +100,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     }
 
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
-        string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false)
+        string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null)
     {
         var directory = Path.Combine(root, label); Directory.CreateDirectory(Path.Combine(directory, "boot", "S"));
         var media = Path.Combine(directory, floppy ? "disk.adf" : "disk.hdf"); File.WriteAllBytes(media, initial);
@@ -126,7 +126,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         File.WriteAllText(Path.Combine(directory, "boot", "S", "startup-sequence"), "PROBE\n");
         var boot = await FileSystemAdf.CreateAsync(Path.Combine(directory, "boot"), "Correctness");
         var rom = File.ReadAllBytes(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")!);
-        var hook = new WritableHook();
+        var hook = storage ?? new WritableHook();
         uint control = 0, pointer = 0; var octets = 0; var done = false; var failed = false;
         uint stage = 0, error = 0;
         long frames; uint pc;
@@ -175,7 +175,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
-    private sealed class WritableHook : IAmigaHardfileIoHook
+    private class WritableHook : IAmigaHardfileIoHook
     {
         public int ReadCommands, WriteCommands, Writes, Flushes;
         public bool FlushOnDispose => false;
@@ -185,10 +185,10 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             if (command is 2 or 24) ReadCommands++;
             if (command is 3 or 25) WriteCommands++;
         }
-        public void Read(FileStream backing, long offset, Span<byte> destination)
+        public virtual void Read(FileStream backing, long offset, Span<byte> destination)
         { backing.Position = offset; backing.ReadExactly(destination); }
-        public void Write(FileStream backing, long offset, ReadOnlySpan<byte> source)
+        public virtual void Write(FileStream backing, long offset, ReadOnlySpan<byte> source)
         { Writes++; backing.Position = offset; backing.Write(source); }
-        public void Flush(FileStream backing) { Flushes++; backing.Flush(true); }
+        public virtual void Flush(FileStream backing) { Flushes++; backing.Flush(true); }
     }
 }
