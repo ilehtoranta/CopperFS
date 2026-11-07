@@ -123,6 +123,14 @@ append from the research suite and an eight-block append exercise the current
 small-write and batched paths. Both must retain the full extent, link its
 successor in both directions, and preserve the complete file across reopen.
 
+The relocation case from research commit 4a902a1 overwrites a 128 KiB file
+stored in four extents. At cut 151 the device view contains the new 64 KiB
+prefix, its owner tag and its link to the original tail. The request later
+reports disk full and zero bytes written. The regression reopens sampled
+persistence states at all 303 write/flush cuts and after failure (3,040 images
+in this run), checking both files, extent records, allocation bitmap, free
+space and repeat recovery.
+
 ## Node-fullness correction (2026-11-04)
 
 Classic node allocation and removal now recompute fullness along the modified

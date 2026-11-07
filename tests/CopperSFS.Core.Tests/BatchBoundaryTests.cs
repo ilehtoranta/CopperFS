@@ -109,4 +109,108 @@ public sealed class BatchBoundaryTests(ITestOutputHelper output)
         Assert.True(firstBatchApplied, "No crash image contained the complete first overwrite batch.");
         output.WriteLine($"{probe.Events} write/flush cuts, {cases} recovered images.");
     }
+
+    // The research fixture leaves room for one contiguous 64 KiB replacement.
+    private static (byte[] Image, uint Node) FragmentedRelocationSeed()
+    {
+        var disk = new StudyDisk(StudyFixture.Empty(Bytes, 256 * 1024), Bytes);
+        var node = FsOps.Create(ref disk, "Data");
+        var keep = FsOps.Create(ref disk, "Keep");
+        FsOps.Write(ref disk, keep, 0, StudyFixture.Pattern(513, 110));
+        var image = disk.Snapshot();
+        var tree = Block(image, 5);
+        var existing = BinaryPrimitives.ReadUInt16BigEndian(tree[12..]);
+        int[] starts = [64, 144, 224, 304];
+        const int length = 64;
+        var contents = StudyFixture.Pattern(starts.Length * length * Bytes, 111);
+        U16(tree, 12, checked((ushort)(existing + starts.Length)));
+        for (var i = 0; i < starts.Length; i++)
+        {
+            var entry = tree[(16 + (existing + i) * 14)..];
+            U32(entry, 0, (uint)starts[i]);
+            U32(entry, 4, i + 1 < starts.Length ? (uint)starts[i + 1] : 0);
+            U32(entry, 8, i == 0 ? node | 0x80000000 : (uint)starts[i - 1]);
+            U16(entry, 12, length);
+            contents.AsSpan(i * length * Bytes, length * Bytes).CopyTo(image.AsSpan(starts[i] * Bytes));
+            for (var b = starts[i]; b < starts[i] + length; b++)
+            {
+                var mask = (byte)(0x80 >> (b % 8));
+                ref var bitmapByte = ref Block(image, 9)[12 + b / 8];
+                Assert.NotEqual(0, bitmapByte & mask);
+                bitmapByte &= (byte)~mask;
+            }
+        }
+        var container = Block(image, 7);
+        Assert.Equal(node, U32(container, 28));
+        U32(container, 36, (uint)starts[0]);
+        U32(container, 40, (uint)contents.Length);
+        var root = Block(image, 2);
+        U32(root, Bytes - 28, U32(root, Bytes - 28) - (uint)(starts.Length * length));
+        foreach (var block in new[] { 2, 5, 7, 9 }) Seal(Block(image, block));
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(contents)),
+            StudyFixture.Inspect(image, Bytes).Entries.Single(e => e.Path == "/Data").Sha256);
+        return (image, node);
+    }
+
+    [Fact]
+    public void DiskFullAfterRelocationRestoresOriginalExtentOwnershipAndData()
+    {
+        var (image, node) = FragmentedRelocationSeed();
+        var before = StudyFixture.Inspect(image, Bytes);
+        var replacement = StudyFixture.Pattern(128 * 1024, 119);
+        var probe = new StudyDisk(image, Bytes, crashModel: true);
+        Assert.False(Write(ref probe, node, 0, replacement, out var actual, out var error));
+        Assert.Equal(DOS.Error.DiskFull, error);
+        Assert.Equal(0u, actual);
+
+        bool HasMovedPrefix(byte[] snapshot)
+        {
+            var tree = Block(snapshot, 5);
+            var count = BinaryPrimitives.ReadUInt16BigEndian(tree[12..]);
+            for (var i = 0; i < count; i++)
+            {
+                var entry = tree[(16 + i * 14)..];
+                var start = checked((int)U32(entry, 0));
+                if (U32(entry, 8) == (node | 0x80000000) && start != 64 && U32(entry, 4) == 224 &&
+                    BinaryPrimitives.ReadUInt16BigEndian(entry[12..]) == 128 &&
+                    snapshot.AsSpan(start * Bytes, 128 * Bytes).SequenceEqual(replacement.AsSpan(0, 128 * Bytes)))
+                    return true;
+            }
+            return false;
+        }
+
+        var cases = 0;
+        void VerifyRecovery(byte[] snapshot)
+        {
+            var reopened = new StudyDisk(snapshot, Bytes, crashModel: true);
+            FsOps.Recover(ref reopened);
+            var saved = reopened.Snapshot();
+            var report = StudyFixture.Inspect(saved, Bytes);
+            Assert.Equal(before.Entries.ToArray(), report.Entries.ToArray());
+            Assert.Equal(before.FreeBlocks, report.FreeBlocks);
+            foreach (var block in new[] { 5, 7, 9 }) // extent records, object heads, allocation bitmap
+                Assert.True(Block(image, block).SequenceEqual(Block(saved, block)), $"Block {block} changed");
+            FsOps.Recover(ref reopened);
+            Assert.True(saved.AsSpan().SequenceEqual(reopened.Snapshot()));
+            cases++;
+        }
+
+        foreach (var saved in probe.SampledCrashImages()) VerifyRecovery(saved);
+        var relocationCut = 0;
+        for (var cut = 1; cut <= probe.Events; cut++)
+        {
+            var disk = new StudyDisk(image, Bytes, crashModel: true) { CutAfterEvent = cut };
+            Assert.Throws<StudyPowerCut>(() => Write(ref disk, node, 0, replacement, out _, out _));
+            // Sample 1 includes every pending write, the device view at this cut.
+            var sample = 0;
+            foreach (var saved in disk.SampledCrashImages())
+            {
+                if (relocationCut == 0 && sample == 1 && HasMovedPrefix(saved)) relocationCut = cut;
+                VerifyRecovery(saved);
+                sample++;
+            }
+        }
+        Assert.InRange(relocationCut, 1, probe.Events - 1);
+        output.WriteLine($"Relocated prefix at cut {relocationCut}; {probe.Events} cuts, {cases} sampled recoveries.");
+    }
 }
