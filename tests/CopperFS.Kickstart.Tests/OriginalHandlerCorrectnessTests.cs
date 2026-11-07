@@ -8,18 +8,96 @@ using CopperMod.Amiga.Lightweight;
 using CopperSharp.Compiler;
 using CopperSharp.Compiler.BootAdf;
 using CopperSharp.Targets.Amiga;
-
-
+using CopperSFS.Bench;
+using CopperSFS.Check;
 using CopperStart.Floppy.Native.Tests;
 using Xunit.Abstractions;
 using Task = System.Threading.Tasks.Task;
 
 namespace CopperFS.Kickstart.Tests;
 
+public sealed class CorrectnessTheoryAttribute : TheoryAttribute
+{
+    public CorrectnessTheoryAttribute()
+    {
+        if (!File.Exists(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")) ||
+            !File.Exists(Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")))
+            Skip = "Supply a licensed Kickstart ROM and COPPERFS_CORRECTNESS_MANIFEST.";
+    }
+}
+
 public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper output)
 {
+    public sealed record Profile(string Name, string Original, string Candidate, string OriginalSha256);
+    public sealed record Manifest(Profile[] Profiles, string ClassicBase, string ClassicBaseSha256);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> Probes = new();
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
+
+    [CorrectnessTheory]
+    [InlineData("ofs")] [InlineData("ffs")] [InlineData("sfs")]
+    [InlineData("sfs2-csun")] [InlineData("sfs2-trst")]
+    [InlineData("ofs-dd")] [InlineData("ofs-hd")]
+    [InlineData("ffs-dd")] [InlineData("ffs-hd")]
+    public async Task SharedMutationsAndEveryCleanHandoff(string profile)
+    {
+        var manifestPath = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
+        var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(manifestPath))!;
+        var pair = manifest.Profiles.Single(p => p.Name == profile);
+        Assert.Equal(pair.OriginalSha256, Hash(File.ReadAllBytes(pair.Original)));
+        var root = Path.Combine(Path.GetDirectoryName(manifestPath)!, profile);
+        Directory.CreateDirectory(root);
+        var candidateHash = Hash(File.ReadAllBytes(pair.Candidate));
+        var baseImage = !profile.StartsWith("sfs")
+            ? DosDiskImage.Create(profile.StartsWith("ffs"), includeLargeFile: false,
+                blockCount: profile.EndsWith("-dd") ? 1760u : profile.EndsWith("-hd") ? 3520u : 32768u,
+                firstFileBlock: 2, payload: [1, 2, 3], volumeName: "Correctness").Bytes
+            : profile == "sfs" ? File.ReadAllBytes(manifest.ClassicBase) : ReadMedia.Sfs2();
+        if (profile == "sfs") Assert.Equal(manifest.ClassicBaseSha256, Hash(baseImage));
+        File.WriteAllBytes(Path.Combine(root, "base.hdf"), baseImage);
+        var arms = new[] { (Name: "original", Path: pair.Original), (Name: "copper", Path: pair.Candidate) };
+        var reports = new List<object>();
+        string[]? originalFiles = null;
+        var writerFiles = new Dictionary<string, string[]>();
+        var equivalent = true;
+        foreach (var writer in arms)
+        {
+            var image = Path.Combine(root, writer.Name + "-written.hdf");
+            var written = await Run(root, profile, writer.Name + "-write", writer.Path, baseImage, true);
+            File.WriteAllBytes(image, written);
+            object inspection;
+            string[] files;
+            if (profile.StartsWith("sfs"))
+            {
+                var report = SfsImageChecker.Check(new MemoryStream(written), reservedBlocks: profile == "sfs" ? 2u : 1u);
+                Assert.Equal((ulong)90130, report.Entries.Single(e => e.Path == "/AB/Renamed").Size);
+                files = report.Entries.Where(e => !e.Directory).Select(e => $"{e.Path}:{e.Size}:{e.Sha256}").Order().ToArray();
+                inspection = report;
+            }
+            else
+            {
+                var report = DosImageInspection.Check(written, writer.Name == "copper");
+                files = report.Files.Select(e => $"{e.Path}:{e.Size}:{e.Sha256}").Order().ToArray();
+                inspection = report;
+            }
+            if (originalFiles == null) originalFiles = files;
+            else equivalent = originalFiles.SequenceEqual(files);
+            writerFiles.Add(writer.Name, files);
+            File.WriteAllText(Path.Combine(root, writer.Name + "-inspection.json"), JsonSerializer.Serialize(inspection, Json));
+            foreach (var reader in arms)
+            {
+                await Run(root, profile, writer.Name + "-to-" + reader.Name, reader.Path, written, false);
+                reports.Add(new { Writer = writer.Name, Reader = reader.Name, MediaSha256 = Hash(written) });
+            }
+        }
+        Assert.Equal(candidateHash, Hash(File.ReadAllBytes(pair.Candidate)));
+        File.WriteAllText(Path.Combine(root, "qualification.json"), JsonSerializer.Serialize(new
+        {
+            Profile = profile, OriginalSha256 = pair.OriginalSha256, CandidateSha256 = candidateHash,
+            BaseSha256 = Hash(baseImage), CrossReaderBoots = reports, WriterFileDigests = writerFiles,
+            EquivalentFileDigests = equivalent, Passed = equivalent
+        }, Json));
+        Assert.True(equivalent, "Original and Copper persisted file manifests differ; see qualification.json and both inspection reports.");
+    }
 
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
         string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false)

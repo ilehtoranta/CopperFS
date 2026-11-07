@@ -63,4 +63,43 @@ internal static class NativeSfsTrim
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.GranularityOffset, result.Limits.Granularity); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.AlignmentOffset, result.Limits.Alignment);
         return success ? -1 : 0;
     }
+
+#if !COPPERSTART_NATIVE_SFS_WRITES
+    // Classic routes only FFS/OFS maintenance here. A direct entry keeps the
+    // unrelated SFS journal writer out of that ROM's closed-world call graph.
+    // Retain Execute for profiles/callers that explicitly request smart trim.
+    public static int ExecuteFfs(APTR state, APTR packet, out DOS.Error error)
+    {
+        error = DOS.Error.BadNumber;
+        var p = new NativeFileSystemPlatform(state);
+        var record = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
+        if (record.IsNull || !p.IsMapped(record, AmigaSmartFileSystemTrimPacket.Size) ||
+            APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.SizeOffset) < AmigaSmartFileSystemTrimPacket.Size ||
+            APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.VersionOffset) != AmigaSmartFileSystemTrimPacket.Version ||
+            APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset) > AmigaSmartFileSystemTrimPacket.QueryOnly) return 0;
+        p.Clear(APTR.FromPointer(record.Raw + 12), 20);
+        var g = p.Geometry;
+        var memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
+            (global::Amiga.Exec.MemoryFlags)g.BufferMemoryType | global::Amiga.Exec.MemoryFlags.Public);
+        if (memory != 0 && !NativeAmigaFileSystem.BufferFitsMask(memory, AmigaScsiUnmap.ControlBytes, g.Mask))
+        { global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes); memory = 0; }
+        if (memory == 0)
+        {
+            memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
+                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Chip);
+            if (memory != 0 && !NativeAmigaFileSystem.BufferFitsMask(memory, AmigaScsiUnmap.ControlBytes, g.Mask))
+            { global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes); memory = 0; }
+        }
+        if (memory == 0) { error = DOS.Error.NoFreeStore; return 0; }
+        NativeAmigaFileSystem.InitializeWriteWork(state, out var work);
+        var success = AmigaFfsWriteCore.Trim(ref p, ref work, APTR.FromPointer(memory),
+            APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out var result);
+        error = work.Error;
+        global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes);
+        APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.BlocksOffset, result.Blocks); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.RangesOffset, result.Ranges);
+        APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.MaximumBlocksOffset, result.Limits.MaximumBlocks);
+        APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.GranularityOffset, result.Limits.Granularity); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.AlignmentOffset, result.Limits.Alignment);
+        return success ? -1 : 0;
+    }
+#endif
 }

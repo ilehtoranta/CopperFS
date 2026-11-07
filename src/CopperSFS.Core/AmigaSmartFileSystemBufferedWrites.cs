@@ -157,6 +157,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                 4 => MetadataOperation(ref p, ref w, ref r, (DosPacketAction)argument),
                 5 => WriteOperation(ref p, ref w, ref r, out actual),
                 6 => ResizeOperation(ref p, ref w, r.Node, r.Length),
+                7 => ReplaceFileOperation(ref p, ref w, ref r),
                 _ => false,
             };
             if (w.Buffered.IsNotNull) AmigaSmartFileSystemWriteBuffer.End(ref p, buffer, w.BlockBytes, success);
@@ -193,4 +194,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform => Execute(ref p, ref w, ref r, 5, 0, out actual);
     public static bool Resize<T>(ref T p, ref Work w, uint node, uint newSize) where T : struct, IAmigaWritableFileSystemPlatform
     { var r = new Request { Node = node, Length = newSize }; return Execute(ref p, ref w, ref r, 6, 0, out _); }
+    /// <summary>Replace an existing file for MODE_NEWFILE, recycling its previous contents when enabled.
+    /// Node identifies the existing object; Directory/Name/Length identify its path. Returns the active Node.</summary>
+    public static bool ReplaceFile<T>(ref T p, ref Work w, ref Request r)
+        where T : struct, IAmigaWritableFileSystemPlatform => Execute(ref p, ref w, ref r, 7, 0, out _);
 }

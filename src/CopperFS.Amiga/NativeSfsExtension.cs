@@ -148,6 +148,19 @@ public static partial class NativeSfsExtension
         var request = new AmigaSmartFileSystemWriteCore.Request { Node = node }; return Invoke(state, RemoveOperation, ref work, ref request, 0, out _);
 #endif
     }
+    // OpenSmartWrite executes inside the mutation provider (or standalone
+    // handler). Keep this compound operation local; no extension wire opcode
+    // or request layout changes are needed.
+    internal static bool ReplaceFile(APTR state, ref AmigaSmartFileSystemWriteCore.Work work,
+        ref AmigaSmartFileSystemWriteCore.Request request)
+    {
+        if (NativeSfs2Bridge.IsSfs2(state)) return Truncate(state, ref work, request.Node);
+        var p = new NativeFileSystemPlatform(state);
+        var success = MutateNative(state, ref p, ref work, ref request, TruncateOperation, 1);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, work.JournalCursor);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset, work.AllocationCursor);
+        return success;
+    }
     public static bool Rename(APTR state, ref AmigaSmartFileSystemWriteCore.Work work,
         ref AmigaSmartFileSystemWriteCore.Request request)
     {
@@ -186,7 +199,7 @@ public static partial class NativeSfsExtension
         var kind = operation switch
         {
             CreateOperation => argument != 0 ? AmigaSmartFileSystemWriteCore.TrstOperation.CreateDirectory : AmigaSmartFileSystemWriteCore.TrstOperation.CreateFile,
-            TruncateOperation => AmigaSmartFileSystemWriteCore.TrstOperation.Truncate,
+            TruncateOperation => argument != 0 ? AmigaSmartFileSystemWriteCore.TrstOperation.ReplaceFile : AmigaSmartFileSystemWriteCore.TrstOperation.Truncate,
             RemoveOperation => AmigaSmartFileSystemWriteCore.TrstOperation.Remove,
             RenameOperation => AmigaSmartFileSystemWriteCore.TrstOperation.Rename,
             ResizeOperation => AmigaSmartFileSystemWriteCore.TrstOperation.Resize,
@@ -200,7 +213,7 @@ public static partial class NativeSfsExtension
         return operation switch
         {
             CreateOperation => AmigaSmartFileSystemWriteCore.Create(ref p, ref work, ref request, argument != 0),
-            TruncateOperation => AmigaSmartFileSystemWriteCore.Truncate(ref p, ref work, request.Node),
+            TruncateOperation => argument != 0 ? AmigaSmartFileSystemWriteCore.ReplaceFile(ref p, ref work, ref request) : AmigaSmartFileSystemWriteCore.Truncate(ref p, ref work, request.Node),
             RemoveOperation => AmigaSmartFileSystemWriteCore.Remove(ref p, ref work, request.Node),
             RenameOperation => AmigaSmartFileSystemWriteCore.Rename(ref p, ref work, ref request),
             ResizeOperation => AmigaSmartFileSystemWriteCore.Resize(ref p, ref work, request.Node, request.Length),

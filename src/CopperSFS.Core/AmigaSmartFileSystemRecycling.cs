@@ -66,7 +66,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         return (ushort)hash;
     }
 
-    private static bool RecycleFile<T>(ref T p, ref Work w, uint node, APTR source, int at, uint nameLength)
+    private static bool RecycleFile<T>(ref T p, ref Work w, uint node, APTR source, int at, uint nameLength, bool replacement = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         p.Copy(source, w.Data, w.BlockBytes);
@@ -81,9 +81,36 @@ public static partial class AmigaSmartFileSystemWriteCore
             {
                 if (error != DOS.Error.ObjectNotFound) return Fail(ref w, error);
                 var request = new Request { Node = node, Directory = RecycledNode, Length = length, Position = attempt };
-                return RenameOperation(ref p, ref w, ref request, recycling: true, recycledAt: at, recycledNameLength: nameLength);
+                return RenameOperation(ref p, ref w, ref request, recycling: true, recycledAt: at, recycledNameLength: nameLength, replacement: replacement);
             }
         }
         return Fail(ref w, DOS.Error.ObjectExists);
+    }
+
+    // MODE_NEWFILE differs from SetFileSize: preserve the old file,
+    // then create a new empty object at its original path. Both changes belong
+    // to the same CSUN operation/savepoint or TRST staging arena.
+    private static bool ReplaceFileOperation<T>(ref T p, ref Work w, ref Request r)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        ReleaseOverwriteReservation(ref p, ref w, r.Node);
+        if (!Prepare(ref p, ref w) || !Parent(ref p, ref w, ref r)) return false;
+        var found = AmigaSmartFileSystemCore.ResolveFromRoots(ref p, r.Directory, r.Name, r.Length,
+            w.Meta, w.RootContainer, w.NodeRoot, w.BlockCount, w.BlockBytes, w.CaseSensitive,
+            out var error, out _, out _);
+        if (found != r.Node || found == 0) return Fail(ref w, found == 0 ? error : DOS.Error.ObjectNotFound);
+        var source = ObjectView(ref p, ref w, r.Node, w.Meta, out var at);
+        if (source.IsNull) return false;
+        if ((p.ReadUInt8(source, at + 24) & (128 | 64)) != 0) return Fail(ref w, DOS.Error.ObjectWrongType);
+        if (!w.Recycling || p.ReadUInt32(source, 12) == RecycledNode)
+            return TruncateOperation(ref p, ref w, r.Node);
+        if ((p.ReadUInt8(source, at + 24) & 2) != 0) return Fail(ref w, DOS.Error.ObjectInUse);
+        var length = 0u;
+        while (at + 25 + length < w.BlockBytes && p.ReadUInt8(source, at + 25 + (int)length) != 0) length++;
+        if (!RecycleFile(ref p, ref w, r.Node, source, at, length, replacement: true)) return false;
+        // The saved old record is no longer needed; allocation may reuse the
+        // bitmap scratch. Keep the journal chain and pending recycle counters.
+        w.PreserveBitmap = false;
+        return CreateOperation(ref p, ref w, ref r, false, prepared: true);
     }
 }

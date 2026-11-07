@@ -226,7 +226,7 @@ internal sealed class DosDiskImage(bool ffs, bool highDensity = false, uint firs
             if (end >= firstFreeBlock) break;
             dataBlocks++;
         }
-        AddDataFile("LowerHalf", new byte[dataBlocks * 512]);
+        AddDataFile("LowerHalf", new byte[dataBlocks * (ffs ? 512 : 488)]);
     }
 
     public void AddLibrary(string name, byte[] bytes)
