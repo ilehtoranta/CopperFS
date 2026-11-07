@@ -80,12 +80,35 @@ available at the source commit. No assertions were weakened to hide these cases.
 | ReliabilityTests advanced growth scenarios | Admin growth now uses reachable directories and children to fill the two initial admin ranges. The regression detects the mutation that first uses a third range, reopens both images, and replays that mutation through the crash matrix. Extent growth fills the 35-record root leaf with live file extents, verifies the next write produces a two-child branch after reopen, and exercises mutation and recovery failures at the split. The near-full fixture appends one committed block at a time until 20 blocks remain. It reopens that image, attempts an 8 KiB append, and checks that disk-full recovery preserves both the file contents and the free-space count. At each near-full mutation fault, the harness varies pending versions of every original block read by recovery or by the independent checker. It repeats when those choices expose additional blocks. Recovery cuts use the full persistence product. The matrix also covers creating and removing directories, renaming a directory with a child, growing the directory container chain, growing a file by resize, and updating comments, protection and dates. |
 | BatchedWriteTests, RelocationTests, ReservedOverwriteTests | Old range-count and scratch-buffer assumptions differ from current scalar/range APIs and small-write policy. Main's existing batching/relocation tests remain intact. |
 | TrstWriteTests | Hard-coded marker position, four-flush expectation and journal-space assumptions differ from current TRST placement and reservation. Main's existing TRST tests remain intact. |
-| Native reference runners and original-handler handoff suites | Depend on external emulator/compiler harnesses, media and old reflection contracts. Only captured-image recovery is included here. |
+| Native reference runners and original-handler handoff suites | Classic CopperSFS-to-original TRST recovery is ported to the current Kickstart harness (see below). Other historical native runners remain in the research snapshot. |
 
 Classic historical zero first-extent backlinks are accepted by main's checker.
 The old test rejecting that representation was omitted; the existing wrong-owner
 corruption case remains. The original port's benchmark failure is retained in its historical receipt.
 The subsequent node-fullness fix makes the current benchmark pass.
+
+## Classic TRST handoff to original SmartFilesystem
+
+The optional Kickstart regression ports the seven transaction scenarios from
+research commit 4a902a1. It generates a synthetic 16 MiB classic SFS volume,
+interrupts CopperSFS at every write/flush event, and boots each distinct dirty
+image with either none or all of the pending writes persisted. The guest mounts
+the image using original SmartFilesystem 1.279. For overwrite, append and first
+write, it reads and checks the resulting 1,024 bytes through DOS. For all seven
+operations the host checks the persisted TROK marker, file and directory
+metadata, file hashes, and free-block count against the uninterrupted result.
+
+The native run passed all seven scenarios, recovering 37 distinct dirty images
+across 87 write/flush cut points.
+
+Set COPPERSHARP_KICKSTART31_ROM to the local decoded Kickstart 3.1 ROM and
+COPPERFS_ORIGINAL_SFS to the extracted original SmartFilesystem executable
+(SHA-256 C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205).
+With CopperSharp68k and CopperScreen beside CopperFS, run:
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~OriginalHandlerRecoversCopperSfsTrst
+```
 
 ## Node-fullness correction (2026-11-04)
 
