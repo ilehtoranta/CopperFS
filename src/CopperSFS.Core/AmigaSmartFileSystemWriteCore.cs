@@ -1075,10 +1075,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         return PutSealed(ref p, ref w, container, image);
     }
 
-    private static bool CreateOperation<T>(ref T p, ref Work w, ref Request r, bool directory)
+    private static bool CreateOperation<T>(ref T p, ref Work w, ref Request r, bool directory, bool prepared = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (!Prepare(ref p, ref w) || !Parent(ref p, ref w, ref r)) return false;
+        if ((!prepared && !Prepare(ref p, ref w)) || !Parent(ref p, ref w, ref r)) return false;
         if (r.Directory == RecycledNode)
         {
             if (w.Recycling) return Fail(ref w, DOS.Error.ObjectInUse);
@@ -1090,7 +1090,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         var foundNode = FindFreeNode(ref p, ref w, out var node, out var leaf, out var slot);
         if (!foundNode && w.Error != DOS.Error.DiskFull) return false;
         if (!foundNode) w.Error = DOS.Error.None;
-        if (!Begin(ref p, ref w)) return false;
+        if (!prepared && !Begin(ref p, ref w)) return false;
         if (!foundNode && !FindFreeNodeIn(ref p, ref w, w.NodeRoot, 0, true, out node, out leaf, out slot))
         {
             if (w.Error != DOS.Error.None || !GrowNodeRoot(ref p, ref w) ||
@@ -1752,7 +1752,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             ExciseObject(ref p, ref w, objectContainer, at, node) && Finish(ref p, ref w);
     }
 
-    private static bool RenameOperation<T>(ref T p, ref Work w, ref Request r, bool recycling = false, int recycledAt = 0, uint recycledNameLength = 0)
+    private static bool RenameOperation<T>(ref T p, ref Work w, ref Request r, bool recycling = false, int recycledAt = 0, uint recycledNameLength = 0, bool replacement = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (r.Node == AmigaSmartFileSystemCore.RootNode) return Fail(ref w, DOS.Error.ObjectInUse);
@@ -1851,7 +1851,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             ReplaceWord(ref p, hashImage, hashAt, r.Node);
             if (!PutSealed(ref p, ref w, hashTable, hashImage)) return false;
         }
-        return Finish(ref p, ref w);
+        return replacement || Finish(ref p, ref w);
     }
 
     private static bool MetadataOperation<T>(ref T p, ref Work w, ref Request r, DosPacketAction action)

@@ -4,8 +4,8 @@ namespace CopperStart.Dos;
 
 public static partial class AmigaFfsWriteCore
 {
-    // OFS has two representations of a file's block order: reverse pointer
-    // tables and the forward data chain. Validate both before modifying either.
+    // Validate pointer order and forward chains, including FFS 40.1's separate
+    // append runs (old EOF link zero, new sequence starting at one).
     // Use the existing three scratch blocks, never a volume-sized key array.
     private static bool OfsChain<T>(ref T p, ref Work w, uint header, bool release,
         out uint lastData) where T : struct, IAmigaWritableFileSystemPlatform
@@ -18,6 +18,7 @@ public static partial class AmigaFfsWriteCore
         var blocks = remaining == 0 ? 0 : AmigaGeometryMath.Divide(remaining - 1, payload) + 1;
         if (blocks > g.BlockCount - g.ReservedBlocks) return Fail(ref w, DOS.Error.DiskNotValidated);
         var expected = p.ReadUInt32(w.Meta, 16); var table = header; var index = 0u;
+        var sequenceBase = 0u;
         for (var guard = 0u; guard < g.BlockCount; guard++)
         {
             if (!Allocated(ref p, ref w, ref g, table) || !p.ReadBlock(table, w.Meta) ||
@@ -32,11 +33,23 @@ public static partial class AmigaFfsWriteCore
             {
                 var key = p.ReadUInt32(w.Meta, g.Tail + 308 - (int)i * 4);
                 var bytes = remaining > payload ? payload : remaining;
-                if (key != expected || key == header || key == table ||
+                if ((key != expected && (expected != 0 || index == 0)) || key == header || key == table ||
                     !Allocated(ref p, ref w, ref g, key) || !p.ReadBlock(key, w.Data) ||
                     !AmigaDiskFileSystemCore.Checksum(ref p, w.Data) || p.ReadUInt32(w.Data) != 8 ||
-                    p.ReadUInt32(w.Data, 4) != header || p.ReadUInt32(w.Data, 8) != index + 1 ||
+                    p.ReadUInt32(w.Data, 4) != header ||
                     p.ReadUInt32(w.Data, 12) != bytes) return Fail(ref w, DOS.Error.DiskNotValidated);
+                var sequence = p.ReadUInt32(w.Data, 8);
+                if (expected == 0 && index != 0)
+                {
+                    if (sequence != 1) return Fail(ref w, DOS.Error.DiskNotValidated);
+                    sequenceBase = index;
+                }
+                if (sequence != index + 1 && (sequenceBase == 0 || sequence != index + 1 - sequenceBase))
+                    return Fail(ref w, DOS.Error.DiskNotValidated);
+                // The absolute sequence previously proved uniqueness. For a
+                // restarted sequence, check earlier pointers explicitly, using
+                // only the metadata scratch and restoring its current table.
+                if (sequence != index + 1 && !OfsUniquePrefix(ref p, ref w, header, table, index, key)) return false;
                 expected = p.ReadUInt32(w.Data, 16); lastData = key;
                 index++; remaining -= bytes;
                 if (release) Bit(ref p, ref w, key, true);
@@ -51,6 +64,22 @@ public static partial class AmigaFfsWriteCore
             table = next;
         }
         return Fail(ref w, DOS.Error.DiskNotValidated);
+    }
+
+    private static bool OfsUniquePrefix<T>(ref T p, ref Work w, uint header,
+        uint currentTable, uint index, uint key) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var g = p.Geometry; var table = header;
+        for (var seen = 0u; seen < index;)
+        {
+            if (!p.ReadBlock(table, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            var count = index - seen; if (count > g.TableEntries) count = g.TableEntries;
+            for (var slot = 0u; slot < count; slot++)
+                if (p.ReadUInt32(w.Meta, g.Tail + 308 - (int)slot * 4) == key)
+                    return Fail(ref w, DOS.Error.DiskNotValidated);
+            seen += count; table = p.ReadUInt32(w.Meta, g.Tail + 504);
+        }
+        return p.ReadBlock(currentTable, w.Meta) || Fail(ref w, DOS.Error.DiskNotValidated);
     }
 
     // Called after Prepare has selected DOS0. FFS retains its existing writer.

@@ -113,6 +113,7 @@ public static class AmigaDiskFileSystemCore
         var copied = 0u;
         var table = header;
         var tableIndex = 0u;
+        var ofsSequenceBase = 0u;
         while (copied < length)
         {
             var index = AmigaGeometryMath.Divide(position, payload);
@@ -140,9 +141,16 @@ public static class AmigaDiskFileSystemCore
             var dataOffset = 0u;
             if ((dosType & 1) == 0)
             {
+                var sequence = p.ReadUInt32(data, 8);
                 if (!Checksum(ref p, data) || p.ReadUInt32(data) != 8 ||
-                    p.ReadUInt32(data, 4) != header || p.ReadUInt32(data, 8) != index + 1 ||
+                    p.ReadUInt32(data, 4) != header ||
                     p.ReadUInt32(data, 12) > geometry.BlockBytes - 24 || p.ReadUInt32(data, 12) < within + count) break;
+                if (sequence != index + 1 && (ofsSequenceBase == 0 || sequence != index + 1 - ofsSequenceBase))
+                {
+                    if (sequence == 0 || sequence > index ||
+                        !OfsAppendSequence(ref p, header, index + 1 - sequence, table, block, metadata, data)) break;
+                    ofsSequenceBase = index + 1 - sequence;
+                }
                 dataOffset = 24;
             }
             var source = APTR.FromPointer(data.Raw + dataOffset + within);
@@ -157,6 +165,41 @@ public static class AmigaDiskFileSystemCore
         }
         if (copied != length) { error = DOS.Error.DiskNotValidated; return copied == 0 ? -1 : (int)copied; }
         return (int)copied;
+    }
+
+    // FFS 40.1's OFS append leaves the previous EOF link zero and numbers newly
+    // allocated data from one. Recognize that boundary, including random reads
+    // into the appended run; ordinary canonical reads do no additional I/O.
+    private static bool OfsAppendSequence<T>(ref T p, uint header, uint start,
+        uint table, uint block, APTR metadata, APTR data) where T : struct, IAmigaFileSystemPlatform
+    {
+        if (start == 0 || !OfsPointer(ref p, header, start - 1, metadata, out var previous) ||
+            !p.ReadBlock(previous, data) || !Checksum(ref p, data) || p.ReadUInt32(data) != 8 ||
+            p.ReadUInt32(data, 4) != header || p.ReadUInt32(data, 16) != 0 ||
+            !OfsPointer(ref p, header, start, metadata, out var first) || first == previous ||
+            !p.ReadBlock(first, data) || !Checksum(ref p, data) || p.ReadUInt32(data) != 8 ||
+            p.ReadUInt32(data, 4) != header || p.ReadUInt32(data, 8) != 1) return false;
+        return p.ReadBlock(table, metadata) && p.ReadBlock(block, data);
+    }
+
+    private static bool OfsPointer<T>(ref T p, uint header, uint index, APTR metadata,
+        out uint block) where T : struct, IAmigaFileSystemPlatform
+    {
+        var g = p.Geometry; block = 0;
+        if (!Header(ref p, header, metadata)) return false;
+        var table = header;
+        for (var page = 0u; page < AmigaGeometryMath.Divide(index, g.TableEntries); page++)
+        {
+            if (page >= g.BlockCount) return false;
+            table = p.ReadUInt32(metadata, g.Tail + 504);
+            if (table < g.ReservedBlocks || table >= g.BlockCount || !p.ReadBlock(table, metadata) ||
+                !Checksum(ref p, metadata) || p.ReadUInt32(metadata) != 16 || p.ReadUInt32(metadata, 4) != table ||
+                p.ReadUInt32(metadata, g.Tail + 500) != header || p.ReadUInt32(metadata, g.Tail + 508) != 0xFFFFFFFD) return false;
+        }
+        var slot = AmigaGeometryMath.Remainder(index, g.TableEntries);
+        if (p.ReadUInt32(metadata, 8) > g.TableEntries || slot >= p.ReadUInt32(metadata, 8)) return false;
+        block = p.ReadUInt32(metadata, g.Tail + 308 - (int)slot * 4);
+        return block >= g.ReservedBlocks && block < g.BlockCount && block != header && block != table;
     }
 
     public static bool Examine<T>(ref T p, uint key, APTR fib, APTR buffer) where T : struct, IAmigaFileSystemPlatform
