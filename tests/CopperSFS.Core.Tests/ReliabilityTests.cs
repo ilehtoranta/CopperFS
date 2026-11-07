@@ -114,7 +114,11 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
     private static byte[] Pattern(int length, int seed = 7) => Enumerable.Range(0, length).Select(i => (byte)(i * 29 + seed)).ToArray();
     // Additional research scenarios are tracked in docs/research-port.md.
     public static IEnumerable<object[]> Scenarios => new[]
-    { "create", "overwrite", "append", "shrink", "truncate", "delete", "rename", "admin-growth", "extent-growth", "near-full" }
+    {
+        "create", "mkdir", "overwrite", "append", "shrink", "grow", "truncate", "delete", "rename",
+        "rename-directory", "comment", "protect", "date", "rmdir", "directory-growth",
+        "admin-growth", "extent-growth", "near-full"
+    }
     .Select(name => new object[] { name });
 
     private static (byte[] Image, List<Expected> Before, Mutation Mutation) Prepare(string scenario)
@@ -123,9 +127,28 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         if (scenario == "admin-growth") return PrepareAdminGrowth(image, model);
         if (scenario == "extent-growth") return PrepareExtentGrowth(image, model);
         if (scenario == "near-full") return PrepareNearFull(image, model);
+        if (scenario is "rmdir" or "directory-growth")
+        {
+            var disk = new ReliabilityDisk(image);
+            if (scenario == "rmdir")
+            {
+                Commit(ref disk, ref model, new("mkdir", Name: "Empty"));
+                return (disk.Snapshot(), model, new("remove", Node: model[^1].Node));
+            }
+            // Research commit 4a902a1 fills the first root directory container with long names.
+            for (var i = 0; i < 3; i++)
+                Commit(ref disk, ref model, new("create", Name: $"{i}" + new string('x', 99)));
+            return (disk.Snapshot(), model, new("create", Name: new string('y', 100)));
+        }
         Mutation mutation = scenario switch
         {
             "create" => new("create"),
+            "mkdir" => new("mkdir"),
+            "grow" => new("resize", Size: 2301),
+            "rename-directory" => new("rename", Node: 2, Name: "Moved"),
+            "comment" => new("comment", Data: Encoding.Latin1.GetBytes("a longer replacement comment")),
+            "protect" => new("protect", Size: 0x20),
+            "date" => new("date"),
             "overwrite" => new("write", Position: 399, Data: Pattern(733)),
             "append" => new("write", Position: 1300, Data: Pattern(1001)),
             "shrink" => new("resize", Size: 513),
@@ -319,10 +342,18 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         var (image, model, mutation) = Prepare(scenario);
         var before = Manifest(model); var probe = new ReliabilityDisk(image);
         var success = Execute(ref probe, mutation, out var created, out var error);
-        if (scenario is "admin-growth" or "extent-growth") Assert.True(success, $"{scenario} failed after reopen: {error}");
+        if (scenario != "near-full") Assert.True(success, $"{scenario} failed after reopen: {error}");
         var after = before;
         if (success)
         {
+            if (scenario == "directory-growth")
+            {
+                // The fixture root object points to its first OBJC at offset 40.
+                // Its next link at offset 16 gains a second container on this insert.
+                var first = checked((int)U32(Block(image, 2), 40));
+                Assert.Equal(0u, U32(Block(image, first), 16));
+                Assert.NotEqual(0u, U32(Block(probe.Snapshot(), first), 16));
+            }
             var updated = Update(model, mutation, created); Validate(probe.Snapshot(), updated); after = Manifest(updated);
         }
         else Assert.Equal(DOS.Error.DiskFull, error);
