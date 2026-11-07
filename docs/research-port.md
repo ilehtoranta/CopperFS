@@ -139,6 +139,20 @@ file, including its untouched edges. At every write/flush cut and transient
 or persistent write/flush failure, sampled images recover the complete old or
 new manifest and free-block count, and a second recovery preserves the image.
 
+## Classic overwrite reservations
+
+`OverwriteReservationTests` ports the table exhaustion, allocation pressure
+and release cases from `ReservedOverwriteTests` at research commit 4a902a1.
+Eight files hold partial overwrite reservations while a ninth overwrite succeeds
+without one. A competing file grows until the allocator drops a reservation,
+then all nine overwrites finish. After reopen the checker verifies each file's
+hash and that only the competing file consumed additional blocks.
+
+The release cases start with a confirmed reservation and exercise explicit
+release on close, a discontinuous write, shrink, truncate, removal, scalar
+write and entry into TRST. Each checks the exact free-block count and file
+contents or removal after recovery on a fresh mount.
+
 ## Node-fullness correction (2026-11-04)
 
 Classic node allocation and removal now recompute fullness along the modified
