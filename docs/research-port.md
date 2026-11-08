@@ -167,6 +167,18 @@ The harness enumerates pending block versions up to 4,096 combinations and
 samples larger sets. For each continuation sector it also tears the write
 after 1, 256 and 511 bytes, requiring complete recovery or refusal to mount.
 
+The remaining layout regressions from `ReservedOverwriteTests` at 4a902a1
+run under the `ReservedLayout` test filter. A 1 MiB + 123 byte rewrite grew
+one extent across bitmap block coverage (physical blocks 2113 through 4161)
+and released its reservation after the 123-byte final write. A second fixture
+skipped a 473-block free run that could hold one batch but not the 512-block
+file. With and without interleaved appends to another file, each 64 KiB
+overwrite extended the same destination and the unused reservation tail stayed
+free in the on-disk bitmap. Fresh mounts verified the completed extents, file
+hashes, neighbour and free-space accounting. These checks use the current
+study disk's sector I/O path; the historical bulk-transfer counter is not
+a measure of reservation layout.
+
 ## Node-fullness correction (2026-11-04)
 
 Classic node allocation and removal now recompute fullness along the modified

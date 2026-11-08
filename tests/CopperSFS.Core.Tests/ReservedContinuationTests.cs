@@ -49,23 +49,11 @@ public sealed partial class BatchBoundaryTests
         Assert.Equal(seed.Entries.Where(e => e.Node != node), before.Entries.Where(e => e.Node != node));
         Assert.Equal(before.Entries.Where(e => e.Node != node), after.Entries.Where(e => e.Node != node));
 
-        (uint First, int Length) OwnedExtent(byte[] snapshot)
-        {
-            var tree = Block(snapshot, 5);
-            Assert.Equal(1, tree[14]);
-            var records = BinaryPrimitives.ReadUInt16BigEndian(tree[12..]);
-            for (var i = 0; i < records; i++)
-            {
-                var record = tree[(16 + i * 14)..];
-                if (U32(record, 8) == (0x80000000u | node))
-                    return (U32(record, 0), BinaryPrimitives.ReadUInt16BigEndian(record[12..]));
-            }
-            throw new InvalidDataException("Missing first extent for reserved stream");
-        }
-        var (start, length) = OwnedExtent(image);
+        var start = U32(FirstExtent(image, node), 0);
         Assert.NotEqual(64u, start);
-        Assert.Equal(chunk / Bytes, length);
-        Assert.Equal((start, 2 * chunk / Bytes), OwnedExtent(committed));
+        Assert.Equal(chunk / Bytes, BinaryPrimitives.ReadUInt16BigEndian(FirstExtent(image, node)[12..]));
+        Assert.Equal(start, U32(FirstExtent(committed, node), 0));
+        Assert.Equal(2 * chunk / Bytes, BinaryPrimitives.ReadUInt16BigEndian(FirstExtent(committed, node)[12..]));
 
         void CheckReopened(ref StudyDisk reopened, bool rollbackOnly)
         {
