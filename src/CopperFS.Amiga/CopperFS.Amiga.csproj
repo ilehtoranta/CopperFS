@@ -10,6 +10,7 @@
     <DefineConstants Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">$(DefineConstants);COPPERSTART_SFS_TRST_BUFFERED</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfs2TrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartNativeSfs2)' == 'true'">$(DefineConstants);COPPERSTART_NATIVE_SFS2</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsNativeFfsReadAhead)' == 'true'">$(DefineConstants);COPPERFS_NATIVE_FFS_READAHEAD</DefineConstants>
   </PropertyGroup>
   <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
           Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">

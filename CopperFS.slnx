@@ -8,10 +8,12 @@
     <Project Path="tests/CopperSFS.Core.Tests/CopperSFS.Core.Tests.csproj" />
     <Project Path="tests/CopperFFS.Core.Tests/CopperFFS.Core.Tests.csproj" />
     <Project Path="tests/CopperFS.Amiga.Tests/CopperFS.Amiga.Tests.csproj" />
+    <Project Path="tests/CopperFS.StorageBench.Tests/CopperFS.StorageBench.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/CopperSFS.Bench/CopperSFS.Bench.csproj" />
     <Project Path="tools/CopperSFS.Check/CopperSFS.Check.csproj" />
     <Project Path="tools/CopperSFS.Trim/CopperSFS.Trim.csproj" />
+    <Project Path="tools/CopperFS.StorageBench/CopperFS.StorageBench.csproj" />
   </Folder>
 </Solution>

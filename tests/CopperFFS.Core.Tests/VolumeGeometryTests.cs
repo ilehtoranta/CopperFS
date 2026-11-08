@@ -30,6 +30,8 @@ public sealed partial class VolumeGeometryTests
         public bool Flush() { storage.Flushes++; return !storage.FailFlush && storage.Flushes != storage.FailFlushCall; }
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
+            ReadDataBlocks(block, count, target);
         public uint ReadDataBlocks(uint block, uint count, APTR target) => storage.BulkTransfers
             ? (AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, block, count, target) ? count : 0)
             : AmigaFileSystemBlockIo.Read(ref this, block, count, target);

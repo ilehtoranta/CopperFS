@@ -9,6 +9,8 @@ public sealed partial class AmigaSmartFileSystemTests
     private static AmigaSmartFileSystemWriteCore.Work BatchWork(ref Disk disk, uint capacity = 32)
     {
         disk.Batch = APTR.FromPointer(8192);
+        var bytes = AmigaSmartFileSystemTransactionBuffer.StorageBytes(Bytes, capacity);
+        disk.Ram.AsSpan((int)disk.Batch.Raw, (int)bytes).Fill(0xA5);
         Assert.True(AmigaSmartFileSystemTransactionBuffer.Initialize(ref disk, disk.Batch, Bytes, capacity));
         return new()
         {

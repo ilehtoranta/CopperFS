@@ -29,7 +29,7 @@ internal static class NativeSfs2Bridge
     { error = DOS.Error.ActionNotKnown; return 0; }
     internal static bool Describe(APTR state, uint node, out ulong size, out bool directory, out uint parent)
     { size = 0; directory = false; parent = 0; return false; }
-    internal static int Read(APTR state, uint node, ulong position, APTR buffer, uint length, out DOS.Error error)
+    internal static int Read(APTR state, APTR file, uint node, ulong position, APTR buffer, uint length, out DOS.Error error)
     { error = DOS.Error.ActionNotKnown; return -1; }
     internal static bool Examine(APTR state, uint node, APTR fib) => false;
     internal static DOS.Error Next(APTR state, uint directory, APTR fib) => DOS.Error.ActionNotKnown;

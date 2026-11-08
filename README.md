@@ -47,6 +47,10 @@ Set `-CopperSharpRoot` when CopperSharp68k is not beside this checkout. Use `-Cp
 buffered TRST and legacy CSUN selections remain supported. CopperStart's optional
 build wrappers select its pinned CopperFS sources. Both entry points produce
 the existing CopperFFS, CopperSFS and CopperTrim names.
+Handler builds run CopperSharp's restricted CILica IL optimizer by default and
+retain its rewritten assembly and hash report under the artifact root's
+`cilica` directory. `-SkipCilica` is a diagnostic opt-out; optimizer failures
+stop the build. Original managed inputs remain under `inputs`.
 See [integration and migration](docs/copperfs-integration.md) for boundaries,
 validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usage.
 
@@ -54,6 +58,12 @@ validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usa
 
 See [the selective research port](docs/research-port.md) for the image checker,
 reliability tests, wide-volume tests, and unresolved research findings.
+
+The [sequential storage matrix](docs/kickstart-storage-matrix.md) compares original
+FFS/SFS2 with Copper's cached and payload-bypass policies on zero-latency
+CopperHDF, timed HDD/CF and native A1200 Gayle IDE. The full default run contains
+1,188 fresh-machine workload trials. Synthetic drive timing is separate from
+physical A1200 performance.
 
 ## Compatibility and releases
 

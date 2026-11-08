@@ -11,7 +11,8 @@ param(
     [switch]$Ffs,
     [switch]$Sfs2,
     [switch]$Sfs2TrstWrites,
-    [switch]$SkipCompilerBuild
+    [switch]$SkipCompilerBuild,
+    [switch]$SkipCilica
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,10 +35,20 @@ if (!$SkipCompilerBuild) {
     dotnet build $cliProject -c $Configuration --verbosity quiet -m:1
     if ($LASTEXITCODE -ne 0) { throw 'CopperSharp compiler build failed.' }
 }
-dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($Sfs2TrstWrites.IsPresent.ToString().ToLowerInvariant())" --output $inputRoot --verbosity quiet -m:1
+dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($Sfs2TrstWrites.IsPresent.ToString().ToLowerInvariant())" --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler input build failed.' }
 $compiler = Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"
 $dos = Join-Path $inputRoot 'CopperFS.Amiga.dll'
+if (!$SkipCilica) {
+    # This build drives copper68kc directly rather than importing CopperSharp.Sdk.
+    # Run the SDK's restricted CILica stage explicitly, retaining original inputs
+    # and the optimizer's hash/provenance report. Do not silently fall back.
+    $optimizedDos = Join-Path $ArtifactRoot 'cilica/CopperFS.Amiga.dll'
+    $activeSdkVersion = (& dotnet --version).Trim()
+    & (Join-Path $CopperSharpRoot 'scripts/optimize-il.ps1') -InputAssembly $dos -OutputAssembly $optimizedDos -ResolverPaths $inputRoot -SdkVersion $activeSdkVersion
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$optimizedDos.cilica.json")) { throw 'Standalone handler CILica optimization failed.' }
+    $dos = $optimizedDos
+}
 $output = Join-Path $ArtifactRoot $(if ($Ffs) { 'CopperFFS' } else { 'CopperSFS' })
 $entry = if ($Ffs) { 'CopperStart.Dos.NativeSfsStandaloneHandler::FfsEntry' } else { 'CopperStart.Dos.NativeSfsStandaloneHandler::Entry' }
 # The handler is a freestanding HUNK. ROM-only policy does not enable these

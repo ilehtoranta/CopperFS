@@ -20,6 +20,7 @@ internal static class NativeFileSystemStateCodec
     internal const int ExtraCacheCountOffset = NativeAmigaFileSystem.ExtraCacheCountOffset;
     internal const int ExtraCacheHeadOffset = NativeAmigaFileSystem.ExtraCacheHeadOffset;
     internal const int ExtraCacheTailOffset = NativeAmigaFileSystem.ExtraCacheTailOffset;
+    internal const int FixedHardDiskOffset = NativeAmigaFileSystem.GeometryOffset + 40;
     internal const int InhibitedOffset = NativeAmigaFileSystem.InhibitedOffset;
     internal const int IoBufferOffset = NativeAmigaFileSystem.IoBufferOffset;
     internal const int IoPortOffset = NativeAmigaFileSystem.IoPortOffset;
@@ -29,6 +30,7 @@ internal static class NativeFileSystemStateCodec
     internal const int MaxTransferOffset = NativeAmigaFileSystem.GeometryOffset + 28;
     internal const int ObjectsOffset = NativeAmigaFileSystem.ObjectsOffset;
     internal const int PortOffset = NativeAmigaFileSystem.PortOffset;
+    internal const int PayloadCacheBypassOffset = NativeAmigaFileSystem.PayloadCacheBypassOffset;
     internal const int RamBlocksOffset = NativeAmigaFileSystem.RamBlocksOffset;
     internal const int RequestOffset = NativeAmigaFileSystem.RequestOffset;
     internal const int ReservedBlocksOffset = NativeAmigaFileSystem.GeometryOffset + 8;

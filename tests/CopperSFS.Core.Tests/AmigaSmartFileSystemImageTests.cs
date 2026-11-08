@@ -252,6 +252,8 @@ public sealed class AmigaSmartFileSystemImageTests(ITestOutputHelper output)
         }
         public bool ReadMetadataBlock(uint block, uint id, APTR destination) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, destination);
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
+        public uint ReadDataBlocks(uint block, uint count, APTR destination, bool readAhead) =>
+            ReadDataBlocks(block, count, destination);
         public uint ReadDataBlocks(uint block, uint count, APTR destination) => AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
         public bool WriteProtected() => !stream.CanWrite;
         public bool WriteBlock(uint block, APTR source)

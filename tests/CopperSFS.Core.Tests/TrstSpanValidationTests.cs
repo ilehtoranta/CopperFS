@@ -65,6 +65,8 @@ public sealed partial class AmigaSmartFileSystemTests
         public bool ReadBlock(uint block, APTR destination) => state.Disk.ReadBlock(block, destination);
         public bool ReadMetadataBlock(uint block, uint id, APTR destination) => state.Disk.ReadMetadataBlock(block, id, destination);
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => state.Disk.ReadMetadataView(block, id, scratch);
+        public uint ReadDataBlocks(uint block, uint count, APTR destination, bool readAhead) =>
+            ReadDataBlocks(block, count, destination);
         public uint ReadDataBlocks(uint block, uint count, APTR destination) => state.Disk.ReadDataBlocks(block, count, destination);
         public bool WriteBlock(uint block, APTR source) => state.Disk.WriteBlock(block, source);
         public bool WriteDataBlocks(uint block, uint count, APTR source) => state.Disk.WriteDataBlocks(block, count, source);

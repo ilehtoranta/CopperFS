@@ -8,10 +8,35 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
     AmigaVolumeGeometry Geometry { get; }
     /// <summary>Stable mounted geometry scalars, identical to Geometry's fields.
     /// Native platforms can return them without constructing the device descriptor.</summary>
-    uint BlockCount { get; }
-    uint BlockBytes { get; }
-    uint ReservedBlocks { get; }
+    uint BlockCount => Geometry.BlockCount;
+    uint BlockBytes => Geometry.BlockBytes;
+    uint ReservedBlocks => Geometry.ReservedBlocks;
     bool ReadBlock(uint block, APTR destination);
+    /// <summary>Optionally supply a logically current FFS metadata image.
+    /// True means the platform handled the read; view is null on I/O failure.
+    /// A borrowed view expires at the next cache or block access. The default
+    /// makes no platform calls and leaves other implementations on ReadBlock.</summary>
+    bool TryBorrowFfsMetadataBlock(uint block, APTR scratch, APTR output, uint outputBytes, out APTR view)
+    {
+        view = APTR.Null;
+        return false;
+    }
+    /// <summary>Optional copy of a retained, logically current SFS2 metadata block
+    /// verified for type, block number and version-4 checksum. False requests the
+    /// ordinary read and validation path.</summary>
+    bool TryReadVerifiedSfs2Block(uint block, uint id, APTR destination) => false;
+    /// <summary>Optional logically current SFS2 cache image with verified type,
+    /// own-block number and checksum. Read-only until the next block/cache
+    /// access. Null requests an ordinary read into the supplied scratch.</summary>
+    APTR BorrowVerifiedSfs2Block(uint block, uint id, APTR scratch) => APTR.Null;
+    /// <summary>Optionally read a verified SFS2 metadata view, filling the cache on a miss.
+    /// True means the read was handled (a null view denotes failure). The view expires
+    /// at the next block access. False selects the retained-view or ordinary read path.</summary>
+    bool TryReadSfs2MetadataView(uint block, uint id, APTR scratch, out APTR view)
+    {
+        view = APTR.Null;
+        return false;
+    }
     /// <summary>True only while reads on this mount overlay the complete acknowledged
     /// set of home blocks retained after an interrupted write-back checkpoint.</summary>
     bool HasAcknowledgedCheckpoint(uint rootContainer) => false;
@@ -30,6 +55,12 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
     /// <summary>Read consecutive file-data blocks, returning the completed prefix.
     /// Reads must observe staged writes. Metadata uses the verified metadata methods.</summary>
     uint ReadDataBlocks(uint block, uint count, APTR destination);
+    /// <summary>Read a run from a caller's larger streaming request. False
+    /// suppresses speculative payload read-ahead for short run fragments;
+    /// Platforms without that policy must explicitly forward to their ordinary
+    /// transfer method. A default interface body would box mutable struct
+    /// platforms and discard their state updates.</summary>
+    uint ReadDataBlocks(uint block, uint count, APTR destination, bool readAhead);
 }
 
 public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform

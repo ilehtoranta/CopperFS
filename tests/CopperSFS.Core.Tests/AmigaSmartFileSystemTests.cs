@@ -94,6 +94,8 @@ public sealed partial class AmigaSmartFileSystemTests
             AmigaSmartFileSystemWriteBuffer.HasAcknowledgedCheckpoint(ref this, WriteBack, rootContainer) ||
             AmigaSmartFileSystemWriteCore.HasAcknowledgedTrstCheckpoint(ref this, GroupAddress, rootContainer);
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
+            ReadDataBlocks(block, count, target);
         public uint ReadDataBlocks(uint block, uint count, APTR target)
         { DataReads.Add((block, count)); return AmigaFileSystemBlockIo.Read(ref this, block, count, target); }
         public bool ReadBlock(uint block, APTR destination)
@@ -219,6 +221,8 @@ public sealed partial class AmigaSmartFileSystemTests
         }
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
+            ReadDataBlocks(block, count, target);
         public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
         public bool ReadBlock(uint block, APTR destination)
         {

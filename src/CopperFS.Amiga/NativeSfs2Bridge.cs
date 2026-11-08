@@ -12,6 +12,7 @@ internal static class NativeSfs2Bridge
 #else
     internal const uint BufferBytes = 65536;
 #endif
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     internal static bool IsSfs2(APTR state) => APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) == DosType;
 
     internal static bool Root(ref NativeFileSystemPlatform p, APTR state)
@@ -141,11 +142,13 @@ internal static class NativeSfs2Bridge
         return AmigaSmartFileSystemReadOnlyCore.DescribeInformation(ref p, node, NativeAmigaFileSystem.Metadata(state), out size, out directory, out parent);
     }
 
-    internal static int Read(APTR state, uint node, ulong position, APTR buffer, uint length, out DOS.Error error)
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    internal static int Read(APTR state, APTR file, uint node, ulong position, APTR buffer, uint length, out DOS.Error error)
     {
         var p = new NativeFileSystemPlatform(state);
-        return AmigaSmartFileSystemReadOnlyCore.Read(ref p, node, position, buffer, length,
-            NativeAmigaFileSystem.Metadata(state), NativeAmigaFileSystem.Data(state), out error);
+        var metadata = NativeAmigaFileSystem.Metadata(state);
+        var data = APTR.FromPointer(metadata.Raw + p.BlockBytes);
+        return NativeFileSystemReadCore.ReadSfs2(ref p, file, node, position, buffer, length, metadata, data, out error);
     }
 
     internal static bool Examine(APTR state, uint node, APTR fib)
@@ -171,7 +174,11 @@ internal static class NativeSfs2Bridge
         {
             case 1: ok = Recover(state, ref work); error = work.Error; break;
             case 9: ok = Root(ref p, state); break;
+#if COPPERSTART_SFS_STANDALONE
+            case 10: ok = NativeAmigaFileSystem.MountSfs2ForInput(ref p, state); break;
+#else
             case 10: ok = AmigaSmartFileSystemReadOnlyCore.Mount(ref p, NativeAmigaFileSystem.Metadata(state), out var format) && format == AmigaSmartFileSystemFormat.Sfs2; break;
+#endif
             case 11:
                 node = Resolve(state, APTR.ReadUInt32(scratch, 4), APTR.FromPointer(APTR.ReadUInt32(scratch, 20)), length, out error);
                 APTR.WriteUInt32(scratch, 8, node); ok = node != 0; break;
@@ -180,7 +187,8 @@ internal static class NativeSfs2Bridge
                 APTR.WriteUInt32(scratch, 12, (uint)size); APTR.WriteUInt32(scratch, 40, (uint)(size >> 32));
                 APTR.WriteUInt32(scratch, 16, directory ? 1u : 0u); APTR.WriteUInt32(scratch, 4, parent); break;
             case 13:
-                var read = Read(state, node, position, buffer, length, out error); actual = unchecked((uint)read); ok = read >= 0; break;
+                var read = Read(state, APTR.FromPointer(APTR.ReadUInt32(scratch, 28)), node, position, buffer, length, out error);
+                actual = unchecked((uint)read); ok = read >= 0; break;
             case 14: ok = Examine(state, node, buffer); break;
             case 15: error = Next(state, APTR.ReadUInt32(scratch, 4), buffer); ok = error == DOS.Error.None; break;
             case 16: ok = AmigaSmartFileSystemReadOnlyCore.CountUsed(ref p, NativeAmigaFileSystem.Metadata(state), out actual); break;

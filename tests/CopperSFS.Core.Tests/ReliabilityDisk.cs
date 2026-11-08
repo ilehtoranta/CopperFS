@@ -46,6 +46,8 @@ internal struct ReliabilityDisk
     public uint ReservedBlocks => Geometry.ReservedBlocks;
     public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
     public APTR ReadMetadataView(uint block, uint id, APTR target) => ReadMetadataBlock(block, id, target) ? target : APTR.Null;
+    public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
+        ReadDataBlocks(block, count, target);
     public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
     public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
     public AmigaVolumeGeometry Geometry
