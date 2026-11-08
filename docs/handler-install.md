@@ -34,10 +34,11 @@ so use these hashes rather than AmigaDOS `Version` to identify this preview.
 
 ## Requirements
 
-- AmigaOS 2.04 or newer and a separate boot volume containing the usual DOS
-  commands. Native comparison testing used Kickstart 3.1; other ROM versions
-  remain unqualified. `DEVS:DOSDrivers` below is for AmigaOS 2.1+; on 2.04,
-  use an equivalent entry in `DEVS:MountList`.
+- Kickstart 2.0 (dos.library V36) or newer and a separate boot volume
+  containing the usual DOS commands. Native comparison testing used Kickstart
+  3.1; Kickstart 2.0 compatibility has not yet been tested.
+  `DEVS:DOSDrivers` below is for AmigaOS 2.1+; on Kickstart 2.0, use an
+  equivalent entry in `DEVS:MountList`.
 - An existing classic `SFS\0` partition and its exact device, unit, cylinder
   range, track geometry, block size, transfer limit and DMA mask.
 - A writable block device that honors flush barriers and atomic sector

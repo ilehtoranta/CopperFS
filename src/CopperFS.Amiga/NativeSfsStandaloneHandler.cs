@@ -14,7 +14,7 @@ public static class NativeSfsStandaloneHandler
         // The filesystem is started by DOS, but a new segment does not inherit
         // the caller's library-base register or the compiler's private slot.
         var dosBase = global::Amiga.Exec.OpenLibraryRaw(
-            CString.FromPointer(CString.ToUInt32("dos.library")), 37);
+            CString.FromPointer(CString.ToUInt32("dos.library")), 36);
         if (dosBase.IsNull) return 20;
         global::Amiga.DOS.DOSLibraryBase = dosBase;
         var task = global::Amiga.Exec.FindTask(CString.FromPointer(0));
