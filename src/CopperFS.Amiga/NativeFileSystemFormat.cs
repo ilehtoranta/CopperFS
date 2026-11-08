@@ -53,7 +53,7 @@ public static partial class NativeAmigaFileSystem
         { error = DOS.Error.ObjectInUse; return false; }
         if (!(Smart(state) ? FlushSmart(state) : p.Flush()))
         { error = DOS.Error.DiskNotValidated; return false; }
-        var library = global::Amiga.Exec.OpenLibraryRaw("dos.library", 37);
+        var library = global::Amiga.Exec.OpenLibraryRaw("dos.library", 36);
         var dos = new CopperSharpNativeDosPlatform(0);
         var dosState = library.IsNull ? APTR.Null : DosNativeLibraryCore.StateFor(ref dos, library);
         if (dosState.IsNull)
