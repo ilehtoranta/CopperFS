@@ -108,3 +108,26 @@ The exhaustion case writes a 17-byte prefix, then submits a 256 KiB write
 which must report NoFreeStore and preserve position 17. A 1 KiB retry on the
 same handle must succeed, with the original prefix and exact EOF intact.
 The host checks the persisted file hash and observes TRST journal writes.
+
+## Recover an original SFS2 redo transaction
+
+`NativeCopperSfsRecoversOriginalSfs2Redo` uses the 16 MiB raw partition
+captured by the research reference tool at commit `4a902a1`. Original
+SmartFilesystem 1.279 had published a nonempty TRFA marker pointing to a
+TRST journal. The archived capture has SHA-256
+`01212067D559A385FF8B1E29AF81D71E7438B46751C6A0DFD5C0C9E621B8D4ED`.
+
+Use the Kickstart and CopperSFS TRST handler settings from the native TRST
+matrix above. Point the test at the dirty capture, which it copies for replay:
+
+```powershell
+$env:COPPERSFS_SFS2_NATIVE_REDO_IMAGE = '<path to capture-redo/reference.hdf>'
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeCopperSfsRecoversOriginalSfs2Redo
+```
+
+The guest mounts with the capture's two reserved blocks, reads the patterned
+payload, examines its size and date, and enumerates all 81 entries in Docs.
+The host checks the clean TROK marker, replay outside the marker sector, and
+the recovered files with the independent image checker. A fresh Kickstart
+machine mounts with the same handler and repeats the guest checks; the
+complete resulting partition must match the first recovered image byte for byte.
