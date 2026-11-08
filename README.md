@@ -15,6 +15,10 @@ The formats retain separate allocation, validation and recovery implementations.
 
 CopperFFS supports DOS0 OFS and DOS1 FFS reads, writes and manual TRIM on
 one mount. Its reader also handles DOS2-DOS5; those variants remain read-only.
+New OFS/FFS data prefers adjacent blocks, then free runs within the remainder
+of the current track (a pointer-table-sized window when track geometry is
+unknown), without searching additional bitmap pages for contiguity. Fragmented
+space retains the first-free fallback. Disk formats and sector I/O are unchanged.
 CopperSFS supports classic SFS and SFS2 with their existing CSUN/TRST policies.
 CopperTrim uses the same version-1 packet for all four supported writable formats.
 The CopperSFSTrim command remains a byte-identical compatibility alias.
@@ -37,16 +41,28 @@ using CopperSharp's SDK and compiler. No CopperStart checkout or DLL is required
 ```powershell
 ./build/Build-Handler.ps1 -Ffs -ArtifactRoot artifacts/ffs
 ./build/Build-Handler.ps1 -ArtifactRoot artifacts/sfs
-./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot artifacts/sfs2-csun
-./build/Build-Handler.ps1 -Sfs2 -Sfs2TrstWrites -ArtifactRoot artifacts/sfs2-trst
+./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot artifacts/sfs2-trst
+./build/Build-Handler.ps1 -Sfs2 -Sfs2CsunWrites -ArtifactRoot artifacts/sfs2-csun
 ./build/Build-Trim.ps1
 ```
+
+SFS2 defaults to TRST redo writes and uses a 192 KiB staging arena on mutation.
+For low-memory Amigas, `-Sfs2CsunWrites` selects CSUN undo writes with an optional
+64 KiB batching buffer and a scalar fallback. Both handlers recover outstanding
+TRST and CSUN journals on writable media. A clean SFS2 disk can switch handlers
+without conversion. Existing `-Sfs2TrstWrites` commands still select TRST.
+Direct MSBuild clients enabling `CopperStartNativeSfs2=true` can request CSUN
+with `-p:CopperStartSfs2TrstWrites=false`. `-LegacyCsUn` selects the classic SFS writer.
 
 Set `-CopperSharpRoot` when CopperSharp68k is not beside this checkout. Use `-Cpu
 68020` to select that target; the default is 68000. The existing strict-write,
 buffered TRST and legacy CSUN selections remain supported. CopperStart's optional
 build wrappers select its pinned CopperFS sources. Both entry points produce
 the existing CopperFFS, CopperSFS and CopperTrim names.
+Handler builds run CopperSharp's restricted CILica IL optimizer by default and
+retain its rewritten assembly and hash report under the artifact root's
+`cilica` directory. `-SkipCilica` is a diagnostic opt-out; optimizer failures
+stop the build. Original managed inputs remain under `inputs`.
 See [integration and migration](docs/copperfs-integration.md) for boundaries,
 validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usage.
 
@@ -54,6 +70,20 @@ validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usa
 
 See [the selective research port](docs/research-port.md) for the image checker,
 reliability tests, wide-volume tests, and unresolved research findings.
+
+The [optional Kickstart comparison suite](tests/CopperFS.Kickstart.Tests/README.md)
+runs matched OFS, FFS and SFS correctness workloads against original handlers,
+with independent image checks and clean handoffs in both directions. Use
+`tools/Test-OriginalHandlers.ps1` with locally supplied reference binaries and ROM.
+The [initial correctness report](docs/original-handler-correctness-ab-2026-11-06.md)
+records the findings. The [classic-SFS replacement fix](docs/sfs-mode-newfile-compatibility-2026-11-06.md)
+closes the recycled-file difference; the expanded matrix passes 9/9.
+
+The [sequential storage matrix](docs/kickstart-storage-matrix.md) compares original
+FFS/SFS2 with Copper's cached and payload-bypass policies on zero-latency
+CopperHDF, timed HDD/CF and native A1200 Gayle IDE. The full default run contains
+1,188 fresh-machine workload trials. Synthetic drive timing is separate from
+physical A1200 performance.
 
 ## Compatibility and releases
 

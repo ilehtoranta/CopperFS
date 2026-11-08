@@ -10,16 +10,22 @@ public sealed class AmigaDiskFileSystemTests
 {
     private struct Memory(byte[] disk) : IAmigaWritableFileSystemPlatform
     {
-        public uint BlockCount => Geometry.BlockCount;
-        public uint BlockBytes => Geometry.BlockBytes;
-        public uint ReservedBlocks => Geometry.ReservedBlocks;
-        public AmigaVolumeGeometry Geometry { get { AmigaVolumeGeometry.Create(1760, 512, 2, out var g); return g; } }
+        public uint BlockCount => 1760;
+        public uint BlockBytes => 512;
+        public uint ReservedBlocks => 2;
+        public uint GeometryReads;
+        public AmigaVolumeGeometry Geometry { get { GeometryReads++; AmigaVolumeGeometry.Create(1760, 512, 2, out var g); return g; } }
         public readonly byte[] Ram = new byte[65536];
         public uint BadBlock = uint.MaxValue;
         public bool Protected;
         public uint FailWriteBlock = uint.MaxValue;
         public uint PointerTableReads;
         public uint BulkCopies;
+        public uint PayloadReads;
+        public uint RetainedKey = uint.MaxValue, RetainedBlockReads;
+        public APTR RetainedImage;
+        public APTR ReadRetainedBlock(uint block) => block == RetainedKey ? RetainedImage : APTR.Null;
+        public readonly List<(uint Block, uint Count)> DataReads = [];
         public bool WriteProtected() => Protected;
         public bool Flush() => true;
         public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
@@ -27,9 +33,12 @@ public sealed class AmigaDiskFileSystemTests
         { if (Protected || block == BadBlock || block == FailWriteBlock || block >= 1760) return false; Ram.AsSpan((int)source.Raw, 512).CopyTo(disk.AsSpan((int)block * 512)); return true; }
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
-        public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
+            ReadDataBlocks(block, count, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target)
+        { PayloadReads++; DataReads.Add((block, count)); return AmigaFileSystemBlockIo.Read(ref this, block, count, target); }
         public bool ReadBlock(uint block, APTR destination)
-        { if (block == BadBlock || block >= 1760) return false; var type = BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan((int)block * 512)); if (type is 2 or 16) PointerTableReads++; disk.AsSpan((int)block * 512, 512).CopyTo(Ram.AsSpan((int)destination.Raw)); return true; }
+        { if (block == BadBlock || block >= 1760) return false; if (block == RetainedKey) RetainedBlockReads++; var type = BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan((int)block * 512)); if (type is 2 or 16) PointerTableReads++; disk.AsSpan((int)block * 512, 512).CopyTo(Ram.AsSpan((int)destination.Raw)); return true; }
         public byte ReadUInt8(APTR a, int offset = 0) => Ram[a.Raw + offset];
         public ushort ReadUInt16(APTR a, int offset = 0) => BinaryPrimitives.ReadUInt16BigEndian(Ram.AsSpan((int)a.Raw + offset));
         public uint ReadUInt32(APTR a, int offset = 0) => BinaryPrimitives.ReadUInt32BigEndian(Ram.AsSpan((int)a.Raw + offset));
@@ -173,6 +182,25 @@ public sealed class AmigaDiskFileSystemTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void PartialReadsConsumeRetainedImagesAndPreserveAliasedDestinations(bool alias)
+    {
+        var payload = Enumerable.Range(0, 1301).Select(i => (byte)(i * 17 + 3)).ToArray();
+        var fixture = DosDiskImage.Create(true, payload: payload);
+        var first = BinaryPrimitives.ReadUInt32BigEndian(fixture.Bytes.AsSpan((int)fixture.PayloadHeader * 512 + 308));
+        var p = new Memory(fixture.Bytes) { RetainedKey = first, RetainedImage = APTR.FromPointer(49152) };
+        fixture.Bytes.AsSpan((int)first * 512, 512).CopyTo(p.Ram.AsSpan(49152));
+        var target = APTR.FromPointer(alias ? 49153u : 4000u);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor();
+        Assert.Equal(64, AmigaDiskFileSystemCore.Read(ref p, ref cursor, fixture.PayloadHeader, 0x444F5301,
+            3, target, 64, APTR.FromPointer(1000), APTR.FromPointer(1600), out var error));
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal(payload.AsSpan(3, 64).ToArray(), p.Ram.AsSpan((int)target.Raw, 64).ToArray());
+        Assert.Equal(alias ? 1u : 0u, p.RetainedBlockReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void SequentialReadVisitsEachPointerTableOnceAndRetainsVerifiedPrefixOnBadExtension(bool ffs)
     {
         var disk = DosDiskImage.Create(ffs);
@@ -195,6 +223,186 @@ public sealed class AmigaDiskFileSystemTests
         Assert.Equal(DOS.Error.DiskNotValidated, error);
         Assert.Equal(Enumerable.Range(0, prefix).Select(i => (byte)(i * 17)), p.Ram.AsSpan(4000, prefix).ToArray());
         Assert.All(p.Ram.AsSpan(4000 + prefix, 42000 - prefix).ToArray(), b => Assert.Equal(0, b));
+    }
+
+    [Fact]
+    public void ChecksumIncludesEveryWordAcrossUnrolledTilesAndTheFinalWord()
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000);
+        var original = disk.Bytes.AsSpan((int)disk.PayloadHeader * 512, 512).ToArray();
+        original.CopyTo(p.Ram, 1000);
+        Assert.True(AmigaDiskFileSystemCore.Checksum(ref p, meta));
+        for (var at = 0; at < 512; at += 4)
+        {
+            original.CopyTo(p.Ram, 1000); p.Ram[1000 + at] ^= 1;
+            Assert.False(AmigaDiskFileSystemCore.Checksum(ref p, meta), $"Checksum skipped word {at / 4}");
+        }
+    }
+
+    [Fact]
+    public void CachedNextTableStillValidatesTheExtensionAfterScratchReuse()
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var file = AmigaDiskFileSystemCore.Resolve(ref p, 880, p.Name("Data/Large"), 10, 0x444F5301, meta, out _);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor();
+        Assert.Equal(64, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, 64, meta, data, out _));
+        var next = cursor.NextTable;
+        Assert.NotEqual(0u, next);
+        p.Clear(meta, 512); p.Clear(data, 512);
+        disk.Bytes[next * 512 + 100] ^= 1;
+        Assert.Equal(-1, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            72 * 512, target, 512, meta, data, out var error));
+        Assert.Equal(DOS.Error.DiskNotValidated, error);
+        Assert.Equal(0u, cursor.Header);
+    }
+
+    [Fact]
+    public void CursorChangeFlagDistinguishesRetainedReadsTraversalAndInvalidation()
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var file = AmigaDiskFileSystemCore.Resolve(ref p, 880, p.Name("Data/Large"), 10, 0x444F5301, meta, out _);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor();
+        Assert.Equal(512, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, 512, meta, data, out _, out var changed));
+        Assert.True(changed);
+        var previous = cursor;
+        p.Clear(meta, 512); p.Clear(data, 512);
+        Assert.Equal(4096, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            512, target, 4096, meta, data, out var error, out changed));
+        Assert.Equal(DOS.Error.None, error); Assert.False(changed); Assert.Equal(previous, cursor);
+        Assert.Equal(Enumerable.Range(512, 4096).Select(i => (byte)(i * 17)), p.Ram.AsSpan(4000, 4096).ToArray());
+        Assert.Equal(512, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            72 * 512, target, 512, meta, data, out _, out changed));
+        Assert.True(changed); Assert.Equal(1u, cursor.TableIndex);
+        Assert.Equal(-1, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            42001, target, 64, meta, data, out error, out changed));
+        Assert.Equal(DOS.Error.SeekError, error); Assert.True(changed); Assert.Equal(0u, cursor.Header);
+    }
+
+    [Fact]
+    public void RetainedFfsRunsReadSmallPacketsWithoutReloadingDeviceGeometry()
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor();
+        Assert.Equal(64, AmigaDiskFileSystemCore.Read(ref p, ref cursor, disk.PayloadHeader, 0x444F5301,
+            0, target, 64, meta, data, out _));
+        var geometryReads = p.GeometryReads;
+        for (var position = 64u; position < 512; position += 64)
+        {
+            p.Clear(meta, 512); p.Clear(data, 512);
+            Assert.Equal(64, AmigaDiskFileSystemCore.Read(ref p, ref cursor, disk.PayloadHeader, 0x444F5301,
+                position, target, 64, meta, data, out var error));
+            Assert.Equal(DOS.Error.None, error);
+            Assert.Equal(DosDiskImage.Payload.AsSpan((int)position, 64).ToArray(), p.Ram.AsSpan(4000, 64).ToArray());
+        }
+        Assert.Equal(geometryReads, p.GeometryReads);
+    }
+
+    [Fact]
+    public void StreamingReadsPreserveMutablePlatformStateWithoutAllocating()
+    {
+        var disk=DosDiskImage.Create(true); var p=new Memory(disk.Bytes);
+        var meta=APTR.FromPointer(1000); var data=APTR.FromPointer(1600); var target=APTR.FromPointer(4000);
+        var file=AmigaDiskFileSystemCore.Resolve(ref p,880,p.Name("Data/Large"),10,0x444F5301,meta,out _);
+        var cursor=new AmigaDiskFileSystemCore.ReadCursor();
+        p.DataReads.EnsureCapacity(4);
+        Assert.Equal(8192,AmigaDiskFileSystemCore.Read(ref p,ref cursor,file,0x444F5301,0,target,8192,meta,data,out _));
+        var reads=p.PayloadReads;
+        var allocated=GC.GetAllocatedBytesForCurrentThread();
+        var actual=AmigaDiskFileSystemCore.Read(ref p,ref cursor,file,0x444F5301,0,target,8192,meta,data,out var error);
+        allocated=GC.GetAllocatedBytesForCurrentThread()-allocated;
+        Assert.Equal(8192,actual); Assert.Equal(DOS.Error.None,error);
+        Assert.Equal(reads+1,p.PayloadReads); Assert.Equal(0,allocated);
+        Assert.Equal(Enumerable.Range(0,8192).Select(i=>(byte)(i*17)),p.Ram.AsSpan(4000,8192).ToArray());
+    }
+
+    [Fact]
+    public void FfsCursorRetainsRunsAcrossPacketsScratchReuseAndBackwardSeeks()
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var file = AmigaDiskFileSystemCore.Resolve(ref p, 880, p.Name("Data/Large"), 10, 0x444F5301, meta, out _);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor(); p.PointerTableReads = 0;
+        for (var position = 0u; position < 42000; position += 512)
+        {
+            var expected = Math.Min(512u, 42000 - position);
+            Assert.Equal((int)expected, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+                position, target, 512, meta, data, out var error));
+            Assert.Equal(DOS.Error.None, error);
+            Assert.Equal(Enumerable.Range((int)position, (int)expected).Select(i => (byte)(i * 17)),
+                p.Ram.AsSpan(4000, (int)expected).ToArray());
+            p.Clear(meta, 512); p.Clear(data, 512);
+        }
+        // Header and extension once each; the next-table key survives scratch reuse.
+        Assert.Equal(2u, p.PointerTableReads);
+        Assert.Equal(512, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, 512, meta, data, out _));
+        Assert.Equal(3u, p.PointerTableReads);
+        var other = new AmigaDiskFileSystemCore.ReadCursor();
+        Assert.Equal(512, AmigaDiskFileSystemCore.Read(ref p, ref other, disk.PayloadHeader, 0x444F5301,
+            0, target, 512, meta, data, out _));
+        Assert.Equal(1024, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            512, target, 1024, meta, data, out _));
+        Assert.Equal(2u, p.DataReads[^1].Count);
+        Assert.Equal(Enumerable.Range(512, 1024).Select(i => (byte)(i * 17)), p.Ram.AsSpan(4000, 1024).ToArray());
+    }
+
+    [Theory]
+    [InlineData(false, 2)]
+    [InlineData(true, 1)]
+    [InlineData(true, 2)]
+    [InlineData(true, 3)]
+    [InlineData(true, 4)]
+    [InlineData(true, 5)]
+    public void FfsBatchStopsAtFragmentationOrInvalidPointerAndReturnsOnlyCompletedPrefix(bool invalid, int prefix)
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var file = AmigaDiskFileSystemCore.Resolve(ref p, 880, p.Name("Data/Large"), 10, 0x444F5301, meta, out _);
+        var pointer = 308 - prefix * 4;
+        var first = p.ReadUInt32(meta, 308); var displaced = p.ReadUInt32(meta, pointer);
+        if (!invalid) disk.Bytes.AsSpan((int)displaced * 512, 512).CopyTo(disk.Bytes.AsSpan(1700 * 512, 512));
+        disk.Write(file, pointer, invalid ? 1760u : 1700u); disk.Checksum(file);
+        p.BadBlock = invalid ? uint.MaxValue : first + (uint)prefix + 1;
+        var length = (prefix + 2) * 512;
+        p.Ram.AsSpan(4000, length).Fill(0xA7);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor();
+        var actual = AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, (uint)length, meta, data, out var error);
+        Assert.Equal((invalid ? prefix : prefix + 1) * 512, actual); Assert.Equal(DOS.Error.DiskNotValidated, error);
+        Assert.Equal(0u, cursor.Header);
+        Assert.Equal((first, (uint)prefix), p.DataReads[0]);
+        Assert.Equal(Enumerable.Range(0, actual).Select(i => (byte)(i * 17)), p.Ram.AsSpan(4000, actual).ToArray());
+        Assert.All(p.Ram.AsSpan(4000 + actual, length - actual).ToArray(), b => Assert.Equal(0xA7, b));
+    }
+
+    [Fact]
+    public void FfsBulkFailureInvalidatesCursorAndExplicitInvalidationObservesNewSizeAndMapping()
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var file = AmigaDiskFileSystemCore.Resolve(ref p, 880, p.Name("Data/Large"), 10, 0x444F5301, meta, out _);
+        var first = p.ReadUInt32(meta, 308); p.BadBlock = first + 2;
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor(); p.Ram.AsSpan(4000, 2048).Fill(0xA7);
+        Assert.Equal(1024, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, 2048, meta, data, out var error));
+        Assert.Equal(DOS.Error.DiskNotValidated, error); Assert.Equal(0u, cursor.Header);
+        Assert.Equal((first, 4u), p.DataReads.Single());
+        Assert.All(p.Ram.AsSpan(5024, 1024).ToArray(), b => Assert.Equal(0xA7, b));
+        p.BadBlock = uint.MaxValue;
+        Assert.Equal(512, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, 512, meta, data, out _));
+        disk.Write(file, 324, 17); disk.Write(file, 308, first + 1); disk.Checksum(file);
+        cursor.Header = 0;
+        Assert.Equal(17, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
+            0, target, 512, meta, data, out error));
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal(Enumerable.Range(512, 17).Select(i => (byte)(i * 17)), p.Ram.AsSpan(4000, 17).ToArray());
     }
 
     [Theory]

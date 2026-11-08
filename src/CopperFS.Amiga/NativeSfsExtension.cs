@@ -407,16 +407,13 @@ public static partial class NativeSfsExtension
     public static uint ResolveInformation(APTR state, uint directory, APTR name, uint length,
         out ulong size, out bool isDirectory, out uint parent, out DOS.Error error)
     {
-        if (NativeSfs2Bridge.IsSfs2(state))
-        {
-            size = 0; parent = 0; isDirectory = false;
-            var found = Resolve(state, directory, name, length, out error);
-            if (found != 0 && !Describe(state, found, out size, out isDirectory, out parent))
-            { error = DOS.Error.DiskNotValidated; return 0; }
-            return found;
-        }
 #if COPPERSTART_SFS_STANDALONE
         var p = new NativeFileSystemPlatform(state);
+#if COPPERSTART_NATIVE_SFS2
+        if (NativeSfs2Bridge.IsSfs2(state))
+            return AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref p, directory, name, length,
+                NativeAmigaFileSystem.Metadata(state), out size, out isDirectory, out parent, out error);
+#endif
         var node = AmigaSmartFileSystemCore.Resolve(ref p, directory, name, length,
             NativeAmigaFileSystem.Metadata(state), out error, out var record, out var at);
         size = parent = 0; isDirectory = false;
@@ -455,12 +452,13 @@ public static partial class NativeSfsExtension
     }
     public static int Read(APTR state, APTR file, uint node, ulong position, APTR destination, uint length, out DOS.Error error)
     {
-        if (!NativeSfs2Bridge.IsSfs2(state) && position > uint.MaxValue) { error = DOS.Error.SeekError; return -1; }
 #if COPPERSTART_SFS_STANDALONE
-        if (NativeSfs2Bridge.IsSfs2(state)) return NativeSfs2Bridge.Read(state, node, position, destination, length, out error);
+        if (NativeSfs2Bridge.IsSfs2(state)) return NativeSfs2Bridge.Read(state, file, node, position, destination, length, out error);
+        if (position > uint.MaxValue) { error = DOS.Error.SeekError; return -1; }
         var p = new NativeFileSystemPlatform(state);
         return ReadFile(ref p, state, file, node, (uint)position, destination, length, out error);
 #else
+        if (position > uint.MaxValue && !NativeSfs2Bridge.IsSfs2(state)) { error = DOS.Error.SeekError; return -1; }
         var scratch = Scratch(state);
         APTR.WriteUInt32(scratch, Node, node);
         APTR.WriteUInt32(scratch, Position, (uint)position);

@@ -67,8 +67,11 @@ internal static class NativeFileSystemNotifications
     // Called only for messages actually removed from this handler's port.
     // Search the owned chain rather than trusting caller Node links/length.
     internal static bool Reply(APTR state, APTR message)
+        => APTR.ReadUInt8(message, NativeExecFieldCodec.NodeTypeOffset) == (byte)NodeType.ReplyMessage &&
+            RetireOwnedReply(state, message);
+
+    private static bool RetireOwnedReply(APTR state, APTR message)
     {
-        if (APTR.ReadUInt8(message, NativeExecFieldCodec.NodeTypeOffset) != (byte)NodeType.ReplyMessage) return false;
         var link = APTR.FromPointer(state.Raw + Messages);
         for (var current = APTR.FromPointer(R(link, 0)); current.IsNotNull; current = APTR.FromPointer(R(link, 0)))
         {

@@ -13,6 +13,37 @@ internal static class ReadMedia
     internal static readonly byte[] Payload = Enumerable.Range(0, 1048576)
         .Select(i => (byte)(i * 17 + (i >> 9) * 31 + (i >> 17) * 7 + 3)).ToArray();
 
+    internal static byte[] Ffs()
+    {
+        var fixture = DosDiskImage.Create(true, includeLargeFile: false, blockCount: 32768, payload: Payload, volumeName: "ReadBench");
+        var image = fixture.Bytes;
+        uint Read(uint block, int at) => BinaryPrimitives.ReadUInt32BigEndian(image.AsSpan((int)block * 512 + at));
+        void Allocate(uint block, bool used)
+        {
+            var bit = block - 2; var page = fixture.BitmapBlock + bit / 4064; var at = 4 + (int)(bit % 4064 / 32) * 4;
+            var mask = 1u << (int)(bit % 32); var value = Read(page, at);
+            fixture.Write(page, at, used ? value & ~mask : value | mask);
+        }
+        // Relocate just the payload to one physical run. Pointer-table blocks
+        // remain separate, and the bitmap tracks both old and new ownership.
+        var table = fixture.PayloadHeader;
+        for (var index = 0u; index < Payload.Length / 512; index++)
+        {
+            if (index != 0 && index % 72 == 0) table = Read(table, 504);
+            var at = 308 - (int)(index % 72) * 4; var old = Read(table, at); var fresh = 8192u + index;
+            Allocate(old, false); Allocate(fresh, true); fixture.Write(table, at, fresh);
+            if (index % 72 == 71 || index + 1 == Payload.Length / 512) fixture.Checksum(table);
+        }
+        fixture.Write(fixture.PayloadHeader, 16, 8192); fixture.Checksum(fixture.PayloadHeader);
+        Payload.CopyTo(image, 8192 * 512);
+        for (var page = 0u; page < fixture.BitmapBlocks; page++) fixture.Checksum(fixture.BitmapBlock + page, 0);
+        var disk = new StudyDisk(image, 512, reservedBlocks: 2) { ReadOnly = true };
+        Assert.Equal(Payload.Length, AmigaDiskFileSystemCore.Read(ref disk, fixture.PayloadHeader, 0x444F5301,
+            0, disk.Payload, (uint)Payload.Length, disk.Work.Meta, disk.Work.Data, out var error));
+        Assert.Equal(DOS.Error.None, error); Assert.Equal(Payload, disk.Ram.AsSpan((int)disk.Payload.Raw, Payload.Length).ToArray());
+        return image;
+    }
+
     internal static byte[] Sfs2()
     {
         // Convert only the repository's original empty synthetic fixture, as in
@@ -75,8 +106,10 @@ internal static class ReadMedia
         }
         Assert.True(objectFound); Payload.CopyTo(result, 8192 * 512);
         var verify = new StudyDisk(result, 512) { ReadOnly = true };
-        Assert.Equal(1, AmigaSmartFileSystemReadOnlyCore.Read(ref verify, node, 0,
+        var cursor = new AmigaSmartFileSystemReadOnlyCore.ReadCursor();
+        Assert.Equal(1, AmigaSmartFileSystemReadOnlyCore.Read(ref verify, ref cursor, node, 0,
             verify.Payload, 1, verify.Work.Meta, verify.Work.Data, out _));
+        Assert.Equal(oldBlocks, cursor.Count); Assert.Equal(0u, cursor.Next);
         var report = StudyFixture.Inspect(result, 512);
         Assert.Equal((ulong)Payload.Length, report.Entries.Single(e => e.Path == "/Payload").Size);
         return result;

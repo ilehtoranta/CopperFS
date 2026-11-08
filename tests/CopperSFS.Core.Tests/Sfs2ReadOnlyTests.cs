@@ -13,7 +13,7 @@ public sealed class Sfs2ReferenceFactAttribute : FactAttribute
     }
 }
 
-public sealed class Sfs2ReadOnlyTests
+public sealed partial class Sfs2ReadOnlyTests
 {
     private const uint Objects = 0x4F424A43, Nodes = 0x4E444320, Tree = 0x424E4443;
     private static readonly APTR Meta = APTR.FromPointer(512), Data = APTR.FromPointer(1024), Target = APTR.FromPointer(4096);
@@ -24,19 +24,36 @@ public sealed class Sfs2ReadOnlyTests
         public readonly byte[] Ram = new byte[32768];
         public int Writes, Flushes, Reads;
         public uint PatternStart, PatternEnd;
+        public uint BadBlock = uint.MaxValue;
+        public uint RetainedKey = uint.MaxValue, RetainedBlockReads;
+        public APTR RetainedImage;
+        public APTR BorrowSlot;
+        public APTR BorrowVerifiedSfs2Block(uint block, uint id, APTR scratch)
+        {
+            // Every borrow overwrites the previous view, including the two root copies.
+            if (BorrowSlot.IsNull || !ReadBlock(block, BorrowSlot)) return APTR.Null;
+            return ReadUInt32(BorrowSlot) == id && ReadUInt32(BorrowSlot, 8) == block &&
+                AmigaFileSystemBlockIo.ValidSfs2Sum(ref this, BorrowSlot, BlockBytes) ? BorrowSlot : APTR.Null;
+        }
+        public APTR ReadRetainedBlock(uint block) => block == RetainedKey ? RetainedImage : APTR.Null;
+        public readonly List<(uint Block, uint Count)> DataReads = [];
         public uint BlockCount => Geometry.BlockCount;
         public uint BlockBytes => Geometry.BlockBytes;
         public uint ReservedBlocks => Geometry.ReservedBlocks;
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
         public APTR ReadMetadataView(uint block, uint id, APTR target) => ReadMetadataBlock(block, id, target) ? target : APTR.Null;
-        public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
+            ReadDataBlocks(block, count, target);
+        public uint ReadDataBlocks(uint block, uint count, APTR target)
+        { DataReads.Add((block, count)); return AmigaFileSystemBlockIo.Read(ref this, block, count, target); }
         public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
         public AmigaVolumeGeometry Geometry { get { AmigaVolumeGeometry.Create(blockCount, blockBytes, reservedBlocks, out var g); return g; } }
         public bool ReadBlock(uint block, APTR destination)
         {
             Reads++;
+            if (block == RetainedKey) RetainedBlockReads++;
             if (Reads > 10000) throw new InvalidDataException("Traversal did not terminate.");
-            if (block >= blockCount || !IsMapped(destination, blockBytes)) return false;
+            if (block == BadBlock || block >= blockCount || !IsMapped(destination, blockBytes)) return false;
             var target = Ram.AsSpan((int)destination.Raw, (int)blockBytes);
             if (blocks.TryGetValue(block, out var value)) value.CopyTo(target);
             else if (block >= PatternStart && block < PatternEnd)
@@ -113,6 +130,219 @@ public sealed class Sfs2ReadOnlyTests
         foreach (var b in blocks.Values) Seal(b, sfs2);
         for (uint n = 40; n < 43; n++) blocks[n] = Enumerable.Range(0, bytes).Select(i => (byte)(i * 17 + 3)).ToArray();
         return blocks;
+    }
+
+    [Theory]
+    [InlineData(false, 0u)]
+    [InlineData(true, 0u)]
+    [InlineData(false, 3u)]
+    [InlineData(true, 3u)]
+    public void ResolveUsesTheSelectedRootFieldsAndVisitsItsDirectoryOnce(bool newerBackup, uint countedBlock)
+    {
+        var image = Image();
+        // The stale root has a valid checksum but points to an unusable node tree.
+        var stale = newerBackup ? 0u : 127u;
+        U32(image[stale], 112, 18);
+        Seal(image[stale], true);
+        U16(image[127], 14, newerBackup ? (ushort)1 : (ushort)0);
+        Seal(image[127], true);
+        var disk = new Disk(image) { RetainedKey = countedBlock };
+        const string path = "Docs/Payload";
+        var name = disk.Name(path);
+        Assert.Equal(8u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name,
+            (uint)path.Length, Meta, out var size, out _, out _, out var error));
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal(1301ul, size);
+        Assert.Equal(1u, disk.RetainedBlockReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveInformationValidatesTheFinalNodeAndItsWideSize(bool corruptSize)
+    {
+        var image = Image();
+        if (corruptSize) { U32(image[10], 40, 0x10000); Seal(image[10], true); }
+        var disk = new Disk(image);
+        const string path = "Docs/Payload";
+        var name = disk.Name(path);
+        var node = AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name, (uint)path.Length,
+            Meta, out var size, out var directory, out var parent, out var error);
+        Assert.Equal(corruptSize ? 0u : 8u, node);
+        Assert.Equal(corruptSize ? DOS.Error.DiskNotValidated : DOS.Error.None, error);
+        Assert.Equal(corruptSize ? 0ul : 1301ul, size);
+        Assert.Equal(corruptSize ? 0u : 7u, parent);
+        Assert.False(directory);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void MountedFirstRecordUsesTheIndexedContainerAfterTheBorrowExpires(bool redirected, bool corruptSize)
+    {
+        var image = Image();
+        var indexed = image[10];
+        if (redirected)
+        {
+            indexed = image[11] = (byte[])indexed.Clone();
+            U32(indexed, 8, 11);
+            U32(indexed, 12, 99);
+            U32(indexed, 36, 50);
+            U16(indexed, 44, 777);
+            U32(image[7], 90, 11);
+            Seal(image[7], true);
+            // A stale directory record's invalid size must not mask a valid indexed record.
+            U32(image[10], 40, 0x10000);
+            Seal(image[10], true);
+        }
+        if (corruptSize) U32(indexed, 40, 0x10000);
+        Seal(indexed, true);
+        var disk = new Disk(image) { BorrowSlot = APTR.FromPointer(16384) };
+        Assert.True(AmigaSmartFileSystemReadOnlyCore.MountSfs2ForLookup(ref disk, Meta, out var root));
+        var name = disk.Name("Payload/");
+        var node = AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 7, name, 8, Meta, root,
+            out var size, out var directory, out var parent, out var extent, out var error);
+        Assert.Equal(corruptSize ? 0u : 8u, node);
+        Assert.Equal(corruptSize ? DOS.Error.DiskNotValidated : DOS.Error.None, error);
+        Assert.Equal(corruptSize ? 0ul : redirected ? 777ul : 1301ul, size);
+        Assert.Equal(corruptSize ? 0u : redirected ? 99u : 7u, parent);
+        Assert.Equal(corruptSize ? 0u : redirected ? 50u : 40u, extent);
+        Assert.False(directory);
+    }
+
+    [Fact]
+    public void MountedLookupChecksEmbeddedNulsAndTheMatchingRecordsComment()
+    {
+        var image = Image();
+        var file = image[10];
+        var disk = new Disk(image) { BorrowSlot = APTR.FromPointer(16384) };
+        Assert.True(AmigaSmartFileSystemReadOnlyCore.MountSfs2ForLookup(ref disk, Meta, out var root));
+        const int nameOffset = 24 + 27;
+        file.AsSpan(nameOffset).Clear();
+        Encoding.Latin1.GetBytes("Pay\0oad").CopyTo(file, nameOffset);
+        Seal(file, true);
+        var name = disk.Name("Pay\0oad");
+        Assert.Equal(0u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 7, name, 7, Meta, root,
+            out _, out _, out _, out var error));
+        Assert.Equal(DOS.Error.ObjectNotFound, error);
+
+        Encoding.Latin1.GetBytes("Payload").CopyTo(file, nameOffset);
+        file.AsSpan(nameOffset + 8, 80).Fill((byte)'x');
+        Seal(file, true);
+        name = disk.Name("Payload");
+        Assert.Equal(0u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 7, name, 7, Meta, root,
+            out _, out _, out _, out error));
+        Assert.Equal(DOS.Error.DiskNotValidated, error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReadingABorrowedExtentChecksKeysAfterTheMatch(bool unorderedLeaf)
+    {
+        var image = Image();
+        var leaf = image[11] = image[6];
+        U32(leaf, 8, 11);
+        if (unorderedLeaf) U32(leaf, 32, 39);
+        Seal(leaf, true);
+        var branch = image[6] = new byte[512];
+        U32(branch, 0, Tree); U32(branch, 8, 6); U16(branch, 12, 1); branch[15] = 8;
+        U32(branch, 16, 40); U32(branch, 20, 11); Seal(branch, true);
+        var disk = new Disk(image) { BorrowSlot = APTR.FromPointer(16384) };
+        var read = AmigaSmartFileSystemReadOnlyCore.Read(ref disk, 8, 0, Target, 512, Meta, Data, out var error);
+        Assert.Equal(unorderedLeaf ? -1 : 512, read);
+        Assert.Equal(unorderedLeaf ? DOS.Error.DiskNotValidated : DOS.Error.None, error);
+        if (!unorderedLeaf) Assert.Equal(image[40], disk.Ram.AsSpan((int)Target.Raw, 512).ToArray());
+    }
+
+    [Fact]
+    public void MountedLookupMatchesFullResolutionAcrossPathForms()
+    {
+        var image = Image();
+        image[127][20] = 128; // The newer backup selects case-sensitive lookup.
+        U16(image[127], 14, 1); Seal(image[127], true);
+        var disk = new Disk(image) { BorrowSlot = APTR.FromPointer(16384) };
+        Assert.True(AmigaSmartFileSystemReadOnlyCore.MountSfs2ForLookup(ref disk, Meta, out var lookup));
+        Assert.True(lookup.CaseSensitive);
+        foreach (var (directory, path) in new (uint, string)[] {
+            (1, ""), (1, "/"), (1, "Docs/Payload"), (1, "docs/Payload"), (7, "Payload"),
+            (7, "/Docs/Payload"), (7, "Volume:LengthProbe"), (8, "nested"), (1, "missing") })
+        {
+            var name = disk.Name(path);
+            var length = (uint)path.Length;
+            var expected = AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, directory, name, length, Meta,
+                out var size, out var isDirectory, out var parent, out var error);
+            var actual = AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, directory, name, length, Meta, lookup,
+                out var actualSize, out var actualDirectory, out var actualParent, out var actualError);
+            Assert.Equal((expected, size, isDirectory, parent, error), (actual, actualSize, actualDirectory, actualParent, actualError));
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 512)]
+    [InlineData(false, 1024)]
+    [InlineData(true, 512)]
+    [InlineData(true, 1024)]
+    public void FirstLookupFoldsLatin1AndChecksTheIndexedLeaf(bool sfs2, int bytes)
+    {
+        var image = Image(sfs2, bytes: bytes);
+        var leaf = image[7];
+        image[11] = leaf;
+        U32(leaf, 8, 11); Seal(leaf, sfs2);
+        var branch = image[7] = new byte[bytes];
+        U32(branch, 0, Nodes); U32(branch, 8, 7); U32(branch, 12, 1); U32(branch, 16, 32);
+        var pointerUnit = sfs2 ? 2u : (uint)bytes / 32;
+        U32(branch, 20, 11 * pointerUnit + 1); Seal(branch, sfs2);
+
+        var file = image[10];
+        file[24 + 25 + (sfs2 ? 2 : 0)] = 0xC9; // Éayload
+        Seal(file, sfs2);
+        var disk = new Disk(image, blockBytes: (uint)bytes);
+        const string path = "dOcS/éAYlOAd";
+        var name = disk.Name(path);
+        Assert.Equal(8u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name, (uint)path.Length,
+            Meta, out var size, out _, out _, out var error));
+        Assert.Equal(DOS.Error.None, error);
+        Assert.Equal((ulong)(bytes * 2 + 277), size);
+
+        foreach (var root in new[] { image[0], image[127] })
+        {
+            root[20] |= 128; Seal(root, sfs2);
+        }
+        Assert.Equal(0u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name, (uint)path.Length,
+            Meta, out _, out _, out _, out error));
+        Assert.Equal(DOS.Error.ObjectNotFound, error);
+        name = disk.Name("Docs/Éayload");
+        Assert.Equal(8u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name, (uint)path.Length,
+            Meta, out _, out _, out _, out error));
+
+        U32(leaf, 90, 8); Seal(leaf, sfs2); // Directory match exists, but node 8 no longer points to its record.
+        Assert.Equal(0u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name, (uint)path.Length,
+            Meta, out _, out _, out _, out error));
+        Assert.Equal(DOS.Error.DiskNotValidated, error);
+    }
+
+    [Fact]
+    public void ReusedMetadataViewResolvesNestedPathAndKeepsPublicEntryInScratch()
+    {
+        var image = Image();
+        // Prefer the primary. The backup is valid but points to a different root.
+        U16(image[0], 14, 2); Seal(image[0], true);
+        U32(image[127], 104, 11); Seal(image[127], true);
+        var disk = new Disk(image) { BorrowSlot = APTR.FromPointer(16384) };
+        var name = disk.Name("Docs/Payload");
+        disk.Ram.AsSpan((int)Meta.Raw, 512).Fill(0xA5);
+        Assert.Equal(8u, AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref disk, 1, name, 12, Meta,
+            out var size, out var directory, out var parent, out var error));
+        Assert.Equal(DOS.Error.None, error); Assert.Equal(1301ul, size); Assert.False(directory); Assert.Equal(7u, parent);
+        Assert.True(disk.Ram.AsSpan((int)Meta.Raw, 512).IndexOfAnyExcept((byte)0xA5) < 0);
+
+        Assert.True(AmigaSmartFileSystemReadOnlyCore.Describe(ref disk, 8, Meta, out var entry));
+        disk.Clear(disk.BorrowSlot, 512);
+        Assert.Equal("Payload", disk.Text(entry.Name, entry.NameLength));
+        Assert.Equal("Test comment", disk.Text(entry.Comment, entry.CommentLength));
     }
 
     [Theory]
@@ -201,10 +431,11 @@ public sealed class Sfs2ReadOnlyTests
         }
         var disk = new Disk(image, count) { PatternStart = first, PatternEnd = first + extentBlocks + 18 };
         Assert.True(AmigaSmartFileSystemReadOnlyCore.Describe(ref disk, 8, Meta, out var entry)); Assert.Equal(size, entry.Size);
+        var readCursor = new AmigaSmartFileSystemReadOnlyCore.ReadCursor();
         foreach (var offset in new[] { 0xFFFFFFFDul, 0x100000000ul, (ulong)extentBlocks * 512 - 3, size - 3 })
         {
             var length = (uint)Math.Min(1030ul, size - offset);
-            Assert.Equal((int)length, AmigaSmartFileSystemReadOnlyCore.Read(ref disk, 8, offset, Target, 1030, Meta, Data, out var error));
+            Assert.Equal((int)length, AmigaSmartFileSystemReadOnlyCore.Read(ref disk, ref readCursor, 8, offset, Target, 1030, Meta, Data, out var error));
             Assert.Equal(DOS.Error.None, error);
             Assert.Equal(Enumerable.Range(0, (int)length).Select(i => (byte)((offset + (uint)i) * 17 + 3)), disk.Ram.Skip(4096).Take((int)length));
         }
@@ -285,12 +516,16 @@ public sealed class Sfs2ReadOnlyTests
         Assert.Equal(0, disk.Writes); Assert.Equal(0, disk.Flushes);
     }
 
-    [Fact]
-    public void RootCopiesSelectNewestAndRejectMixedFormats()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RootCopiesSelectNewestAndRejectMixedFormats(bool borrowed)
     {
         var image = Image(); U16(image[0], 14, 65535); Seal(image[0], true);
-        U16(image[127], 14, 0); Seal(image[127], true); var disk = new Disk(image);
+        U16(image[127], 14, 0); Seal(image[127], true);
+        var disk = new Disk(image) { BorrowSlot = borrowed ? APTR.FromPointer(16384) : APTR.Null };
         Assert.True(AmigaSmartFileSystemReadOnlyCore.Root(ref disk, Meta, out _)); Assert.Equal(127u, disk.ReadUInt32(Meta, 8));
+        Assert.Equal(image[127], disk.Ram.AsSpan((int)Meta.Raw, 512).ToArray());
         U32(image[0], 0, 0x53465300); U16(image[0], 12, 3); Seal(image[0], false);
         Assert.False(AmigaSmartFileSystemReadOnlyCore.Root(ref disk, Meta, out _));
         image[0][0] = 0;

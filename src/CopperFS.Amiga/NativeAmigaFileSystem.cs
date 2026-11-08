@@ -18,6 +18,11 @@ public static partial class NativeAmigaFileSystem
     public const uint StateBytes = 2320;
 #endif
     internal const int SmartReservationsOffset = 2052;
+#if COPPERFS_NATIVE_FFS_READAHEAD
+    // FFS and SFS reservation records are mutually exclusive mount state.
+    // Leave the reservation count untouched and borrow one unused record.
+    internal const int FfsClockRequestOffset = SmartReservationsOffset + 4;
+#endif
     internal const int SmartRedoOverlayOffset = 2048;
     internal const int SmartRangeBufferOffset = 2044;
 #if COPPERSTART_SFS_TRST_WRITES || COPPERSTART_SFS2_TRST_WRITES
@@ -55,6 +60,12 @@ public static partial class NativeAmigaFileSystem
     internal const int SmartRecoveryPendingOffset = 56;
     internal const int SmartCreationDateOffset = 60;
     internal const int GeometryOffset = 1600, BuffersOffset = 1648, IoBufferOffset = 1652, CacheBlocksOffset = 1656, CacheBytesOffset = 1660;
+    private const int FixedHardDiskOffset = GeometryOffset + 40;
+    // Opt-in DosEnvec.de_Control values, scoped to the exact device name.
+    // The following word was spare; cache policy adds no state allocation.
+    public const uint CopperHdfPayloadBypassControl = 0x43504301;
+    public const uint ScsiPayloadBypassControl = 0x43504302;
+    internal const int PayloadCacheBypassOffset = GeometryOffset + 44;
     internal const int ExtensionScratchOffset = 1664;
     internal const int InhibitedOffset = 1744;
     internal const int SmartJournalCursorOffset = 1748, SmartAllocationCursorOffset = 1752;
@@ -109,7 +120,14 @@ public static partial class NativeAmigaFileSystem
     private const uint ObjectBytes = 216, Magic = 0x41465331;
     internal const int SmartReadCursorOffset = 56;
     private static bool Smart(APTR state) => APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType;
-    private static uint RootKey(APTR state) => Smart(state) ? AmigaSmartFileSystemCore.RootNode : ReadGeometry(state).RootBlock;
+    private static uint RootKey(APTR state) => Smart(state) ? AmigaSmartFileSystemCore.RootNode : DiskRootBlock(state);
+    // Keep the by-value disk geometry out of the shared DOS open packet's stack frame.
+    private static uint DiskRootBlock(APTR state)
+    {
+        var blocks = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset);
+        var reserved = APTR.ReadUInt32(state, NativeFileSystemStateCodec.ReservedBlocksOffset);
+        return (blocks - 1) / 2 + reserved / 2 + ((blocks - 1) % 2 + reserved % 2) / 2;
+    }
     private static bool SmartMutation(DosPacketAction action) => action is
         DosPacketAction.FindOutput or DosPacketAction.FindUpdate or DosPacketAction.Write or
         DosPacketAction.SetFileSize or DosPacketAction.DeleteObject or DosPacketAction.RenameObject or
@@ -177,6 +195,31 @@ public static partial class NativeAmigaFileSystem
         return success;
     }
 
+    private static bool DeviceNamed(APTR name, CString expected)
+    {
+        var literal = APTR.FromPointer(expected);
+        for (var at = 0; ; at++)
+        {
+            var ch = APTR.ReadUInt8(name, at);
+            if (ch != APTR.ReadUInt8(literal, at)) return false;
+            if (ch == 0) return true;
+        }
+    }
+
+    private static void ConfigurePayloadCache(APTR state, APTR deviceName, APTR environment)
+    {
+        var policy = 0u;
+        if (environment.IsNotNull && APTR.ReadUInt32(environment, 0) >= 18)
+        {
+            var control = APTR.ReadUInt32(environment, 72);
+            if(control == CopperHdfPayloadBypassControl && DeviceNamed(deviceName, "copperhdf.device")) policy=1;
+            // Bit zero bypasses payload copies; bit one retains read-ahead for
+            // small sector packets on the diagnostic native controller path.
+            else if(control == ScsiPayloadBypassControl && DeviceNamed(deviceName, "scsi.device")) policy=3;
+        }
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset, policy);
+    }
+
     public static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment)
     {
         var state = global::Amiga.Exec.AllocMem(StateBytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
@@ -190,14 +233,22 @@ public static partial class NativeAmigaFileSystem
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.RequestOffset, request.Raw);
         if (request.IsNull || global::Amiga.Exec.OpenDevice(CString.FromPointer(deviceName.Raw), unit, request, flags) != 0)
         { Destroy(s); return APTR.Null; }
+        ConfigurePayloadCache(s, deviceName, environment);
         var p = new NativeFileSystemPlatform(s);
         var probe = APTR.FromPointer(state + MetadataOffset);
+        APTR.WriteUInt16(probe, 28, 0xFFFF); // A driver omitting type/flags cannot confirm fixed media.
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, 22); // TD_GETGEOMETRY
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoDataOffset, probe.Raw);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoLengthOffset, 32);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
         global::Amiga.Exec.DoIO(request);
         var haveDevice = APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 && APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) >= 32;
+        // Direct access alone also describes floppies. Require a known disk
+        // driver and affirmative fixed, direct-access geometry for this unit.
+        if (haveDevice && APTR.ReadUInt32(probe, 0) != 0 && APTR.ReadUInt8(probe, 28) == 0 &&
+            (APTR.ReadUInt8(probe, 29) & 1) == 0 && (DeviceNamed(deviceName, "scsi.device") ||
+            DeviceNamed(deviceName, "copperhdf.device") || DeviceNamed(deviceName, "uaehf.device")))
+            APTR.WriteUInt32(s, FixedHardDiskOffset, 1);
         AmigaVolumeGeometry geometry;
         if (environment.IsNotNull)
         {
@@ -244,7 +295,7 @@ public static partial class NativeAmigaFileSystem
                  APTR.ReadUInt32(environment, 64) is not (AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType)))
             { Destroy(s); return APTR.Null; }
 #endif
-            if (!MountSmart(s))
+            if (!MountSmart(s, type))
             {
 #if COPPERSTART_FULL_FILESYSTEM_EXTENSION
                 // Keep a readable, unformatted configured device addressable by Format().
@@ -263,36 +314,91 @@ public static partial class NativeAmigaFileSystem
             // memory never grows with read or file length. Allocation failure
             // rolls back this optional cache and keeps ordinary track reads.
             MoreCache(s, 16, out _);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+            // Early IDE scsi.device versions do not implement TD_GETGEOMETRY.
+            // Confirm fixed direct-access media through SCSI INQUIRY instead
+            // of inferring it from the driver name or partition geometry.
+            if (APTR.ReadUInt32(s, FixedHardDiskOffset) == 0 && DeviceNamed(deviceName, "scsi.device") &&
+                ProbeFixedScsi(s, Metadata(s))) APTR.WriteUInt32(s, FixedHardDiskOffset, 1);
+            // Honor a bounded part of the mount's requested metadata budget.
+            // Extra pages are optional; low-memory mounts keep the first 16.
+            if (environment.IsNotNull && APTR.ReadUInt32(environment, 0) >= 11)
+            {
+                var requested = APTR.ReadUInt32(environment, DosLayout.DosEnvec.NumberOfBuffers);
+                if (requested > 32) requested = 32;
+                var have = APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset);
+                if (requested > have) MoreCache(s, (int)(requested - have), out _);
+            }
+#endif
         }
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
 
         return s;
     }
 
+#if COPPERFS_NATIVE_FFS_READAHEAD
+    internal static bool ProbeFixedScsi(APTR state, APTR scratch)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        p.Clear(scratch, 100);
+        APTR.WriteUInt32(scratch, 0, scratch.Raw + 64); // scsi_Data
+        APTR.WriteUInt32(scratch, 4, 36);             // scsi_Length
+        APTR.WriteUInt32(scratch, 12, scratch.Raw + 32);
+        APTR.WriteUInt16(scratch, 16, 6);            // scsi_CmdLength
+        APTR.WriteUInt8(scratch, 20, 1);            // SCSIF_READ
+        APTR.WriteUInt8(scratch, 21, 0xFF);         // Require returned status.
+        APTR.WriteUInt8(scratch, 32, 0x12);         // Standard INQUIRY, no VPD.
+        APTR.WriteUInt8(scratch, 36, 36);
+        APTR.WriteUInt16(scratch, 64, 0xFFFF);       // Require returned identity.
+        return p.ScsiDirect(scratch) && APTR.ReadUInt8(scratch, 21) == 0 &&
+            APTR.ReadUInt16(scratch, 18) == 6 && APTR.ReadUInt32(scratch, 8) >= 36 &&
+            APTR.ReadUInt8(scratch, 64) == 0 && (APTR.ReadUInt8(scratch, 65) & 0x80) == 0;
+    }
+#endif
+
     internal static bool BufferFitsMask(uint address, uint bytes, uint mask)
     {
         // Low zero bits specify the start address's alignment (commonly two
         // or four bytes); they do not exclude those bytes within the transfer.
         if (mask == 0 || bytes == 0 || (address & ~mask) != 0 || bytes > uint.MaxValue - address) return false;
+        var alignmentBits = (mask & unchecked(0u - mask)) - 1;
+        if ((mask | alignmentBits) == uint.MaxValue) return true;
         // Include every address in the interval, even for masks with holes.
         // Endpoints alone can miss a forbidden bit that changes twice.
         var varying = address ^ (address + bytes - 1);
         varying |= varying >> 1; varying |= varying >> 2; varying |= varying >> 4;
         varying |= varying >> 8; varying |= varying >> 16;
-        var alignmentBits = (mask & unchecked(0u - mask)) - 1;
         return ((address | varying) & ~(mask | alignmentBits)) == 0;
     }
 
-    private static bool MountSmart(APTR s)
+    private static bool MountSmart(APTR s, uint probedType = 0)
     {
         var geometry = ReadGeometry(s);
         var p = new NativeFileSystemPlatform(s);
-            if (!NativeSfsExtension.Root(s)) { return false; }
+        var previousCacheCount = APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset);
+        var earlyCache = false;
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+        // The initial probe already read sector zero into private scratch.
+        // Its signature is an I/O hint. Root still checks both root copies.
+        earlyCache = probedType == NativeSfs2Bridge.DosType && APTR.ReadUInt32(s, FixedHardDiskOffset) != 0;
+        if (earlyCache)
+        {
+            if (previousCacheCount < 32) MoreCache(s, 32 - (int)previousCacheCount, out _);
+            p.RetainSfs2MountPrefix(Metadata(s));
+        }
+#endif
+            if (!NativeSfsExtension.Root(s))
+            {
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                var added = APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset) - previousCacheCount;
+                if (added != 0) MoreCache(s, -(int)added, out _);
+#endif
+                return false;
+            }
             APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartCreationDateOffset, APTR.ReadUInt32(Metadata(s), 16));
             // Retain validated mount/recovery reads, including the transaction
             // marker, in the same cache subsequently used by DOS operations.
-            if (APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset) < 32)
-                MoreCache(s, 32 - (int)APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset), out _);
+            if (!earlyCache && previousCacheCount < 32) MoreCache(s, 32 - (int)previousCacheCount, out _);
 #if COPPERSTART_NATIVE_SFS_WRITES
             // Recovery mutates media and belongs to the native SFS writer profile.
             var journal = global::Amiga.Exec.AllocMem(geometry.BlockBytes,
@@ -300,10 +406,14 @@ public static partial class NativeAmigaFileSystem
             APTR.WriteUInt32(s, NativeFileSystemStateCodec.JournalScratchOffset, journal);
             if (journal == 0) { return false; }
 #if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_SFS_TRST_WRITES || COPPERSTART_NATIVE_SFS2
+            // Initialize sets the visible slot count to zero. Each staged slot
+            // receives its key and a complete block before the next packet.
+            var batchFlags = NativeSfs2Bridge.IsSfs2(s) ? global::Amiga.Exec.MemoryFlags.Public :
+                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear;
             var batch = global::Amiga.Exec.AllocMem(
                 AmigaSmartFileSystemTransactionBuffer.StorageBytes(geometry.BlockBytes,
                     AmigaSmartFileSystemTransactionBuffer.MaximumCapacity),
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+                batchFlags);
             APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartTransactionBufferOffset, batch);
             // Low-memory mounts can retain the unbuffered undo protocol.
             if (batch != 0 && !AmigaSmartFileSystemTransactionBuffer.Initialize(ref p,
@@ -331,18 +441,23 @@ public static partial class NativeAmigaFileSystem
                 geometry.BlockBytes, AmigaSmartFileSystemWriteBuffer.MaximumCapacity)) { return false; }
 #endif
 #endif
-            if (!NativeSfsExtension.Mount(s)) { return false; }
-
-        if (Smart(s))
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+        if (NativeSfs2Bridge.IsSfs2(s))
         {
-            // The SFS tree, bitmap, and undo chain are revisited between data
-            // blocks. Keep them in the existing block LRU; a failed optional
-            // cache allocation affects speed, not mountability.
-            var enumeration = global::Amiga.Exec.AllocMem(SmartEnumerationCacheBytes,
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
-            APTR.WriteUInt32(s, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, enumeration);
+            AllocateEnumerationCache(s);
+            return MountSfs2ForInput(ref p, s);
         }
+#endif
+        if (!NativeSfsExtension.Mount(s)) return false;
+        if (Smart(s)) AllocateEnumerationCache(s);
         return true;
+    }
+
+    private static void AllocateEnumerationCache(APTR state)
+    {
+        var cache = global::Amiga.Exec.AllocMem(SmartEnumerationCacheBytes,
+            global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, cache);
     }
 
     public static void Destroy(APTR state)
@@ -384,6 +499,9 @@ public static partial class NativeAmigaFileSystem
                 global::Amiga.Exec.WaitIO(timer);
             }
             global::Amiga.Exec.CloseDevice(timer);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+            if (timer.Raw != state.Raw + FfsClockRequestOffset)
+#endif
             global::Amiga.Exec.DeleteIORequest(timer);
         }
 #endif
@@ -445,10 +563,16 @@ public static partial class NativeAmigaFileSystem
             if ((uint)delta > int.MaxValue - APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset) - count) { error = DOS.Error.NoFreeStore; return 0; }
             var added = 0;
             var original = head;
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+            // Empty slots are not hashed. A complete block is copied or read
+            // before publication; clearing the payload here repeats that work.
+            const global::Amiga.Exec.MemoryFlags flags = global::Amiga.Exec.MemoryFlags.Public;
+#else
+            const global::Amiga.Exec.MemoryFlags flags = global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear;
+#endif
             for (; added < delta; added++)
             {
-                var block = APTR.FromPointer(global::Amiga.Exec.AllocMem(ExtraCacheBytes(state),
-                    global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
+                var block = APTR.FromPointer(global::Amiga.Exec.AllocMem(ExtraCacheBytes(state), flags));
                 if (block.IsNull)
                 {
                     while (head != original)
@@ -458,7 +582,14 @@ public static partial class NativeAmigaFileSystem
                     }
                     error = DOS.Error.NoFreeStore; return 0;
                 }
-                APTR.WriteUInt32(block, 0, head.Raw); APTR.WriteUInt32(block, 4, uint.MaxValue); head = block;
+                APTR.WriteUInt32(block, 0, head.Raw);
+                APTR.WriteUInt32(block, 4, uint.MaxValue);
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                // ReindexCache sets the previous link when this batch commits.
+                APTR.WriteUInt32(block, 12, 0);
+                APTR.WriteUInt32(block, 16, 0);
+#endif
+                head = block;
             }
             count += (uint)added;
         }
@@ -626,7 +757,12 @@ public static partial class NativeAmigaFileSystem
 
     private static APTR NewObject(APTR state, uint key, ulong size, bool file, int access)
     {
-        var o = APTR.FromPointer(global::Amiga.Exec.AllocMem(ObjectBytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
+        var o = APTR.Null;
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+        if (file && access == 0) o = Sfs2InputObject(state);
+        if (o.IsNull || APTR.ReadUInt32(o, 16) != 0)
+#endif
+            o = APTR.FromPointer(global::Amiga.Exec.AllocMem(ObjectBytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
         if (o.IsNull) return o;
         APTR.WriteUInt32(o, 0, APTR.ReadUInt32(state, NativeFileSystemStateCodec.ObjectsOffset));
         APTR.WriteUInt32(o, 4, key);
@@ -649,12 +785,23 @@ public static partial class NativeAmigaFileSystem
             if (current.IsNull) return;
             if (current == o)
             {
-                if (APTR.ReadUInt32(o, 16) == 1)
+                if (APTR.ReadUInt32(o, 16) == 1 && (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RecordLocksOffset) != 0 ||
+                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.RecordWaitersOffset) != 0))
                 {
                     var recordPlatform = new NativeRecordLockPlatform();
                     NativeRecordLockCore.Close(ref recordPlatform, state, o);
                 }
-                APTR.WriteUInt32(link, 0, APTR.ReadUInt32(o, 0)); global::Amiga.Exec.FreeMem(o.Raw, ObjectBytes); return;
+                APTR.WriteUInt32(link, 0, APTR.ReadUInt32(o, 0));
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                if (o == Sfs2InputObject(state))
+                {
+                    var p = new NativeFileSystemPlatform(state);
+                    p.Clear(o, ObjectBytes);
+                    return;
+                }
+#endif
+                global::Amiga.Exec.FreeMem(o.Raw, ObjectBytes);
+                return;
             }
             link = current;
         }
@@ -670,8 +817,15 @@ public static partial class NativeAmigaFileSystem
             var generation = unchecked(APTR.ReadUInt32(enumeration, 0) + 1);
             if (generation == 0)
             {
-                var p = new NativeFileSystemPlatform(state);
-                p.Clear(enumeration, SmartEnumerationCacheBytes);
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                // The adjacent input object may still be linked and in use.
+                if (NativeSfs2Bridge.IsSfs2(state)) ClearSfs2Lookup(enumeration);
+                else
+#endif
+                {
+                    var p = new NativeFileSystemPlatform(state);
+                    p.Clear(enumeration, SmartEnumerationCacheBytes);
+                }
             }
             APTR.WriteUInt32(enumeration, 0, generation);
         }
@@ -778,7 +932,34 @@ public static partial class NativeAmigaFileSystem
     private static void InitializeWriteTimer(APTR state, APTR port)
     {
 #if COPPERSTART_SFS_TRST_BUFFERED
+#if COPPERFS_NATIVE_FFS_READAHEAD
+        // FFS owns a timer request for allocation-free stream cost sampling.
+        // It is never armed; normal unmount cleanup closes it with the device.
+        if (!Smart(state) && (APTR.ReadUInt32(state, FixedHardDiskOffset) == 0 ||
+            APTR.ReadUInt32(state, PayloadCacheBypassOffset) != 0)) return;
+        // Chip-only mounts keep the payload window: probing direct transfers
+        // pays controller setup without the Fast-RAM copy saving. Use Exec's
+        // real allocation attributes, independent of device names or emulator.
+        if (!Smart(state) && (global::Amiga.Exec.TypeOfMem(
+            APTR.FromPointer(APTR.ReadUInt32(state, CacheOffset))) & (uint)global::Amiga.Exec.MemoryFlags.Fast) == 0) return;
+        if (!Smart(state))
+        {
+            // This request is only an OpenDevice/CloseDevice handle. It is
+            // never queued: ReadEClock uses its device base directly.
+            var inline = APTR.FromPointer(state.Raw + FfsClockRequestOffset);
+            for (var offset = 0; offset < TimerRequest.Size; offset += 4)
+                APTR.WriteUInt32(inline, offset, 0);
+            APTR.WriteUInt8(inline, 8, 5); // NT_MESSAGE
+            APTR.WriteUInt32(inline, 14, port.Raw);
+            APTR.WriteUInt16(inline, 18, (ushort)TimerRequest.Size);
+            if (global::Amiga.Exec.OpenDevice(CString.FromPointer(CString.ToUInt32("timer.device")),
+                (uint)TimerUnit.MicroHz, inline, 0) == 0)
+                APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset, inline.Raw);
+            return;
+        }
+#else
         if (!Smart(state)) return;
+#endif
 #else
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) == 0) return;
 #endif
@@ -797,7 +978,17 @@ public static partial class NativeAmigaFileSystem
 
     private static void ArmWriteTimer(APTR state)
     {
+#if COPPERFS_NATIVE_FFS_READAHEAD
+        // The optional FFS sampling request is never a deferred-write timer.
+        // Avoid walking SFS transaction state after every FFS packet.
+        if (!Smart(state)) return;
+#endif
         if (!HasBufferedWrites(state) || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset) != 0) return;
+        StartWriteTimer(state);
+    }
+
+    private static void StartWriteTimer(APTR state)
+    {
         var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset));
         if (request.IsNull) return;
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, (ushort)TimerCommand.AddRequest);
@@ -1045,6 +1236,19 @@ public static partial class NativeAmigaFileSystem
         // Read and enumeration packets need no mutation work area. Keep recovery
         // and inhibited-media handling in the full dispatcher below.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+        if (action == DosPacketAction.Read)
+        {
+            var cachedLength = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+            if (cachedLength >= 512 && cachedLength <= 4096 &&
+                NativeFileSystemPlatform.TryDispatchCachedFfsRead(state, packet)) return;
+            if (cachedLength == 4096 && APTR.ReadUInt32(state, SmartTimerOffset) != 0 && !Smart(state))
+            { DispatchAdaptiveReadPacket(state, packet); return; }
+            // DispatchPacket repeats the action/type checks before reaching
+            // this same reader. FFS/OFS have no SFS recovery gate to traverse.
+            if (!Smart(state)) { DispatchReadPacket(state, packet); return; }
+        }
+#endif
 #if COPPERSTART_NATIVE_SFS_WRITES
         if (action == DosPacketAction.Write && Smart(state) &&
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) == 0 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) == 0)
@@ -1053,26 +1257,68 @@ public static partial class NativeAmigaFileSystem
         if (action is not (DosPacketAction.Read or DosPacketAction.ExamineNext) || !Smart(state) ||
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0)
         { DispatchPacket(state, packet); return; }
+#if COPPERFS_NATIVE_FFS_READAHEAD
+        DispatchSmartReadOrNext(state, packet, action);
+    }
+
+    // CILica may inline geometry/work-area setup into the outer dispatcher.
+    // Keep those locals off every FFS read, including cache misses and small I/O.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DispatchSmartReadOrNext(APTR state, APTR packet, DosPacketAction action)
+    {
+#endif
         if (action == DosPacketAction.ExamineNext)
-        {
-            var lockValue = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
-            var owned = Object(state, lockValue, false);
-            var key = lockValue == 0 ? RootKey(state) : owned.IsNotNull ? APTR.ReadUInt32(owned, 4) : 0;
-            var nextError = key == 0 ? DOS.Error.InvalidLock : NativeSfsExtension.ExamineNext(state,
-                owned, key, APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset) << 2));
-            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, nextError == DOS.Error.None ? uint.MaxValue : 0);
-            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)nextError);
-            return;
-        }
+        { DispatchSmartNext(state, packet); return; }
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+        // A newly opened file is the first owned object. Check that native
+        // record directly; older handles still go through the bounded walk.
+        var token = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
+        var file = APTR.FromPointer(APTR.ReadUInt32(state, ObjectsOffset));
+        if (file.Raw != token) file = Object(state, token, true);
+        else if (file.IsNotNull && APTR.ReadUInt32(file, 16) != 1) file = APTR.Null;
+#else
         var file = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
+#endif
         var error = DOS.Error.InvalidLock;
         var result = -1;
         if (file.IsNotNull)
         {
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+            var low = APTR.ReadUInt32(file, 12);
+            var high = APTR.ReadUInt32(file, FilePositionHigh);
+            var position = ((ulong)high << 32) | low;
+#else
             var position = FilePosition(file);
-            result = NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position,
-                APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset)), APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset), out error);
-            if (result > 0) SetFilePosition(file, position + (uint)result);
+#endif
+            var node = APTR.ReadUInt32(file, 4);
+            var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+            var length = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+            if (NativeSfs2Bridge.IsSfs2(state))
+            {
+                var p = new NativeFileSystemPlatform(state);
+                var metadata = Metadata(state);
+                var data = APTR.FromPointer(metadata.Raw + p.BlockBytes);
+                if (APTR.ReadUInt32(file, SmartReadCursorOffset) == 0)
+                    result = ReadNewSfs2Cursor(ref p, state, file, node, position, destination, length, metadata, data, out error);
+                else
+                    result = NativeFileSystemReadCore.ReadSfs2(ref p, file, node, position, destination, length, metadata, data, out error);
+            }
+            else
+#endif
+                result = NativeSfsExtension.Read(state, file, node, position, destination, length, out error);
+            if (result > 0)
+            {
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                // Use the position captured before I/O, including when the
+                // caller's destination aliases fields in the private record.
+                var next = unchecked(low + (uint)result);
+                APTR.WriteUInt32(file, 12, next);
+                APTR.WriteUInt32(file, FilePositionHigh, next < low ? high + 1 : high);
+#else
+                SetFilePosition(file, position + (uint)result);
+#endif
+            }
         }
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
@@ -1213,6 +1459,244 @@ public static partial class NativeAmigaFileSystem
 
     private static void DispatchPacket(APTR state, APTR packet)
     {
+#if COPPERSTART_SFS_STANDALONE && !COPPERSTART_PACKED_EXTENSION
+        // Keep normal reads out of the general packet decoder's large frame,
+        // lock lookup and root-key setup. Exceptional media/recovery states
+        // continue through the original decoder and its ordering below.
+        var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+#if COPPERSTART_NATIVE_SFS2
+        // END remains legal during inhibition and recovery. FINDINPUT must pass
+        // the general dispatcher's media and recovery checks in those states.
+        if (action is DosPacketAction.FindInput or DosPacketAction.End && NativeSfs2Bridge.IsSfs2(state) &&
+            (action == DosPacketAction.End || (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) == 0 &&
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) == 0)))
+        {
+            DispatchObjectPacket(state, packet, action);
+            return;
+        }
+        if (action == DosPacketAction.Inhibit && NativeSfs2Bridge.IsSfs2(state) &&
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) == 0)
+        {
+            var p = new NativeFileSystemPlatform(state);
+            var inhibit = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset) != 0;
+            var result = SetInhibited(ref p, state, inhibit, out var error);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
+            return;
+        }
+#endif
+        if (action == DosPacketAction.Read &&
+            (!Smart(state) || (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) == 0 &&
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) == 0)))
+        {
+            DispatchReadPacket(state, packet);
+            return;
+        }
+#endif
+        DispatchGeneralPacket(state, packet);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DispatchSmartNext(APTR state, APTR packet)
+    {
+        var lockValue = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
+        var owned = Object(state, lockValue, false);
+        var key = lockValue == 0 ? RootKey(state) : owned.IsNotNull ? APTR.ReadUInt32(owned, 4) : 0;
+        var nextError = key == 0 ? DOS.Error.InvalidLock : NativeSfsExtension.ExamineNext(state,
+            owned, key, APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset) << 2));
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, nextError == DOS.Error.None ? uint.MaxValue : 0);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)nextError);
+        return;
+    }
+
+    private static void DispatchReadPacket(APTR state, APTR packet)
+    {
+        var file = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
+        var result = -1;
+        var error = DOS.Error.InvalidLock;
+        if (file.IsNotNull)
+        {
+            var p = new NativeFileSystemPlatform(state);
+            var position = FilePosition(file);
+            var target = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+            var length = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+            if (Smart(state))
+                result = NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, target, length, out error);
+#if !COPPERFS_NATIVE_FFS_READAHEAD
+            else if (length > 512 && length <= 4096 && NativeFileSystemPlatform.TryReadFfsCached(state, file, (uint)position, target, length))
+            { result = (int)length; error = DOS.Error.None; }
+#endif
+            else if (length != 0 && length <= 4096 && (length < 512 || (length & 511) == 0))
+                result = NativeFileSystemReadCore.ReadFfsAligned(ref p, file, APTR.ReadUInt32(file, 4),
+                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
+                    target, length, Metadata(state), Data(state), out error);
+            else result = NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4),
+                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
+                    target, length, Metadata(state), Data(state), out error);
+            if (result > 0) SetFilePosition(file, position + (uint)result);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+            // Metadata speculation is worthwhile on direct large reads.
+            // Cached small reads retain their lean payload-window path.
+            if (length >= 4096 && position == 0 && result > 0 && error == DOS.Error.None)
+                p.ReadAheadFfsMetadata(file, target, length);
+#endif
+        }
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ReleaseFileReservation(APTR state, uint node)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        InitializeSmartWriteWork(state, out var work);
+        AmigaSmartFileSystemWriteCore.ReleaseOverwriteReservation(ref p, ref work, node);
+    }
+
+    private static void DispatchObjectPacket(APTR state, APTR packet, DosPacketAction action)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        var a = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
+        var result = 0;
+        var error = DOS.Error.None;
+        switch (action)
+        {
+            case DosPacketAction.LocateObject:
+            case DosPacketAction.FindInput:
+                var b = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset);
+                var c = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+                var input = action == DosPacketAction.FindInput;
+                var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+                var smart = dosType is AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType;
+                var baseToken = input ? b : a;
+                var baseLock = baseToken == 0 ? APTR.Null : Object(state, baseToken, false);
+                var directory = baseToken == 0 ? (smart ? AmigaSmartFileSystemCore.RootNode : DiskRootBlock(state))
+                    : baseLock.IsNotNull ? APTR.ReadUInt32(baseLock, 4) : 0;
+                if (directory == 0) { error = DOS.Error.InvalidLock; break; }
+                var nameToken = input ? c : b;
+                var name = APTR.FromPointer(nameToken << 2);
+                if (nameToken > 0x3FFFFFFF || !p.TryMappedRegion(name, 1, out var lower, out var upper))
+                { error = DOS.Error.InvalidComponentName; break; }
+                var length = p.ReadUInt8(name);
+                var nameBytes = (uint)length + 1;
+                if (nameBytes > upper - name.Raw && !p.IsMapped(name, nameBytes))
+                { error = DOS.Error.InvalidComponentName; break; }
+                var handleAddress = a << 2;
+                if (input && (a > 0x3FFFFFFF ||
+                    ((handleAddress < lower || handleAddress >= upper || FileHandle.Size > upper - handleAddress) &&
+                     !p.IsMapped(APTR.FromPointer(handleAddress), FileHandle.Size))))
+                { error = DOS.Error.BadNumber; break; }
+                ulong foundSize = 0;
+                uint found;
+                if (smart)
+                {
+                    bool foundDirectory;
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                    if (input && dosType == NativeSfs2Bridge.DosType)
+                        found = ResolveSfs2Input(ref p, state, directory, name, length,
+                            out foundSize, out foundDirectory, out error);
+                    else
+#endif
+                        found = NativeSfsExtension.ResolveInformation(state, directory, APTR.FromPointer(name.Raw + 1), length,
+                            out foundSize, out foundDirectory, out _, out error);
+                    if (found == 0) break;
+                    if (input && foundDirectory)
+                    { error = DOS.Error.ObjectWrongType; break; }
+                }
+                else
+                {
+                    var metadata = Metadata(state);
+                    found = AmigaDiskFileSystemCore.Resolve(ref p, directory, APTR.FromPointer(name.Raw + 1), length,
+                        dosType, metadata, out error);
+                    if (found == 0) break;
+                    if (input && unchecked((int)p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 508)) != -3)
+                    { error = DOS.Error.ObjectWrongType; break; }
+                    foundSize = p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 324);
+                }
+                // Original DOS accepts access zero as a shared lookup.
+                if (!input && c != 0 && unchecked((int)c) != -2 && unchecked((int)c) != -1)
+                { error = DOS.Error.BadNumber; break; }
+                if (InUse(state, found, !input && unchecked((int)c) == -1))
+                { error = DOS.Error.ObjectInUse; break; }
+                var obj = NewObject(state, found, foundSize, input, input ? 0 : unchecked((int)c));
+                if (obj.IsNull) { error = DOS.Error.NoFreeStore; break; }
+                if (!input) result = unchecked((int)((obj.Raw + 20) >> 2));
+                else
+                {
+                    var handle = APTR.FromPointer(a << 2);
+                    APTR.WriteUInt32(handle, NativeDosFileHandleFieldCodec.PortOffset, APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset));
+                    APTR.WriteUInt32(handle, NativeDosFileHandleFieldCodec.Argument1Offset, obj.Raw);
+                    result = -1;
+                }
+                break;
+            case DosPacketAction.FreeLock:
+            case DosPacketAction.End:
+                var retired = Object(state, a, action == DosPacketAction.End);
+                if (retired.IsNull && a != 0) { error = DOS.Error.InvalidLock; break; }
+                var changedKey = retired.IsNotNull && action == DosPacketAction.End && APTR.ReadUInt32(retired, 40) != 0 ? APTR.ReadUInt32(retired, 4) : 0;
+#if COPPERSTART_SFS_TRST_BUFFERED
+                if (changedKey != 0 && Smart(state) && !FlushSmart(state))
+                { error = DOS.Error.DiskNotValidated; break; }
+#endif
+                if (retired.IsNotNull && action == DosPacketAction.End && Smart(state) &&
+                    APTR.ReadUInt32(state, SmartReservationsOffset) != 0)
+                {
+                    ReleaseFileReservation(state, APTR.ReadUInt32(retired, 4));
+                }
+                if (retired.IsNotNull) FreeObject(state, retired);
+                if (changedKey != 0) NativeFileSystemNotifications.Changed(state, changedKey);
+                result = -1;
+                break;
+        }
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
+    }
+
+    private static int SetInhibited(ref NativeFileSystemPlatform p, APTR state, bool inhibit, out DOS.Error error)
+    {
+        error = DOS.Error.None;
+        InvalidateDirectoryCursors(state);
+        if (inhibit)
+        {
+            if (!(Smart(state) ? FlushSmart(state) : p.Flush())) { error = DOS.Error.DiskNotValidated; return 0; }
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 1);
+        }
+        else if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0)
+        {
+            var buffered = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset));
+            if (buffered.IsNotNull) APTR.WriteUInt32(buffered, 24, 0);
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+            var cachedBlock = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
+            while (cachedBlock.IsNotNull)
+            {
+                APTR.WriteUInt32(cachedBlock, 4, uint.MaxValue);
+                APTR.WriteUInt32(cachedBlock, 16, 0);
+                cachedBlock = APTR.FromPointer(APTR.ReadUInt32(cachedBlock, 0));
+            }
+            bool mounted;
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+            if (NativeSfs2Bridge.IsSfs2(state))
+            {
+                // All keys are invalid. Nothing moved in the LRU, so
+                // its previous links and tail still describe this list.
+                p.Clear(APTR.FromPointer(state.Raw + NativeFileSystemStateCodec.CacheHashOffset), 64 * 4);
+                mounted = MountSfs2ForInput(ref p, state, emptyCache: true);
+            }
+            else
+#endif
+            {
+                ReindexCache(state);
+                mounted = Smart(state) ? NativeSfsExtension.Mount(state) : AmigaDiskFileSystemCore.Mount(ref p, Metadata(state), out _);
+            }
+            if (!mounted)
+            { error = DOS.Error.DiskNotValidated; return 0; }
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 0);
+        }
+        return -1;
+    }
+
+    private static void DispatchGeneralPacket(APTR state, APTR packet)
+    {
         var p = new NativeFileSystemPlatform(state);
         var metadata = Metadata(state);
         var data = Data(state);
@@ -1248,6 +1732,10 @@ public static partial class NativeAmigaFileSystem
 #if COPPERSTART_NATIVE_SFS_WRITES
         if (Smart(state) && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0 && SmartMediaAccess(action))
         {
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+            var pathCache = APTR.FromPointer(APTR.ReadUInt32(state, SmartEnumerationCacheOffset));
+            if (NativeSfs2Bridge.IsSfs2(state) && pathCache.IsNotNull) ClearSfs2Lookup(pathCache);
+#endif
             InitializeSmartWriteWork(state, out var recovery);
             if (!NativeSfsExtension.Recover(state, ref recovery) || !p.Flush())
             {
@@ -1334,105 +1822,22 @@ public static partial class NativeAmigaFileSystem
                 else error = DOS.Error.DiskNotValidated;
                 break;
             case DosPacketAction.Inhibit:
-                InvalidateDirectoryCursors(state);
-                if (a != 0)
-                {
-                    if (!(Smart(state) ? FlushSmart(state) : p.Flush())) { error = DOS.Error.DiskNotValidated; break; }
-                    APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 1);
-                }
-                else if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0)
-                {
-                    var buffered = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset));
-                    if (buffered.IsNotNull) APTR.WriteUInt32(buffered, 24, 0);
-                    APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
-                    var cachedBlock = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
-                    while (cachedBlock.IsNotNull)
-                    {
-                        APTR.WriteUInt32(cachedBlock, 4, uint.MaxValue);
-                        APTR.WriteUInt32(cachedBlock, 16, 0);
-                        cachedBlock = APTR.FromPointer(APTR.ReadUInt32(cachedBlock, 0));
-                    }
-                    ReindexCache(state);
-                    if (Smart(state) ? !NativeSfsExtension.Mount(state) :
-                        !AmigaDiskFileSystemCore.Mount(ref p, metadata, out _))
-                    { error = DOS.Error.DiskNotValidated; break; }
-                    APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 0);
-                }
-                result = -1;
+                result = SetInhibited(ref p, state, a != 0, out error);
                 break;
             case DosPacketAction.MoreCache: result = MoreCache(state, unchecked((int)a), out error); break;
             case DosPacketAction.LocateObject:
             case DosPacketAction.FindInput:
-                var baseToken = action == DosPacketAction.FindInput ? b : a;
-                var baseLock = Object(state, baseToken, false);
-                var directory = baseToken == 0 ? RootKey(state) : baseLock.IsNotNull ? APTR.ReadUInt32(baseLock, 4) : 0;
-                if (directory == 0) { error = DOS.Error.InvalidLock; break; }
-                var nameToken = action == DosPacketAction.FindInput ? c : b;
-                var name = APTR.FromPointer(nameToken << 2);
-                if (nameToken > 0x3FFFFFFF || !p.IsMapped(name, 1) || !p.IsMapped(name, (uint)p.ReadUInt8(name) + 1))
-                { error = DOS.Error.InvalidComponentName; break; }
-                if (action == DosPacketAction.FindInput && (a > 0x3FFFFFFF || !p.IsMapped(APTR.FromPointer(a << 2), FileHandle.Size)))
-                { error = DOS.Error.BadNumber; break; }
-                ulong foundSize = 0;
-                bool foundDirectory = false;
-                var found = Smart(state)
-                    ? NativeSfsExtension.ResolveInformation(state, directory, APTR.FromPointer(name.Raw + 1), p.ReadUInt8(name),
-                        out foundSize, out foundDirectory, out _, out error)
-                    : AmigaDiskFileSystemCore.Resolve(ref p, directory, APTR.FromPointer(name.Raw + 1), p.ReadUInt8(name),
-                        APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), metadata, out error);
-                if (found == 0) break;
-                if (Smart(state))
-                {
-                    if (action == DosPacketAction.FindInput && foundDirectory)
-                    { error = DOS.Error.ObjectWrongType; break; }
-                }
-                else
-                {
-                    if (action == DosPacketAction.FindInput && unchecked((int)p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 508)) != -3)
-                    { error = DOS.Error.ObjectWrongType; break; }
-                    foundSize = p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 324);
-                }
-                // Original DOS accepts access zero as a shared lookup.
-                if (action == DosPacketAction.LocateObject && c != 0 && unchecked((int)c) != -2 && unchecked((int)c) != -1)
-                { error = DOS.Error.BadNumber; break; }
-                if (InUse(state, found, action == DosPacketAction.LocateObject && unchecked((int)c) == -1))
-                { error = DOS.Error.ObjectInUse; break; }
-                var obj = NewObject(state, found, foundSize, action == DosPacketAction.FindInput, action == DosPacketAction.FindInput ? 0 : unchecked((int)c));
-                if (obj.IsNull) { error = DOS.Error.NoFreeStore; break; }
-                if (action == DosPacketAction.LocateObject) result = unchecked((int)((obj.Raw + 20) >> 2));
-                else
-                {
-                    var handle = APTR.FromPointer(a << 2);
-                    APTR.WriteUInt32(handle, NativeDosFileHandleFieldCodec.PortOffset, APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset));
-                    APTR.WriteUInt32(handle, NativeDosFileHandleFieldCodec.Argument1Offset, obj.Raw);
-                    result = -1;
-                }
-                break;
             case DosPacketAction.FreeLock:
             case DosPacketAction.End:
-                var retired = action == DosPacketAction.End ? file : locked;
-                if (retired.IsNull && a != 0) { error = DOS.Error.InvalidLock; break; }
-                var changedKey = retired.IsNotNull && action == DosPacketAction.End && APTR.ReadUInt32(retired, 40) != 0 ? APTR.ReadUInt32(retired, 4) : 0;
-#if COPPERSTART_SFS_TRST_BUFFERED
-                if (changedKey != 0 && Smart(state) && !FlushSmart(state))
-                { error = DOS.Error.DiskNotValidated; break; }
-#endif
-                if (retired.IsNotNull && action == DosPacketAction.End && Smart(state))
-                {
-                    InitializeSmartWriteWork(state, out var reservationWork);
-                    AmigaSmartFileSystemWriteCore.ReleaseOverwriteReservation(ref p, ref reservationWork, APTR.ReadUInt32(retired, 4));
-                }
-                if (retired.IsNotNull) FreeObject(state, retired);
-                if (changedKey != 0) NativeFileSystemNotifications.Changed(state, changedKey);
-                result = -1;
-                break;
+                DispatchObjectPacket(state, packet, action);
+                return;
             case DosPacketAction.Read:
                 result = -1;
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 var position = FilePosition(file);
                 result = Smart(state)
                     ? NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, APTR.FromPointer(b), c, out error)
-                    : AmigaDiskFileSystemCore.Read(ref p, APTR.ReadUInt32(file, 4), APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
+                    : NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4), APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
                         APTR.FromPointer(b), c, metadata, data, out error);
                 if (result > 0) SetFilePosition(file, position + (uint)result);
                 break;
@@ -1459,6 +1864,9 @@ public static partial class NativeAmigaFileSystem
                     AmigaSmartFileSystemWriteCore.ReleaseOverwriteReservation(ref p, ref reservationWork, APTR.ReadUInt32(file, 4));
                 }
                 APTR.WriteUInt32(file, 12, nextPosition);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+                if (!Smart(state)) NativeFfsSequentialRead.Reset(file);
+#endif
                 result = unchecked((int)old);
                 break;
             case (DosPacketAction)DosNativeExtendedPacketAction.Seek64:
@@ -1476,6 +1884,9 @@ public static partial class NativeAmigaFileSystem
                     InitializeSmartWriteWork(state, out var reservationWork);
                     AmigaSmartFileSystemWriteCore.ReleaseOverwriteReservation(ref p, ref reservationWork, APTR.ReadUInt32(file, 4));
                 }
+#if COPPERFS_NATIVE_FFS_READAHEAD
+                if (!Smart(state)) NativeFfsSequentialRead.Reset(file);
+#endif
                 p.WriteUInt32(seekOutput, 0, (uint)(previousPosition >> 32));
                 p.WriteUInt32(seekOutput, 4, (uint)previousPosition);
                 SetFilePosition(file, widePosition);
@@ -1643,7 +2054,8 @@ public static partial class NativeAmigaFileSystem
 #endif
                 InitializeWriteWork(state, out var work);
                 var write = new AmigaFfsWriteCore.Request { Header = APTR.ReadUInt32(file, 4), Position = APTR.ReadUInt32(file, 12), Buffer = APTR.FromPointer(b), Length = c };
-                if (!AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written)) { error = work.Error; break; }
+                if (!AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written,
+                    APTR.ReadUInt32(state, FixedHardDiskOffset) != 0)) { error = work.Error; break; }
                 APTR.WriteUInt32(file, 12, write.Position + written);
                 if (write.Position + written > APTR.ReadUInt32(file, 8)) APTR.WriteUInt32(file, 8, write.Position + written);
                 if (written != 0) APTR.WriteUInt32(file, 40, 1);
@@ -1939,28 +2351,47 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
                     APTR.WriteUInt8(APTR.FromPointer(output), 0, APTR.ReadUInt8(APTR.FromPointer(input), 0));
                     input++; output++; remaining--;
                 }
+                var inputPointer = APTR.FromPointer(input);
+                var outputPointer = APTR.FromPointer(output);
+                // The admitted RAM spans do not overlap. Scalar C# copies
+                // let the compiler combine each access with its pointer advance.
                 while (remaining >= 32)
                 {
-                    // Load groups before their stores so native code can combine
-                    // contiguous accesses. Only the non-overlap path reaches here.
-                    var word0 = APTR.ReadUInt32(APTR.FromPointer(input), 0);
-                    var word4 = APTR.ReadUInt32(APTR.FromPointer(input), 4);
-                    var word8 = APTR.ReadUInt32(APTR.FromPointer(input), 8);
-                    var word12 = APTR.ReadUInt32(APTR.FromPointer(input), 12);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 0, word0);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 4, word4);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 8, word8);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 12, word12);
-                    var word16 = APTR.ReadUInt32(APTR.FromPointer(input), 16);
-                    var word20 = APTR.ReadUInt32(APTR.FromPointer(input), 20);
-                    var word24 = APTR.ReadUInt32(APTR.FromPointer(input), 24);
-                    var word28 = APTR.ReadUInt32(APTR.FromPointer(input), 28);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 16, word16);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 20, word20);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 24, word24);
-                    APTR.WriteUInt32(APTR.FromPointer(output), 28, word28);
-                    input += 32; output += 32; remaining -= 32;
+                    var word0 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word0);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word1 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word1);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word2 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word2);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word3 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word3);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word4 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word4);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word5 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word5);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word6 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word6);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    var word7 = APTR.ReadUInt32(inputPointer, 0);
+                    inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+                    APTR.WriteUInt32(outputPointer, 0, word7);
+                    outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+                    remaining -= 32;
                 }
+                input = inputPointer.Raw; output = outputPointer.Raw;
                 while (remaining >= 4)
                 {
                     APTR.WriteUInt32(APTR.FromPointer(output), 0, APTR.ReadUInt32(APTR.FromPointer(input), 0));
@@ -2091,7 +2522,10 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     public bool Flush() => APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0 ||
         Transfer(4, 0, 0, APTR.Null);
 #endif
-    public uint ReadDataBlocks(uint block, uint count, APTR destination)
+    public uint ReadDataBlocks(uint block, uint count, APTR destination) =>
+        ReadDataBlocks(block,count,destination,true);
+
+    public uint ReadDataBlocks(uint block, uint count, APTR destination, bool readAhead)
     {
         if (RedoOverlay.IsNotNull) return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
 #if COPPERSTART_NATIVE_SFS_WRITES
@@ -2099,17 +2533,431 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (batch.IsNotNull && ReadUInt32(batch) != 0)
             return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
         var dirty = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset));
-        if (AmigaSmartFileSystemWriteBuffer.Intersects(ref this, dirty,
+        if (dirty.IsNotNull && AmigaSmartFileSystemWriteBuffer.Intersects(ref this, dirty,
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset), block, count))
             return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
 #endif
 #if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
-        if (AmigaFileSystemWriteCombiner.Intersects(ref this, WriteQueue, block, count))
+        var queue = WriteQueue;
+        if (queue.IsNotNull && AmigaFileSystemWriteCombiner.Intersects(ref this, queue, block, count))
             return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
 #endif
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0)
             return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
+        if (!readAhead)
+        {
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+            if (NativeSfs2Bridge.IsSfs2(state)) return ReadSfs2Direct(block, count, destination);
+#endif
+            return TransferData(false, block, count, destination);
+        }
+        return ReadDataWithReadAhead(block, count, destination);
+    }
+
+    private uint ReadDataWithReadAhead(uint block, uint count, APTR destination)
+    {
+        // A direct transfer for every short packet discards the physical
+        // read-ahead window. Keep small FFS/SFS2 reads on the cached path;
+        // classic SFS retains its separate data/metadata cache policy.
+        var type = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        var bytes = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset);
+        var policy=APTR.ReadUInt32(state,NativeFileSystemStateCodec.PayloadCacheBypassOffset);
+        if ((type == NativeSfs2Bridge.DosType || type is 0x444F5301 or 0x444F5303 or 0x444F5305) &&
+            bytes != 0 && bytes <= 4096 && count != 0 && count <= 4096 / bytes &&
+            count < APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset) &&
+            (policy == 0 || policy == 3 && bytes == 512 && count == 1))
+        {
+            if (count == 1) return ReadAheadDataBlock(block, destination, bytes);
+            return ReadAheadDataBlocks(block, count, destination, bytes);
+        }
         return TransferData(false, block, count, destination);
+    }
+
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+    private uint ReadSfs2Direct(uint block, uint count, APTR destination)
+    {
+        var cache = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset));
+        if (cache.IsNotNull && count != 0 && count <= APTR.ReadUInt32(cache, NativeAmigaFileSystem.Sfs2DirectReadLimitOffset) &&
+            (destination.Raw & 3) == 0)
+        {
+            var volumeBlocks = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset);
+            var bytes = count << 9;
+            if (block >= volumeBlocks || count > volumeBlocks - block || destination.Raw > uint.MaxValue - bytes) return 0;
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+            var offset = APTR.ReadUInt32(state, NativeFileSystemStateCodec.StartByteLowOffset) + (block << 9);
+            return TransferDirect32(2, offset, bytes, destination) ? count : 0;
+        }
+        return TransferData(false, block, count, destination);
+    }
+#endif
+
+    // The frequent one-block packet needs no run/window bookkeeping or the
+    // larger batching frame. Retain the same physical read-ahead and fallback.
+    private uint ReadAheadDataBlock(uint block, APTR destination, uint bytes)
+    {
+        if (block >= APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset) ||
+            bytes > uint.MaxValue - destination.Raw) return 0;
+        var image = ReadPhysicalCached(block, 0, destination, false);
+        if (image.IsNull) return TransferData(false, block, 1, destination);
+        if (image != destination) CopyBlock(image, destination, bytes);
+        return 1;
+    }
+
+#if COPPERFS_NATIVE_FFS_READAHEAD
+    internal static bool TryDispatchCachedFfsRead(APTR state, APTR packet)
+    {
+        var length = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+        if (length < 512 || length > 4096 || (length & 511) != 0) return false;
+        var type = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        if (type is not (0x444F5301 or 0x444F5303 or 0x444F5305)) return false;
+        var token = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
+        var file = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ObjectsOffset));
+        var ownershipBudget = 4096;
+        while (file.IsNotNull && file.Raw != token && --ownershipBudget > 0)
+            file = APTR.FromPointer(APTR.ReadUInt32(file, 0));
+        if (ownershipBudget == 0 || file.IsNull || file.Raw != token || APTR.ReadUInt32(file, 16) != 1 || APTR.ReadUInt32(file, 92) != 0) return false;
+        var position = APTR.ReadUInt32(file, 12);
+        // No I/O or writes intervene before the mode's last use below. Sample
+        // this mount/file decision once, rather than reloading the timer at
+        // every guard on an already learned cached stream. Four means no clock.
+        var adaptiveMode = length == 4096 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0
+            ? APTR.ReadUInt32(file, 108) : 4u;
+        if (adaptiveMode < 2 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.FixedHardDiskOffset) != 0) return false;
+        var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+        // The completion below reloads packet arguments and position after the
+        // copy. Aliases retain the original decoder and cursor writeback path.
+        if (!Separated(destination, length, packet, 64) ||
+            !Separated(destination, length, state, NativeAmigaFileSystem.StateBytes)) return false;
+        if (adaptiveMode < 3 &&
+            APTR.ReadUInt32(file, 104) != 0 && APTR.ReadUInt32(file, 100) != position)
+        {
+            if (Separated(destination, length, file, 216)) NativeFfsSequentialRead.Reset(file);
+            return false;
+        }
+        if (length == 4096 && (adaptiveMode == 2 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset) == 3))
+            return TryDispatchDirectFfsPacket(state, packet, file, position, type);
+#else
+    internal static bool TryReadFfsCached(APTR state, APTR file, uint position, APTR destination, uint length)
+    {
+#endif
+        // Native records and the physical window already own validated runs.
+        // Complete cache hits and eligible direct packets can avoid the general
+        // range reader. Tails, aliases and logical overlays keep that reader.
+#if !COPPERFS_NATIVE_FFS_READAHEAD
+        var type = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+#endif
+        var payloadPolicy = APTR.ReadUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset);
+        if (length == 0 || length > 4096 || ((length | position) & 511) != 0 || (destination.Raw & 3) != 0 ||
+            type is not (0x444F5301 or 0x444F5303 or 0x444F5305) ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset) != 512 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.BuffersOffset) != 0 ||
+            // Diagnostic scsi.device bypass (3) retains one-sector read-ahead.
+            // Other bypass policies still require their original direct path.
+            (payloadPolicy != 0 && (length > 512 || payloadPolicy != 3)) ||
+            (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRedoOverlayOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteCombinerOffset)) != 0) return false;
+        var header = APTR.ReadUInt32(file, 4);
+        if (header == 0 || APTR.ReadUInt32(file, 56) != header || APTR.ReadUInt32(file, 84) != type) return false;
+        var size = APTR.ReadUInt32(file, 60);
+        if (position > size || length > size - position) return false;
+        var index = position >> 9; var start = APTR.ReadUInt32(file, 72); var run = APTR.ReadUInt32(file, 80);
+        var count = length >> 9;
+        if (index < start || index - start >= run || count > run - (index - start)) return false;
+        var block = APTR.ReadUInt32(file, 76) + index - start;
+        var total = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+        if (block >= total || count > total - block) return false;
+#endif
+        var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
+        var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
+        var cache = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset);
+        if (block >= total || count > total - block || first == uint.MaxValue || block < first ||
+            block - first >= capacity || count > capacity - (block - first) || cache == 0) return false;
+        var p = new NativeFileSystemPlatform(state);
+        if (p.FindCached(block).IsNotNull || !p.IsMapped(destination, length)) return false;
+        var source = APTR.FromPointer(cache + ((block - first) << 9));
+        var end = destination.Raw + length; // IsMapped has excluded wrapping spans.
+        var scratch = state.Raw + NativeAmigaFileSystem.MetadataOffset;
+        if (!(end <= file.Raw || destination.Raw >= file.Raw + 216) ||
+            !(end <= scratch || destination.Raw >= scratch + 1024) ||
+            source != destination && !(end <= source.Raw || destination.Raw >= source.Raw + length)) return false;
+        if (source != destination) CopyReadAhead(source, destination, length);
+#if COPPERFS_NATIVE_FFS_READAHEAD
+        // Only packet and mount pointers need survive the copy call. The
+        // disjoint spans above preserve these arguments and the owned file.
+        var completedFile = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
+        var completed = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+        if (completed == 4096 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0)
+        {
+            if (APTR.ReadUInt32(completedFile, 108) != 3 &&
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.FixedHardDiskOffset) != 0)
+                NativeFfsSequentialRead.Record(completedFile, APTR.ReadUInt32(completedFile, 12));
+        }
+        else if (completed != 4096 && APTR.ReadUInt32(completedFile, 104) != 0) NativeFfsSequentialRead.Reset(completedFile);
+        APTR.WriteUInt32(completedFile, 12, APTR.ReadUInt32(completedFile, 12) + completed);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, completed);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, 0);
+#endif
+        return true;
+    }
+
+#if COPPERFS_NATIVE_FFS_READAHEAD
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryDispatchDirectFfsPacket(APTR state, APTR packet, APTR file, uint position, uint type)
+    {
+        const uint length = 4096, count = 8;
+        var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+        var policy = APTR.ReadUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset);
+        if ((policy != 3 && (policy != 0 || !NativeFfsSequentialRead.UseDirect(file, position))) ||
+            (position & 511) != 0 || (destination.Raw & 3) != 0 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset) != 512 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.BuffersOffset) != 0 ||
+            (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRedoOverlayOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteCombinerOffset)) != 0) return false;
+        var header = APTR.ReadUInt32(file, 4);
+        if (header == 0 || APTR.ReadUInt32(file, 56) != header || APTR.ReadUInt32(file, 84) != type) return false;
+        var size = APTR.ReadUInt32(file, 60);
+        if (position > size || length > size - position) return false;
+        var index = position >> 9; var start = APTR.ReadUInt32(file, 72); var run = APTR.ReadUInt32(file, 80);
+        if (index < start || index - start >= run || count > run - (index - start)) return false;
+        var block = APTR.ReadUInt32(file, 76) + index - start;
+        var total = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset);
+        if (block >= total || count > total - block ||
+            !Separated(destination, length, file, 216) ||
+            !Separated(destination, length, APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset)),
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBytesOffset))) return false;
+        var p = new NativeFileSystemPlatform(state);
+        if (!p.IsMapped(destination, length) || p.FindCached(block).IsNotNull) return false;
+        if (policy == 3) DispatchBypassFfsRead(state, packet, block, count);
+        else DispatchDirectFfsRead(state, packet, block, count);
+        return true;
+    }
+
+    // Explicit bypass does not sample or update the adaptive stream hints.
+    // Keep its completion separate from the learned-direct reader's frame.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DispatchBypassFfsRead(APTR state, APTR packet, uint block, uint count)
+    {
+        var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+        var p = new NativeFileSystemPlatform(state);
+        var actual = p.TransferData(false, block, count, destination);
+        var file = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
+        if (actual == count)
+        {
+            var bytes = count << 9;
+            APTR.WriteUInt32(file, 12, APTR.ReadUInt32(file, 12) + bytes);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, bytes);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, 0);
+        }
+        else
+        {
+            APTR.WriteUInt32(file, 56, 0);
+            var prefix = actual == 0 || actual > count ? uint.MaxValue : actual << 9;
+            if (prefix != uint.MaxValue) APTR.WriteUInt32(file, 12, APTR.ReadUInt32(file, 12) + prefix);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, prefix);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.DiskNotValidated);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DispatchDirectFfsRead(APTR state, APTR packet, uint block, uint count)
+    {
+        var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+        var p = new NativeFileSystemPlatform(state);
+        var actual = p.TransferData(false, block, count, destination);
+        var file = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
+        if (actual == count)
+        {
+            var bytes = count << 9;
+            NativeFfsSequentialRead.Record(file, APTR.ReadUInt32(file, 12));
+            APTR.WriteUInt32(file, 12, APTR.ReadUInt32(file, 12) + bytes);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, bytes);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, 0);
+        }
+        else
+        {
+            APTR.WriteUInt32(file, 56, 0); NativeFfsSequentialRead.Reset(file);
+            var prefix = actual == 0 || actual > count ? uint.MaxValue : actual << 9;
+            if (prefix != uint.MaxValue) APTR.WriteUInt32(file, 12, APTR.ReadUInt32(file, 12) + prefix);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, prefix);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.DiskNotValidated);
+        }
+    }
+
+    internal void ReadAheadFfsMetadata(APTR file, APTR output, uint outputBytes)
+    {
+        // Diagnostic bypass also primes four-KiB streams. Normal four-KiB
+        // reads retain their existing adaptive payload/cache decision.
+        if (outputBytes == 4096 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset) != 3) return;
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.FixedHardDiskOffset) == 0 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset) != 512 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheCountOffset) < 32 ||
+            (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRedoOverlayOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset) |
+             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteCombinerOffset)) != 0) return;
+        var type = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        var header = APTR.ReadUInt32(file, 4);
+        if (type is not (0x444F5301 or 0x444F5303 or 0x444F5305) || header == 0 ||
+            APTR.ReadUInt32(file, 56) != header || APTR.ReadUInt32(file, 84) != type) return;
+        var metadata = NativeAmigaFileSystem.Metadata(state);
+        if (!Separated(output, outputBytes, file, 216) ||
+            !Separated(output, outputBytes, state, NativeAmigaFileSystem.StateBytes) ||
+            !Separated(output, outputBytes, APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset)),
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBytesOffset))) return;
+        var entry = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
+        var entries = APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheCountOffset);
+        while (entry.IsNotNull && entries-- != 0)
+        {
+            if (!Separated(output, outputBytes, entry, NativeAmigaFileSystem.ExtraCacheHeaderBytes + 512)) return;
+            entry = APTR.FromPointer(APTR.ReadUInt32(entry, 0));
+        }
+        var size = APTR.ReadUInt32(file, 60);
+        var current = APTR.ReadUInt32(file, 68);
+        if (size == 0) return;
+        var last = ((size - 1) >> 9) / 72;
+        if (current >= last) return;
+        var budget = last - current; if (budget > 28) budget = 28;
+        var next = APTR.ReadUInt32(file, 96);
+        while (budget-- != 0 && next >= ReservedBlocks && next < BlockCount)
+        {
+            APTR view;
+            // Decline speculation when the metadata slot cannot receive this
+            // device's transfer. A bounce refill would evict payload read-ahead.
+            if (!TryBorrowFfsMetadataBlock(next, metadata, output, outputBytes, out view)) return;
+            // Speculation follows only plausible, bounded extension links.
+            // The ordinary reader still checks each checksum when needed;
+            // future I/O or validation errors do not change this packet.
+            if (view.IsNull || ReadUInt32(view) != 16 ||
+                ReadUInt32(view, 4) != next || ReadUInt32(view, 500) != header || ReadUInt32(view, 508) != uint.MaxValue - 2) return;
+            next = ReadUInt32(view, 504);
+        }
+    }
+
+    private static bool Separated(APTR a, uint bytes, APTR b, uint otherBytes) =>
+        a.Raw <= b.Raw ? b.Raw - a.Raw >= bytes : a.Raw - b.Raw >= otherBytes;
+#endif
+
+    private uint ReadAheadDataBlocks(uint block, uint count, APTR destination, uint bytes)
+    {
+        // Logical overlays and RAM were resolved by ReadDataBlocks. A complete
+        // 512-byte-sector cache hit needs no refill descriptor or loop frame.
+        if (bytes == 512)
+        {
+            var total = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset);
+            if (block >= total || count > total - block || count > (uint.MaxValue - destination.Raw) >> 9) return 0;
+            var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
+            var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
+            var cache = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset);
+            if (first != uint.MaxValue && block >= first && block - first < capacity &&
+                count <= capacity - (block - first) && cache != 0 && FindCached(block).IsNull)
+            {
+                var source = APTR.FromPointer(cache + ((block - first) << 9));
+                var length = count << 9;
+                var distance = source.Raw > destination.Raw ? source.Raw - destination.Raw : destination.Raw - source.Raw;
+                if (source == destination || distance >= length)
+                {
+                    if (source != destination)
+                    {
+                        if (((source.Raw | destination.Raw) & 1) == 0) CopyReadAhead(source, destination, length);
+                        else CopyBlock(source, destination, length);
+                    }
+                    return count;
+                }
+            }
+        }
+        return ReadAheadDataBlocksSlow(block, count, destination, bytes);
+    }
+
+    // Caller supplies non-overlapping even RAM spans, a positive multiple
+    // of 512 bytes no larger than 4 KiB.
+    private static void CopyReadAhead(APTR source, APTR destination, uint bytes)
+    {
+        var inputPointer = source; var outputPointer = destination;
+        var groups = bytes >> 5;
+        do
+        {
+            var word0 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word0);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word1 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word1);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word2 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word2);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word3 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word3);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word4 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word4);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word5 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word5);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word6 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word6);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+            var word7 = APTR.ReadUInt32(inputPointer, 0);
+            inputPointer = APTR.FromPointer(inputPointer.Raw + 4);
+            APTR.WriteUInt32(outputPointer, 0, word7);
+            outputPointer = APTR.FromPointer(outputPointer.Raw + 4);
+        } while (--groups != 0);
+    }
+
+    private uint ReadAheadDataBlocksSlow(uint block, uint count, APTR destination, uint bytes)
+    {
+        var total = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset);
+        if (block >= total || count > total - block || count > (uint.MaxValue - destination.Raw) / bytes) return 0;
+        var completed = 0u;
+        while (completed < count)
+        {
+            var target = APTR.FromPointer(destination.Raw + completed * bytes);
+            // Overlay precedence was checked once by ReadDataBlocks. File data
+            // can use the track window without copying every sector into the
+            // metadata LRU as well as into the caller's destination.
+            var image = ReadPhysicalCached(block + completed, 0, target, false);
+            if (image.IsNull)
+                // A neighboring sector can fail during speculative refill.
+                // Retry only the requested suffix, preserving exact completion
+                // and the existing MaxTransfer/DMA/TD64 handling.
+                return completed + TransferData(false, block + completed, count - completed, target);
+            var blocks = 1u;
+            var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
+            var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
+            var cache = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset);
+            var current = block + completed;
+            if (first != uint.MaxValue && current >= first && current - first < capacity &&
+                image.Raw == cache + (current - first) * bytes)
+            {
+                blocks = count - completed;
+                var available = capacity - (current - first);
+                if (blocks > available) blocks = available;
+                var length = blocks * bytes;
+                var distance = image.Raw > target.Raw ? image.Raw - target.Raw : target.Raw - image.Raw;
+                // Preserve the old sector-at-a-time behavior for aliased
+                // private buffers; ordinary caller buffers use one bulk copy.
+                if (image != target && distance < length) blocks = 1;
+            }
+            if (image != target) CopyBlock(image, target, blocks * bytes);
+            completed += blocks;
+        }
+        return completed;
     }
 
     public bool WriteDataBlocks(uint block, uint count, APTR source)
@@ -2237,21 +3085,25 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             if (start <= uint.MaxValue - (length - 1) &&
                 block <= (uint.MaxValue - (length - 1) - start) >> 9 && CanTransferDirect(caller, length))
             {
-                // These guards already prove a complete direct 32-bit request.
-                // Fill its packet here instead of widening the offset through
-                // the general TD64 call ABI. Preserve DoIO and exact completion.
-                var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
-                APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, (ushort)(write ? 3 : 2));
-                APTR.WriteUInt32(request, NativeExecFieldCodec.IoDataOffset, caller.Raw);
-                APTR.WriteUInt32(request, NativeExecFieldCodec.IoLengthOffset, length);
-                APTR.WriteUInt32(request, NativeExecFieldCodec.IoByteOffset, start + (block << 9));
-                APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
-                global::Amiga.Exec.DoIO(request);
-                return APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
-                    APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == length ? count : 0;
+                return TransferDirect32((ushort)(write ? 3 : 2), start + (block << 9), length, caller) ? count : 0;
             }
         }
         return TransferDataChunked(write, block, count, caller, blockBytes, maximumBytes);
+    }
+
+    // In CMD_READ/CMD_WRITE io_Actual starts at zero. Only TD64 needs a
+    // high offset word. A short successful DoIO still fails the request.
+    private bool TransferDirect32(ushort command, uint offset, uint bytes, APTR buffer)
+    {
+        var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
+        APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, command);
+        APTR.WriteUInt32(request, NativeExecFieldCodec.IoDataOffset, buffer.Raw);
+        APTR.WriteUInt32(request, NativeExecFieldCodec.IoLengthOffset, bytes);
+        APTR.WriteUInt32(request, NativeExecFieldCodec.IoByteOffset, offset);
+        APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
+        global::Amiga.Exec.DoIO(request);
+        return APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
+            APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes;
     }
 
     // Keep the split/bounce/TD64 path outside the common request's register
@@ -2460,29 +3312,164 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     }
 
     public bool ReadBlock(uint block, APTR destination) => ReadCached(block, 0, destination);
-    public APTR ReadRetainedBlock(uint block)
+
+    public bool TryBorrowFfsMetadataBlock(uint block, APTR scratch, APTR output, uint outputBytes, out APTR view)
     {
+        view = APTR.Null;
+        var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        if (scratch != NativeAmigaFileSystem.Metadata(state) ||
+            dosType is not (0x444F5301 or 0x444F5303 or 0x444F5305) ||
+            block >= BlockCount || RedoOverlay.IsNotNull ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return false;
+#if COPPERSTART_NATIVE_SFS_WRITES
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) != 0 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset) != 0) return false;
+#endif
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+        if (WriteQueue.IsNotNull) return false;
+#endif
+        var entry = FindCached(block);
+        if (entry.IsNotNull)
+        {
+            var image = APTR.FromPointer(entry.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
+            if (!MetadataViewDisjoint(output, outputBytes, image, BlockBytes)) return false;
+            TouchCached(entry);
+            view = image; return true;
+        }
+        var tail = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheTailOffset));
+        return TryFillMetadataSlot(block, tail, output, outputBytes, out view);
+    }
+
+    // Both filesystems can read into the victim's payload when DMA permits.
+    // A handled I/O failure leaves the old key and verification invalidated.
+    private bool TryFillMetadataSlot(uint block, APTR tail, APTR output, uint outputBytes, out APTR view)
+    {
+        view = APTR.Null;
+        if (tail.IsNull) return false;
+        var target = APTR.FromPointer(tail.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
+        if (!MetadataViewDisjoint(output, outputBytes, target, BlockBytes) ||
+            !CanTransferDirect(target, BlockBytes)) return false;
+        var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
+        var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
+        var cache = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset);
+        var trackHit = cache != 0 && first != uint.MaxValue && block >= first && block - first < capacity;
+        // Forget the victim before a physical read can partially overwrite it.
+        ForgetCached(tail);
+        if (trackHit)
+        {
+            var source = APTR.FromPointer(cache + (block - first) * BlockBytes);
+            CacheBlock(block, 0, source, BlockBytes);
+        }
+        else
+        {
+            if (!TransferBlock(false, block, target)) return true;
+            CacheBlock(block, 0, target, BlockBytes);
+        }
+        view = target;
+        return true;
+    }
+
+    private static bool MetadataViewDisjoint(APTR output, uint outputBytes, APTR image, uint imageBytes) =>
+        outputBytes == 0 || (output.Raw <= image.Raw
+            ? image.Raw - output.Raw >= outputBytes
+            : output.Raw - image.Raw >= imageBytes);
+
+    private bool CanReadPhysicalCache(uint block, out APTR queued)
+    {
+        queued = APTR.Null;
         if (block >= BlockCount || RedoOverlay.IsNotNull ||
-            APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return APTR.Null;
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return false;
 #if COPPERSTART_NATIVE_SFS_WRITES
         // Callers can always use ReadBlock when a logical overlay is active.
         // Do not expose a physical cache image beneath acknowledged dirty data.
         var dirty = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset));
         if (dirty.IsNotNull && ReadUInt32(dirty, AmigaSmartFileSystemWriteBuffer.HiddenOffset) == 0 &&
-            AmigaSmartFileSystemWriteBuffer.Count(ref this, dirty) != 0) return APTR.Null;
+            AmigaSmartFileSystemWriteBuffer.Count(ref this, dirty) != 0) return false;
         var batch = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset));
-        if (batch.IsNotNull && ReadUInt32(batch) != 0) return APTR.Null;
+        if (batch.IsNotNull && ReadUInt32(batch) != 0) return false;
 #endif
 #if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
-        var queued = AmigaFileSystemWriteCombiner.ReadView(ref this, WriteQueue, block);
-        if (queued.IsNotNull) return queued;
+        queued = AmigaFileSystemWriteCombiner.ReadView(ref this, WriteQueue, block);
 #endif
+        return queued.IsNull;
+    }
+
+    public APTR ReadRetainedBlock(uint block)
+    {
+        if (!CanReadPhysicalCache(block, out var queued)) return queued;
         var entry = FindCached(block);
-        if (entry.IsNull) return APTR.Null;
+        if (entry.IsNull)
+        {
+            // FFS partial reads can borrow a current payload-window image
+            // without copying a whole sector into the metadata LRU/scratch.
+            // Overlay and queued-write precedence was resolved above.
+            var type=APTR.ReadUInt32(state,NativeFileSystemStateCodec.DosTypeOffset);
+            var first=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheTrackOffset);
+            var capacity=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheBlocksOffset);
+            var cache=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheOffset);
+            if(type is 0x444F5301 or 0x444F5303 or 0x444F5305 && cache!=0 &&
+                first!=uint.MaxValue && block>=first && block-first<capacity)
+                return APTR.FromPointer(cache+(block-first)*BlockBytes);
+            return APTR.Null;
+        }
         TouchCached(entry);
         return APTR.FromPointer(entry.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
     }
     public bool ReadBlocks(uint block, uint count, APTR destination) => ReadDataBlocks(block, count, destination) == count;
+
+    public bool TryReadVerifiedSfs2Block(uint block, uint id, APTR destination)
+    {
+        var image = BorrowVerifiedSfs2Block(block, id, destination);
+        if (image.IsNull) return false;
+        CopyBlock(image, destination, BlockBytes);
+        return true;
+    }
+
+    public APTR BorrowVerifiedSfs2Block(uint block, uint id, APTR scratch)
+    {
+        ReadSfs2MetadataView(block, id, scratch, false, out var view);
+        return view;
+    }
+
+    public bool TryReadSfs2MetadataView(uint block, uint id, APTR scratch, out APTR view) =>
+        ReadSfs2MetadataView(block, id, scratch, true, out view);
+
+    private bool ReadSfs2MetadataView(uint block, uint id, APTR scratch, bool fill, out APTR view)
+    {
+        view = APTR.Null;
+        if (scratch != NativeAmigaFileSystem.Metadata(state) || id == 0 || (id & 0x80000000) != 0 ||
+            !CanReadPhysicalCache(block, out _)) return false;
+        var entry = FindCached(block);
+        APTR image;
+        if (entry.IsNotNull)
+        {
+            TouchCached(entry);
+            image = APTR.FromPointer(entry.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
+        }
+        else
+        {
+            // Substitute the slot only for a read which would already transfer
+            // one sector group into private metadata scratch. Preserve the track
+            // refill path when the scratch or slot requires a bounce buffer.
+            if (!fill || APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) != NativeSfs2Bridge.DosType ||
+                !CanTransferDirect(scratch, BlockBytes) || !MetadataViewDisjoint(scratch, BlockBytes,
+                    APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset)),
+                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBytesOffset))) return false;
+            entry = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheTailOffset));
+            if (!TryFillMetadataSlot(block, entry, APTR.Null, 0, out image)) return false;
+            if (image.IsNull) return true;
+        }
+        if (ReadUInt32(image) != id || ReadUInt32(image, 8) != block) return true;
+        // Classic verification stores the actual ID. Its complement denotes
+        // the SFS2 checksum on this particular immutable cache image.
+        if (ReadUInt32(entry, NativeFileSystemCacheEntryCodec.VerificationOffset) != ~id)
+        {
+            if (!AmigaFileSystemBlockIo.ValidSfs2Sum(ref this, image, BlockBytes)) return true;
+            WriteUInt32(entry, NativeFileSystemCacheEntryCodec.VerificationOffset, ~id);
+        }
+        view = image;
+        return true;
+    }
     public bool WriteBlocks(uint block, uint count, APTR source) => WriteDataBlocks(block, count, source);
     public bool ReadMetadataBlock(uint block, uint id, APTR destination) => ReadCached(block, id, destination);
 
@@ -2532,7 +3519,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (entry.IsNotNull)
         {
             var source = APTR.FromPointer(entry.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
-            if (APTR.ReadUInt32(entry, NativeFileSystemCacheEntryCodec.VerificationOffset) != id)
+            if (APTR.ReadUInt32(entry, NativeFileSystemCacheEntryCodec.VerificationOffset) != id || (id & 0x80000000) != 0)
             {
                 if (!AmigaFileSystemBlockIo.ValidateMetadata(ref this, block, id, source, bytes)) return APTR.Null;
                 APTR.WriteUInt32(entry, NativeFileSystemCacheEntryCodec.VerificationOffset, id);
@@ -2608,7 +3595,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     // Logical overlays and queued writes have already been resolved. Return a
     // borrowed physical image when possible; a copying caller consumes it
     // immediately, before any block access can expire the cache window.
-    private APTR ReadPhysicalCached(uint block, uint id, APTR destination)
+    private APTR ReadPhysicalCached(uint block, uint id, APTR destination, bool retain = true)
     {
         var blockBytes = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset);
         var ram = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset));
@@ -2622,7 +3609,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (extra.IsNotNull)
         {
             var source = APTR.FromPointer(extra.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
-            if (id != 0 && ReadUInt32(extra, 16) != id)
+            if (id != 0 && (ReadUInt32(extra, 16) != id || (id & 0x80000000) != 0))
             {
                 if (!AmigaFileSystemBlockIo.ValidateMetadata(ref this, block, id, source, blockBytes)) return APTR.Null;
                 WriteUInt32(extra, 16, id);
@@ -2632,6 +3619,40 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         }
         var cache = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset));
         APTR image;
+        var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        var cacheBytes=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheBytesOffset);
+        var separate=destination.Raw <= cache.Raw ? cache.Raw-destination.Raw >= blockBytes
+            : destination.Raw-cache.Raw >= cacheBytes;
+        if (retain && (dosType == 0 || dosType == NativeSfs2Bridge.DosType || dosType is 0x444F5301 or 0x444F5303 or 0x444F5305) &&
+            (id != 0 || destination == NativeAmigaFileSystem.Metadata(state)) && separate && CanTransferDirect(destination, blockBytes))
+        {
+            var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
+            var count = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
+            if (first != uint.MaxValue && block >= first && block - first < count)
+            {
+                var retained = APTR.FromPointer(cache.Raw + (block - first) * blockBytes);
+                if (id != 0 && !AmigaFileSystemBlockIo.ValidateMetadata(ref this, block, id, retained, blockBytes)) return APTR.Null;
+                if (retain) CacheBlock(block, id, retained, blockBytes);
+                return retained;
+            }
+            // Metadata and mount probes do not imply a sequential payload
+            // stream. Retain the requested block in the existing metadata LRU,
+            // without fetching unrelated sectors or replacing the data window.
+            if (!TransferBlock(false, block, destination)) return APTR.Null;
+            if (id != 0 && !AmigaFileSystemBlockIo.ValidateMetadata(ref this, block, id, destination, blockBytes))
+            {
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+                // The classic probe is tried first. Its type mismatch still
+                // leaves the secondary root available for the SFS2 validator.
+                if (dosType == 0 && id == AmigaSmartFileSystemCore.DosType && block == BlockCount - 1 &&
+                    ReadUInt32(destination) == NativeSfs2Bridge.DosType && ReadUInt32(destination, 8) == block)
+                    CacheBlock(block, 0, destination, blockBytes);
+#endif
+                return APTR.Null;
+            }
+            if (retain) CacheBlock(block, id, destination, blockBytes);
+            return destination;
+        }
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) == AmigaSmartFileSystemCore.DosType)
         {
             // A small adjacent window reduces allocation/undo read requests
@@ -2682,24 +3703,83 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         }
         else
         {
-            var geometry = Geometry;
             var cacheBlocks = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
             if (cacheBlocks == 0) return APTR.Null;
             var first = AmigaGeometryMath.Divide(block, cacheBlocks) * cacheBlocks;
             if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset) != first)
             {
                 APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
-                var count = geometry.BlockCount - first;
+                var count = BlockCount - first;
                 if (count > cacheBlocks) count = cacheBlocks;
-                if (!AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, first, count, cache)) return APTR.Null;
+                if (!AmigaFileSystemDeviceCore.Transfer(ref this, Geometry, false, first, count, cache)) return APTR.Null;
                 APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, first);
             }
-            image = APTR.FromPointer(cache.Raw + (block - first) * geometry.BlockBytes);
+            image = APTR.FromPointer(cache.Raw + (block - first) * blockBytes);
         }
         if (id != 0 && !AmigaFileSystemBlockIo.ValidateMetadata(ref this, block, id, image, blockBytes)) return APTR.Null;
-        CacheBlock(block, id, image, blockBytes);
+        if (retain) CacheBlock(block, id, image, blockBytes);
         return image;
     }
+
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
+    internal void RetainSfs2MountPrefix(APTR primary, bool emptyCache = false)
+    {
+        // SFS2 commonly places the directory, clean marker and node tree near
+        // the primary root. Bound speculation to 4 KiB of block-aligned data.
+        var bytes = BlockBytes;
+        uint blocks = bytes == 512 ? 8u : bytes == 1024 ? 4u : 0u;
+        if (blocks == 0 || blocks > BlockCount || APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheCountOffset) < 2 * blocks ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset) < blocks ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset) != uint.MaxValue ||
+            (!emptyCache && FindCached(0).IsNotNull)) return;
+
+        var first = 0u;
+        if (primary.IsNotNull)
+        {
+            CacheBlock(0, 0, primary, bytes);
+            first = 1;
+        }
+        var count = blocks - first;
+        var buffer = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset));
+        if (buffer.IsNull || count * bytes > APTR.ReadUInt32(state, NativeFileSystemStateCodec.MaxTransferOffset) ||
+            !CanTransferDirect(buffer, count * bytes) || TransferData(false, first, count, buffer) != count) return;
+
+        if (emptyCache && primary.IsNull)
+        {
+            // The whole LRU is empty after uninhibit. Fill it from the head
+            // in reverse block order, leaving populated slots ahead of empty
+            // ones just as successive CacheBlock calls would. Prefix keys
+            // are distinct and each has its own empty hash bucket.
+            var entry = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
+            var block = blocks;
+            while (block != 0 && entry.IsNotNull)
+            {
+                block--;
+                var slot = APTR.FromPointer(buffer.Raw + block * bytes);
+                if (!Sfs2MountMetadata(slot, block)) continue;
+                var target = APTR.FromPointer(entry.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
+                CopyReadAhead(slot, target, bytes);
+                APTR.WriteUInt32(entry, NativeFileSystemCacheEntryCodec.KeyOffset, block);
+                APTR.WriteUInt32(entry, NativeFileSystemCacheEntryCodec.HashNextOffset, 0);
+                APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheHashOffset + (int)block * 4, entry.Raw);
+                entry = APTR.FromPointer(APTR.ReadUInt32(entry, NativeFileSystemCacheEntryCodec.NextOffset));
+            }
+            return;
+        }
+
+        var image = buffer;
+        for (var block = first; block < blocks; block++)
+        {
+            if (Sfs2MountMetadata(image, block) && FindCached(block).IsNull)
+                CacheBlock(block, 0, image, bytes);
+            image = APTR.FromPointer(image.Raw + bytes);
+        }
+    }
+
+    private static bool Sfs2MountMetadata(APTR image, uint block) =>
+        APTR.ReadUInt32(image, 0) is NativeSfs2Bridge.DosType or 0x4F424A43 or 0x54524F4B or 0x4E444320 or 0x424E4443 &&
+        APTR.ReadUInt32(image, 8) == block;
+#endif
 
     private void CacheBlock(uint block, uint id, APTR source, uint bytes)
     {
@@ -2713,7 +3793,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2
             NativeAmigaFileSystem.AddCachePage(state, block);
 #endif
-            CopyBlock(source, APTR.FromPointer(extra.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes), bytes);
+            var target = APTR.FromPointer(extra.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
+            if (source != target) CopyBlock(source, target, bytes);
             TouchCached(extra);
         }
     }

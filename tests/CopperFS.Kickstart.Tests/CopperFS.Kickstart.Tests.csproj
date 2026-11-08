@@ -22,5 +22,7 @@
     <Compile Include="../../tools/CopperSFS.Bench/StudyDisk.cs" Link="Fixtures/StudyDisk.cs" />
     <Compile Include="../../tools/CopperSFS.Bench/StudyDiscard.cs" Link="Fixtures/StudyDiscard.cs" />
     <Compile Include="../../tools/CopperSFS.Check/SfsImageChecker.cs" Link="Fixtures/SfsImageChecker.cs" />
+    <Compile Include="../../tools/CopperFS.StorageBench/StorageMatrixDefinition.cs" Link="StorageMatrixDefinition.cs" />
+    <Compile Include="../../tools/CopperFS.StorageBench/StorageIdePartition.cs" Link="StorageIdePartition.cs" />
   </ItemGroup>
 </Project>

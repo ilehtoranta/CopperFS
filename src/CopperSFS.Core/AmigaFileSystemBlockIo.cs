@@ -5,6 +5,9 @@ namespace CopperSFS;
 /// <summary>Sector-at-a-time fallback for platforms without bulk file-data I/O.</summary>
 public static class AmigaFileSystemBlockIo
 {
+    public static bool ValidSfs2Sum<T>(ref T p, APTR image, uint bytes) where T : struct, IAmigaGuestMemory =>
+        AmigaSmartFileSystemCore.BlockSum(ref p, image, bytes) == 0xFFFFFFFEu;
+
     public static bool ReadMetadata<T>(ref T p, uint block, uint id, APTR destination)
         where T : struct, IAmigaFileSystemPlatform
     {

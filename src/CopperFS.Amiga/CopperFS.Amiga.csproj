@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <CopperStartSfsTrstWrites Condition="'$(CopperStartSfsTrstWrites)' == ''">true</CopperStartSfsTrstWrites>
+    <CopperStartSfs2TrstWrites Condition="'$(CopperStartNativeSfs2)' == 'true' and '$(CopperStartSfs2TrstWrites)' == ''">true</CopperStartSfs2TrstWrites>
     <CopperStartSfsTrstBuffered Condition="'$(CopperStartSfsTrstBuffered)' == '' and '$(CopperStartSfsTrstWrites)' == 'true' and '$(CopperStartSfsStrictWrites)' != 'true' and '$(CopperStartNativeSfs2)' != 'true'">true</CopperStartSfsTrstBuffered>
     <DefineConstants>$(DefineConstants);COPPERSTART_SFS_STANDALONE;COPPERSTART_NATIVE_SFS_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfsStrictWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS_STRICT_WRITES</DefineConstants>
@@ -10,6 +11,7 @@
     <DefineConstants Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">$(DefineConstants);COPPERSTART_SFS_TRST_BUFFERED</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfs2TrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartNativeSfs2)' == 'true'">$(DefineConstants);COPPERSTART_NATIVE_SFS2</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsNativeFfsReadAhead)' == 'true'">$(DefineConstants);COPPERFS_NATIVE_FFS_READAHEAD</DefineConstants>
   </PropertyGroup>
   <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
           Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">

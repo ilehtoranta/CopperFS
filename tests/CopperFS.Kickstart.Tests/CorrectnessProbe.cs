@@ -22,8 +22,9 @@ public static class CorrectnessProbe
     public static int ReadSfs() => Run(2, false);
     public static int WriteSfs2() => Run(3, true);
     public static int ReadSfs2() => Run(3, false);
+    public static int RecoverSfs2() => Run(3, false, mountOnly: true);
 
-    private static int Run(uint kind, bool write)
+    private static int Run(uint kind, bool write, bool mountOnly = false)
     {
         var library = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!library.HasValue) { Report(250); return 10; }
@@ -36,8 +37,8 @@ public static class CorrectnessProbe
         Report(200); Report((int)(control.Raw >> 24)); Report((int)(control.Raw >> 16));
         Report((int)(control.Raw >> 8)); Report((int)control.Raw);
         var result = Mount(control, kind);
-        if (result == 0 && write) result = Mutate(control, data, kind == 2);
-        if (result == 0) result = Verify(control, data);
+        if (result == 0 && write) result = Mutate(control, data, kind == 2, kind == 3);
+        if (result == 0 && !mountOnly) result = Verify(control, data);
         if (result == 0 && kind == 2) result = VerifyReplaced(control, data);
         if (result != 0) return Failed(control, (uint)result);
         if (DOS.Inhibit("SEQ0:", 1) == 0) return Failed(control, 90);
@@ -53,7 +54,23 @@ public static class CorrectnessProbe
         return Initial(i);
     }
 
-    private static int Mutate(APTR control, APTR data, bool classic)
+    private static bool InputHasSize(CString path, int size)
+    {
+        var file = DOS.Open(path, DOS.FileMode.OldFile);
+        if (!file.HasValue) return false;
+        var matches = DOS.Seek(file.Value, 0, 1) == 0 && DOS.Seek(file.Value, 0, 0) == size;
+        return DOS.Close(file.Value) != 0 && matches;
+    }
+
+    private static bool InputIsMissing(CString path)
+    {
+        var file = DOS.Open(path, DOS.FileMode.OldFile);
+        if (!file.HasValue) return DOS.IoErr() == DOS.Error.ObjectNotFound;
+        DOS.Close(file.Value);
+        return false;
+    }
+
+    private static int Mutate(APTR control, APTR data, bool classic, bool sfs2)
     {
         var dir = DOS.CreateDir("SEQ0:AB");
         if (!dir.HasValue) return 30;
@@ -75,7 +92,10 @@ public static class CorrectnessProbe
             if (DOS.Write(file.Value, APTR.FromPointer(data.Raw + (uint)position), count) != count) return 35;
             position += count;
         }
-        if (DOS.Close(file.Value) == 0 || DOS.DeleteFile("SEQ0:AB/Donor") == 0) return 36;
+        if (DOS.Close(file.Value) == 0) return 36;
+        if (sfs2 && !InputHasSize("SEQ0:AB/Donor", 32768)) return 91;
+        if (DOS.DeleteFile("SEQ0:AB/Donor") == 0) return 36;
+        if (sfs2 && !InputIsMissing("SEQ0:AB/Donor")) return 92;
         file = DOS.Open("SEQ0:AB/Main", DOS.FileMode.ReadWrite);
         if (!file.HasValue) return 37;
         if (DOS.Seek(file.Value, 0, 1) != 0 || DOS.Write(file.Value,
@@ -86,9 +106,13 @@ public static class CorrectnessProbe
             for (var i = 0; i < 777; i++) APTR.WriteUInt8(data, i, (byte)(i * 23 + 9));
             if (DOS.Seek(file.Value, at, -1) < 0 || DOS.Write(file.Value, data, 777) != 777) return 39;
         }
-        if (DOS.Close(file.Value) == 0 || DOS.Rename("SEQ0:AB/Main", "SEQ0:AB/Renamed") == 0) return 40;
+        if (DOS.Close(file.Value) == 0) return 40;
+        if (sfs2 && !InputHasSize("SEQ0:AB/Main", 90130)) return 93;
+        if (DOS.Rename("SEQ0:AB/Main", "SEQ0:AB/Renamed") == 0) return 40;
+        if (sfs2 && (!InputIsMissing("SEQ0:AB/Main") || !InputHasSize("SEQ0:AB/Renamed", 90130))) return 94;
         file = DOS.Open("SEQ0:AB/Truncated", DOS.FileMode.NewFile);
         if (!file.HasValue || DOS.Write(file.Value, data, 4097) != 4097 || DOS.Close(file.Value) == 0) return 41;
+        if (sfs2 && !InputHasSize("SEQ0:AB/Truncated", 4097)) return 95;
         if (classic)
         {
             if (DOS.SetComment("SEQ0:AB/Truncated", "old truncation") == 0 ||
@@ -99,6 +123,7 @@ public static class CorrectnessProbe
         }
         file = DOS.Open("SEQ0:AB/Truncated", DOS.FileMode.NewFile);
         if (!file.HasValue || DOS.Write(file.Value, data, 7) != 7 || DOS.Close(file.Value) == 0) return 42;
+        if (sfs2 && !InputHasSize("SEQ0:AB/Truncated", 7)) return 96;
         if (classic)
         {
             file = DOS.Open("SEQ0:AB/Truncated", DOS.FileMode.NewFile);

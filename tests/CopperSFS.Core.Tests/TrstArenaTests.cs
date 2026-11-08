@@ -16,6 +16,8 @@ public sealed class TrstArenaTests
         public bool ReadBlock(uint block, APTR destination) => throw new InvalidOperationException("Arena access must not issue disk I/O");
         public bool ReadMetadataBlock(uint block, uint id, APTR destination) => throw new InvalidOperationException();
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => throw new InvalidOperationException();
+        public uint ReadDataBlocks(uint block, uint count, APTR destination, bool readAhead) =>
+            ReadDataBlocks(block, count, destination);
         public uint ReadDataBlocks(uint block, uint count, APTR destination) => throw new InvalidOperationException();
         public byte ReadUInt8(APTR a, int offset = 0) => Bytes[(int)a.Raw + offset];
         public ushort ReadUInt16(APTR a, int offset = 0) => BinaryPrimitives.ReadUInt16BigEndian(Bytes.AsSpan((int)a.Raw + offset));

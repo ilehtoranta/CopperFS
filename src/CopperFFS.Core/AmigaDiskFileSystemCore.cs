@@ -11,9 +11,22 @@ public static class AmigaDiskFileSystemCore
 
     public static bool Checksum<T>(ref T p, APTR buffer) where T : struct, IAmigaFileSystemPlatform
     {
-        var blockBytes = p.BlockBytes;
+        var remaining = p.BlockBytes;
         uint sum = 0;
-        for (var i = 0; i < blockBytes; i += 4) sum = unchecked(sum + p.ReadUInt32(buffer, i));
+        var cursor = buffer;
+        for (; remaining >= 32; remaining -= 32)
+        {
+            sum = unchecked(sum + p.ReadUInt32(cursor) + p.ReadUInt32(cursor, 4) +
+                p.ReadUInt32(cursor, 8) + p.ReadUInt32(cursor, 12) +
+                p.ReadUInt32(cursor, 16) + p.ReadUInt32(cursor, 20) +
+                p.ReadUInt32(cursor, 24) + p.ReadUInt32(cursor, 28));
+            cursor = APTR.FromPointer(cursor.Raw + 32);
+        }
+        for (; remaining >= 4; remaining -= 4)
+        {
+            sum = unchecked(sum + p.ReadUInt32(cursor));
+            cursor = APTR.FromPointer(cursor.Raw + 4);
+        }
         return sum == 0;
     }
 
@@ -31,6 +44,27 @@ public static class AmigaDiskFileSystemCore
         var type = unchecked((int)p.ReadUInt32(buffer, geometry.Tail + 508));
         return block == geometry.RootBlock ? type == 1 && p.ReadUInt32(buffer, 12) == geometry.TableEntries :
             p.ReadUInt32(buffer, 4) == block && (type == 2 || type == -3 || (links && type is 3 or 4 or -4));
+    }
+
+    private static APTR FfsMetadataView<T>(ref T p, uint block, APTR scratch, APTR output, uint outputBytes)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        if (p.TryBorrowFfsMetadataBlock(block, scratch, output, outputBytes, out var view)) return view;
+        return p.ReadBlock(block, scratch) ? scratch : APTR.Null;
+    }
+
+    private static APTR FileHeaderView<T>(ref T p, uint block, APTR scratch, APTR output, uint outputBytes)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        var count = p.BlockCount; var bytes = p.BlockBytes; var reserved = p.ReservedBlocks;
+        if (block < reserved || block >= count) return APTR.Null;
+        var view = FfsMetadataView(ref p, block, scratch, output, outputBytes);
+        if (view.IsNull || !Checksum(ref p, view) || p.ReadUInt32(view) != 2) return APTR.Null;
+        var type = unchecked((int)p.ReadUInt32(view, (int)bytes - 4));
+        var root = (count - 1) / 2 + reserved / 2 + ((count - 1) % 2 + reserved % 2) / 2;
+        return block == root
+            ? type == 1 && p.ReadUInt32(view, 12) == bytes / 4 - 56 ? view : APTR.Null
+            : p.ReadUInt32(view, 4) == block && (type == 2 || type == -3) ? view : APTR.Null;
     }
 
     public static bool Mount<T>(ref T p, APTR buffer, out uint dosType) where T : struct, IAmigaFileSystemPlatform
@@ -58,14 +92,16 @@ public static class AmigaDiskFileSystemCore
         var offset = 0u;
         for (var i = 0u; i < length; i++)
             if (p.ReadUInt8(name, (int)i) == ':') { directory = geometry.RootBlock; offset = i + 1; }
+        var loaded = false;
         for (var depth = 0; depth <= 255; depth++)
         {
-            if (!Header(ref p, directory, buffer)) { error = DOS.Error.DiskNotValidated; return 0; }
+            if (!loaded && !Header(ref p, ref geometry, directory, buffer, false)) { error = DOS.Error.DiskNotValidated; return 0; }
             if (offset == length) return directory;
             if (unchecked((int)p.ReadUInt32(buffer, geometry.Tail + 508)) < 0) { error = DOS.Error.ObjectWrongType; return 0; }
             if (p.ReadUInt8(name, (int)offset) == '/')
             {
                 directory = directory == geometry.RootBlock ? geometry.RootBlock : p.ReadUInt32(buffer, geometry.Tail + 500);
+                loaded = false;
                 offset++;
                 continue;
             }
@@ -79,7 +115,7 @@ public static class AmigaDiskFileSystemCore
             var found = false;
             for (var guard = 0u; entry != 0 && guard < geometry.BlockCount; guard++)
             {
-                if (!Header(ref p, entry, buffer) || p.ReadUInt32(buffer, geometry.Tail + 500) != directory)
+                if (!Header(ref p, ref geometry, entry, buffer, false) || p.ReadUInt32(buffer, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 var matches = p.ReadUInt8(buffer, geometry.Tail + 432) == count;
                 for (var i = 0u; matches && i < count; i++) matches =
@@ -89,6 +125,7 @@ public static class AmigaDiskFileSystemCore
             }
             if (!found) { error = entry != 0 ? DOS.Error.DiskNotValidated : DOS.Error.ObjectNotFound; return 0; }
             directory = entry;
+            loaded = true; // The matching header is still in the caller's scratch.
             if (offset < length) offset++; // separator; a second slash means parent
         }
         error = DOS.Error.DiskNotValidated;
@@ -96,6 +133,209 @@ public static class AmigaDiskFileSystemCore
     }
 
     public static int Read<T>(ref T p, uint header, uint dosType, uint position,
+        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        var cursor = new ReadCursor();
+        return Read(ref p, ref cursor, header, dosType, position, destination, length, metadata, data, out error);
+    }
+
+    /// <summary>Caller-owned FFS traversal state. Clear Header after any mutation,
+    /// recovery or media change. No pointer into shared scratch survives a call.</summary>
+    public struct ReadCursor
+    {
+        public uint Header, Size, Table, TableIndex, RunStart, RunBlock, RunCount, DosType, NextTable;
+    }
+
+    public static int Read<T>(ref T p, ref ReadCursor cursor, uint header, uint dosType, uint position,
+        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)
+        where T : struct, IAmigaFileSystemPlatform =>
+        Read(ref p, ref cursor, header, dosType, position, destination, length, metadata, data, out error, out _);
+
+    /// <summary>Reports whether traversal state was changed or invalidated, so
+    /// native adapters can leave an unchanged caller-owned record in place.</summary>
+    public static int Read<T>(ref T p, ref ReadCursor cursor, uint header, uint dosType, uint position,
+        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error, out bool cursorChanged)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        cursorChanged = false;
+        // A retained run needs only the stable block-size scalar. Construct
+        // device geometry only when pointer-table traversal is necessary.
+        var blockBytes = p.BlockBytes;
+        var tableEntries = blockBytes / 4 - 56;
+        // Preserve OFS checksums and the legacy forward-copy semantics when
+        // caller memory overlaps either scratch block.
+        if ((dosType & 1) == 0 || Overlaps(destination, length, metadata, blockBytes) ||
+            Overlaps(destination, length, data, blockBytes))
+        {
+            cursorChanged = true;
+            cursor.Header = 0;
+            return ReadSingleBlocks(ref p, header, dosType, position, destination, length, metadata, data, out error);
+        }
+        error = DOS.Error.None;
+        var copied = 0u;
+        // A pointer-table boundary can split a large caller request into a
+        // short run. It is still streaming I/O, not a small read-ahead packet.
+        var readAhead = length <= 4096;
+        var loaded = false;
+        var tableView = metadata;
+        var tail = (int)blockBytes - 512;
+        if (length > int.MaxValue || !p.IsMapped(destination, length) || tableEntries == 0) goto failed;
+        if (cursor.Header != header || header == 0 || cursor.DosType != dosType)
+        {
+            cursorChanged = true;
+            cursor.Header = 0;
+            tableView = FileHeaderView(ref p, header, metadata, destination, length);
+            if (tableView.IsNull ||
+                unchecked((int)p.ReadUInt32(tableView, tail + 508)) != -3) goto failed;
+            cursor.Size = p.ReadUInt32(tableView, tail + 324);
+            cursor.Table = header; cursor.TableIndex = 0; cursor.RunCount = 0;
+            cursor.NextTable = p.ReadUInt32(tableView, tail + 504);
+            cursor.DosType = dosType; cursor.Header = header;
+            loaded = true;
+        }
+        if (position > cursor.Size) { error = DOS.Error.SeekError; cursorChanged = true; cursor.Header = 0; return -1; }
+        if (length > cursor.Size - position) length = cursor.Size - position;
+        while (copied < length)
+        {
+            var index = blockBytes == 512 ? position >> 9 : AmigaGeometryMath.Divide(position, blockBytes);
+            if (cursor.RunCount == 0 || index < cursor.RunStart || index - cursor.RunStart >= cursor.RunCount)
+            {
+                cursorChanged = true;
+                var volumeBlocks = p.BlockCount;
+                var reserved = p.ReservedBlocks;
+                var wantedTable = AmigaGeometryMath.Divide(index, tableEntries);
+                if (wantedTable >= volumeBlocks) goto failed;
+                if (wantedTable < cursor.TableIndex)
+                {
+                    cursor.Table = header; cursor.TableIndex = 0;
+                    tableView = FileHeaderView(ref p, header, metadata, destination, length);
+                    if (tableView.IsNull ||
+                        unchecked((int)p.ReadUInt32(tableView, tail + 508)) != -3) goto failed;
+                    cursor.NextTable = p.ReadUInt32(tableView, tail + 504);
+                    loaded = true;
+                }
+                if (!loaded && cursor.TableIndex == wantedTable)
+                {
+                    if (cursor.TableIndex == 0)
+                    {
+                        tableView = FileHeaderView(ref p, header, metadata, destination, length);
+                        if (tableView.IsNull ||
+                            unchecked((int)p.ReadUInt32(tableView, tail + 508)) != -3) goto failed;
+                    }
+                    else
+                    {
+                        tableView = ReadExtensionView(ref p, volumeBlocks, reserved, tail, header, cursor.Table, metadata, destination, length);
+                        if (tableView.IsNull) goto failed;
+                    }
+                    cursor.NextTable = p.ReadUInt32(tableView, tail + 504);
+                    loaded = true;
+                }
+                while (cursor.TableIndex < wantedTable)
+                {
+                    var table = cursor.NextTable;
+                    tableView = ReadExtensionView(ref p, volumeBlocks, reserved, tail, header, table, metadata, destination, length);
+                    if (tableView.IsNull) goto failed;
+                    cursor.Table = table; cursor.TableIndex++;
+                    cursor.NextTable = p.ReadUInt32(tableView, tail + 504);
+                    loaded = true;
+                }
+                var used = p.ReadUInt32(tableView, 8);
+                var slot = index - wantedTable * tableEntries;
+                if (used > tableEntries || slot >= used) goto failed;
+                var pointer = tail + 308 - (int)slot * 4;
+                var block = p.ReadUInt32(tableView, pointer);
+                if (block < reserved || block >= volumeBlocks) goto failed;
+                // Stop before a bad or fragmented pointer. Its validation still
+                // happens only after the preceding data has been delivered.
+                var limit = used - slot;
+                if (limit > volumeBlocks - block) limit = volumeBlocks - block;
+                cursor.RunStart = index; cursor.RunBlock = block;
+                cursor.RunCount = ContiguousPointers(ref p, tableView, pointer, block, limit);
+                // Scratch survives a data transfer; a borrowed cache image
+                // may expire before the next table lookup.
+                loaded = tableView == metadata;
+            }
+            var physical = cursor.RunBlock + index - cursor.RunStart;
+            var within = blockBytes == 512 ? position & 511 : AmigaGeometryMath.Remainder(position, blockBytes);
+            var target = APTR.FromPointer(destination.Raw + copied);
+            var remaining = length - copied;
+            if (within == 0 && remaining >= blockBytes && (target.Raw & 3) == 0)
+            {
+                var blocks = blockBytes == 512 ? remaining >> 9 : AmigaGeometryMath.Divide(remaining, blockBytes);
+                var available = cursor.RunCount - (index - cursor.RunStart);
+                if (blocks > available) blocks = available;
+                var read = readAhead ? p.ReadDataBlocks(physical, blocks, target)
+                    : p.ReadDataBlocks(physical, blocks, target, false);
+                if (read > blocks) goto failed;
+                var bytes = read * blockBytes;
+                copied += bytes; position += bytes;
+                if (read != blocks) goto failed;
+            }
+            else
+            {
+                var count = blockBytes - within;
+                if (count > remaining) count = remaining;
+                var image = p.ReadRetainedBlock(physical);
+                if (image.IsNull || Overlaps(target, count, image, blockBytes))
+                {
+                    if (!p.ReadBlock(physical, data)) goto failed;
+                    image = data;
+                }
+                p.Copy(APTR.FromPointer(image.Raw + within), target, count);
+                copied += count; position += count;
+            }
+        }
+        return (int)copied;
+    failed:
+        cursorChanged = true;
+        cursor.Header = 0;
+        error = DOS.Error.DiskNotValidated;
+        return copied == 0 ? -1 : (int)copied;
+    }
+
+    private static bool Overlaps(APTR a, uint length, APTR b, uint bytes) =>
+        length != 0 && bytes != 0 && (a.Raw <= b.Raw ? b.Raw - a.Raw < length : a.Raw - b.Raw < bytes);
+
+    // FFS stores its data pointers in reverse order. The first was validated
+    // by the caller, and limit bounds both the remaining table and the disk.
+    private static uint ContiguousPointers<T>(ref T p, APTR table, int pointer, uint first, uint limit)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        var expected = first;
+        // Keep the table address in one register. Constant displacements let
+        // the native compiler read adjacent entries without rebuilding a
+        // dynamic byte offset for every pointer.
+        var cursor = APTR.FromPointer(table.Raw + (uint)pointer);
+        while (limit > 4)
+        {
+            if (p.ReadUInt32(cursor, -4) != expected + 1) return expected - first + 1;
+            if (p.ReadUInt32(cursor, -8) != expected + 2) return expected - first + 2;
+            if (p.ReadUInt32(cursor, -12) != expected + 3) return expected - first + 3;
+            if (p.ReadUInt32(cursor, -16) != expected + 4) return expected - first + 4;
+            cursor = APTR.FromPointer(cursor.Raw - 16);
+            expected += 4; limit -= 4;
+        }
+        while (limit > 1 && p.ReadUInt32(cursor, -4) == expected + 1)
+        {
+            cursor = APTR.FromPointer(cursor.Raw - 4);
+            expected++; limit--;
+        }
+        return expected - first + 1;
+    }
+
+    private static APTR ReadExtensionView<T>(ref T p, uint blockCount, uint reserved, int tail, uint header, uint block,
+        APTR metadata, APTR output, uint outputBytes)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        if (block < reserved || block >= blockCount) return APTR.Null;
+        var view = FfsMetadataView(ref p, block, metadata, output, outputBytes);
+        return view.IsNotNull && Checksum(ref p, view) && p.ReadUInt32(view) == 16 &&
+            p.ReadUInt32(view, 4) == block && p.ReadUInt32(view, tail + 500) == header &&
+            unchecked((int)p.ReadUInt32(view, tail + 508)) == -3 ? view : APTR.Null;
+    }
+
+    private static int ReadSingleBlocks<T>(ref T p, uint header, uint dosType, uint position,
         APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)
         where T : struct, IAmigaFileSystemPlatform
     {

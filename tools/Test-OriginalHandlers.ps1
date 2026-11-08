@@ -38,7 +38,7 @@ try {
             $options = @{ ArtifactRoot = (Join-Path $FrozenHandlerRoot $profile) }
             if ($profile -eq 'ffs') { $options.Ffs = $true }
             if ($profile.StartsWith('sfs2')) { $options.Sfs2 = $true }
-            if ($profile -eq 'sfs2-trst') { $options.Sfs2TrstWrites = $true }
+            if ($profile -eq 'sfs2-csun') { $options.Sfs2CsunWrites = $true }
             & (Join-Path $repository 'build/Build-Handler.ps1') @options *> (Join-Path $OutputRoot "build-$profile.log")
             if ($LASTEXITCODE -ne 0) { throw "Handler build failed: $profile" }
         }

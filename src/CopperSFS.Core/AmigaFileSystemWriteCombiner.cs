@@ -96,10 +96,16 @@ public static class AmigaFileSystemWriteCombiner
 
     public static bool Intersects<T>(ref T p, APTR queue, uint block, uint count) where T : struct, IAmigaGuestMemory
     {
+        var entries = Count(ref p, queue);
+        return entries != 0 && count != 0 && IntersectsEntries(ref p, queue, entries, block, count);
+    }
+
+    private static bool IntersectsEntries<T>(ref T p, APTR queue, uint entries, uint block, uint count)
+        where T : struct, IAmigaGuestMemory
+    {
         var header = new AmigaFileSystemWriteQueueHeaderView<T>(ref p, queue);
-        if (queue.IsNull || header.Count == 0 || count == 0 || block > header.MaximumBlock ||
+        if (block > header.MaximumBlock ||
             (block < header.MinimumBlock && count <= header.MinimumBlock - block)) return false;
-        var entries = header.Count;
         for (var i = 0u; i < entries; i++)
         {
             var key = p.ReadUInt32(queue, (int)(QueueLayout.HeaderBytes + i * QueueLayout.EntryBytes));
