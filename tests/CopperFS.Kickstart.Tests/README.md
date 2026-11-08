@@ -63,3 +63,27 @@ $env:COPPERFS_ORIGINAL_SFS = '<path to original SmartFilesystem 1.279>'
 $env:COPPERSHARP_KICKSTART31_ROM = '<path to decoded Kickstart 3.1 ROM>'
 dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2RecoveryMatrix
 ```
+
+## Native SFS2 file positions
+
+`NativeSfs2FilePosition` runs the two DOS packet regressions from CopperSFS
+research commit `4a902a1`. Use the Kickstart ROM and freshly built SFS2 TRST
+handler variables from the recovery matrix above, then run:
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2FilePosition
+```
+
+The wide case requires a sparse-capable temporary directory. Its 136 GiB
+logical HDF places a file extent at 128 GiB. The guest writes 1,027 bytes
+starting three bytes below 4 GiB, checks both words of the resulting position
+and file size, and checks that shrinking respects a second open handle's
+position. After that handle closes, the guest shrinks the file. A fresh
+Kickstart boot verifies the surviving 512 bytes and EOF without writing the
+disk. Host inspection checks the affected extent, object, bitmap, free count
+and clean journal marker without scanning the whole logical device.
+
+The exhaustion case writes a 17-byte prefix, then submits a 256 KiB write
+which must report NoFreeStore and preserve position 17. A 1 KiB retry on the
+same handle must succeed, with the original prefix and exact EOF intact.
+The host checks the persisted file hash and observes TRST journal writes.

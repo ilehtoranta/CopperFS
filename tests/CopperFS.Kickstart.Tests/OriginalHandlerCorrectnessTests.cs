@@ -102,8 +102,21 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
         string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null)
     {
-        var directory = Path.Combine(root, label); Directory.CreateDirectory(Path.Combine(directory, "boot", "S"));
-        var media = Path.Combine(directory, floppy ? "disk.adf" : "disk.hdf"); File.WriteAllBytes(media, initial);
+        var directory = Path.Combine(root, label);
+        Directory.CreateDirectory(directory);
+        var media = Path.Combine(directory, floppy ? "disk.adf" : "disk.hdf");
+        File.WriteAllBytes(media, initial);
+        await BootMedia(directory, profile, label, handler, media, write, guestEntry, observe,
+            floppy ? initial : null, storage, Hash(initial));
+        return File.ReadAllBytes(media);
+    }
+
+    private async Task BootMedia(string directory, string profile, string label, string handler, string media,
+        bool write, string? guestEntry, Action<byte, long, int, int, int>? observe = null,
+        byte[]? floppyImage = null, WritableHook? storage = null, string? initialHash = null)
+    {
+        Directory.CreateDirectory(Path.Combine(directory, "boot", "S"));
+        var floppy = floppyImage != null;
         var kind = profile.StartsWith("ofs") ? "Ofs" : profile.StartsWith("ffs") ? "Ffs" : profile == "sfs" ? "Sfs" : "Sfs2";
         if (profile.EndsWith("-dd")) kind += "Dd";
         if (profile.EndsWith("-hd")) kind += "Hd";
@@ -135,13 +148,13 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         {
             CpuModel = M68kCpuModel.M68020, ChipRamBytes = 512 * 1024, FastRamBytes = 2 * 1024 * 1024,
             SlowRamBytes = 0, FramebufferWidth = 908, FloppyDriveCount = floppy ? 2 : 1,
-            FloppyDriveTypes = floppy && initial.Length == 3520 * 512
+            FloppyDriveTypes = floppyImage?.Length == 3520 * 512
                 ? [LightweightFloppyDriveType.DoubleDensity, LightweightFloppyDriveType.HighDensity] : [],
             Hardfiles = floppy ? [] : [new(0, media, readOnly: false) { ExposeBootNode = false, IoHook = hook }]
         }))
         {
             machine.LoadKickstart(rom); machine.MountAdf(0, boot); machine.SetDriveWriteProtected(0, true);
-            if (floppy) { machine.MountAdf(1, initial); machine.SetDriveWriteProtected(1, !write); }
+            if (floppy) { machine.MountAdf(1, floppyImage!); machine.SetDriveWriteProtected(1, !write); }
             machine.Reset();
             machine.ParallelDataWritten += (value, _, busCycle) =>
             {
@@ -166,12 +179,11 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         var result = new { Profile = profile, Label = label, Passed = done && !failed, Stage = stage, IoErr = error,
             PC = pc.ToString("X8"), Frames = frames, HostSeconds = watch.Elapsed.TotalSeconds,
             HandlerSha256 = Hash(File.ReadAllBytes(handler)), ProbeSha256 = Hash(probe), KickstartSha256 = Hash(rom),
-            InitialSha256 = Hash(initial), ResultSha256 = Hash(File.ReadAllBytes(media)), hook.Writes, hook.Flushes };
+            InitialSha256 = initialHash, ResultSha256 = initialHash == null ? null : Hash(File.ReadAllBytes(media)), hook.Writes, hook.Flushes };
         File.WriteAllText(Path.Combine(directory, "result.json"), JsonSerializer.Serialize(result, Json));
         output.WriteLine(JsonSerializer.Serialize(result));
         Assert.True(result.Passed, $"{profile}/{label}: stage {stage}, IoErr {error}, PC {pc:X8}, {frames} frames");
-        if (!write) Assert.Equal(result.InitialSha256, result.ResultSha256);
-        return File.ReadAllBytes(media);
+        if (!write && initialHash != null) Assert.Equal(result.InitialSha256, result.ResultSha256);
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
