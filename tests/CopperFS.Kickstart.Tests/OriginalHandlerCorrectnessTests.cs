@@ -100,20 +100,21 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     }
 
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
-        string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null)
+        string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null,
+        M68kCpuModel cpu = M68kCpuModel.M68020)
     {
         var directory = Path.Combine(root, label);
         Directory.CreateDirectory(directory);
         var media = Path.Combine(directory, floppy ? "disk.adf" : "disk.hdf");
         File.WriteAllBytes(media, initial);
         await BootMedia(directory, profile, label, handler, media, write, guestEntry, observe,
-            floppy ? initial : null, storage, Hash(initial));
+            floppy ? initial : null, storage, Hash(initial), cpu);
         return File.ReadAllBytes(media);
     }
 
     private async Task BootMedia(string directory, string profile, string label, string handler, string media,
         bool write, string? guestEntry, Action<byte, long, int, int, int>? observe = null,
-        byte[]? floppyImage = null, WritableHook? storage = null, string? initialHash = null)
+        byte[]? floppyImage = null, WritableHook? storage = null, string? initialHash = null, M68kCpuModel cpu = M68kCpuModel.M68020)
     {
         Directory.CreateDirectory(Path.Combine(directory, "boot", "S"));
         var floppy = floppyImage != null;
@@ -146,7 +147,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         var watch = Stopwatch.StartNew();
         using (var machine = new LightweightA500Machine(new()
         {
-            CpuModel = M68kCpuModel.M68020, ChipRamBytes = 512 * 1024, FastRamBytes = 2 * 1024 * 1024,
+            CpuModel = cpu, ChipRamBytes = 512 * 1024, FastRamBytes = 2 * 1024 * 1024,
             SlowRamBytes = 0, FramebufferWidth = 908, FloppyDriveCount = floppy ? 2 : 1,
             FloppyDriveTypes = floppyImage?.Length == 3520 * 512
                 ? [LightweightFloppyDriveType.DoubleDensity, LightweightFloppyDriveType.HighDensity] : [],
@@ -176,7 +177,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 error = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + 24, 4));
             }
         }
-        var result = new { Profile = profile, Label = label, Passed = done && !failed, Stage = stage, IoErr = error,
+        var result = new { Profile = profile, Cpu = cpu.ToString(), Label = label, Passed = done && !failed, Stage = stage, IoErr = error,
             PC = pc.ToString("X8"), Frames = frames, HostSeconds = watch.Elapsed.TotalSeconds,
             HandlerSha256 = Hash(File.ReadAllBytes(handler)), ProbeSha256 = Hash(probe), KickstartSha256 = Hash(rom),
             InitialSha256 = initialHash, ResultSha256 = initialHash == null ? null : Hash(File.ReadAllBytes(media)), hook.Writes, hook.Flushes };

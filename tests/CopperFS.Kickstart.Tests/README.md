@@ -225,3 +225,27 @@ The host checks the clean TROK marker, replay outside the marker sector, and
 the recovered files with the independent image checker. A fresh Kickstart
 machine mounts with the same handler and repeats the guest checks; the
 complete resulting partition must match the first recovered image byte for byte.
+
+## Original SFS2 image on 68000 and 68020
+
+The `OriginalSfs2Image` tests port the full original-image workload at
+research commit `4a902a1`. Supply the clean 16 MiB, two-reserved-block
+partition created by SmartFilesystem 1.279. The archived original-06
+fixture has SHA-256 `B11C46915C402D5A8E617FBC2F0BC2CD67549E4FD03F9363256148AD168D65B0`.
+
+Set the Kickstart ROM, original SmartFilesystem and both CopperSFS handler
+variables from the CSUN and TRST sections above. Build both CopperSFS handlers
+for 68000 so the same executable runs on both emulated CPUs. Then run:
+
+```powershell
+$env:COPPERSFS_SFS2_REFERENCE_IMAGE = '<path to clean original-06/reference.hdf>'
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~OriginalSfs2Image
+```
+
+Each case reads a copy of the original image and enumerates its directory.
+A second boot creates files and a directory, renames a file, sets its comment,
+date and protection, overwrites across a sector boundary, grows the original
+payload and deletes a file. A fresh CopperSFS boot on the selected CPU checks
+the persisted bytes and metadata. Original SmartFilesystem independently
+reads the same changed image on a 68020. Each read-only verification boot must
+leave the complete partition byte-identical.
