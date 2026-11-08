@@ -6,21 +6,23 @@ using Task = System.Threading.Tasks.Task;
 namespace CopperFS.Kickstart.Tests;
 
 // ReadBase and the original-handler capture come from research commit 4a902a1.
-public static class OriginalSfs2RedoProbe
+public static partial class OriginalSfs2Probe
 {
-    public static int Run()
+    public static int ReadOriginal() => Run(0);
+
+    private static int Run(int mode)
     {
         var dos = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!dos.HasValue) { CorrectnessProbe.Report(250); return 1; }
         DOS.DOSLibraryBase = dos.Value;
-        var store = APTR.FromPointer(global::Amiga.Exec.AllocMem(4096,
+        var store = APTR.FromPointer(global::Amiga.Exec.AllocMem(mode == 0 ? 4096u : 10240u,
             global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
         if (store.IsNull) { CorrectnessProbe.Report(250); return 2; }
         CorrectnessProbe.Report(200);
         CorrectnessProbe.Report((int)(store.Raw >> 24)); CorrectnessProbe.Report((int)(store.Raw >> 16));
         CorrectnessProbe.Report((int)(store.Raw >> 8)); CorrectnessProbe.Report((int)store.Raw);
         var result = CorrectnessProbe.Mount(store, 3, sfs2ReservedBlocks: 2);
-        if (result == 0) result = ReadBase(store);
+        if (result == 0) result = mode == 0 ? ReadBase(store) : mode == 1 ? Full(store) : VerifyFull(store);
         if (result != 0) return CorrectnessProbe.Failed(store, (uint)result);
         if (DOS.Inhibit("SEQ0:", 1) == 0) return CorrectnessProbe.Failed(store, 90);
         CorrectnessProbe.Report(210);
@@ -75,7 +77,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var directory = Directory.CreateTempSubdirectory("CopperFS-OriginalSfs2Redo-").FullName;
         try
         {
-            const string probe = "OriginalSfs2RedoProbe::Run";
+            const string probe = "OriginalSfs2Probe::ReadOriginal";
             var recovered = await Run(directory, "sfs2-trst", "recover", handler, capture, true, probe);
             Assert.Equal(0x54524F4Bu, Word(recovered, marker)); // TROK
             Assert.True(!capture.AsSpan(0, marker).SequenceEqual(recovered.AsSpan(0, marker)) ||
