@@ -153,6 +153,20 @@ release on close, a discontinuous write, shrink, truncate, removal, scalar
 write and entry into TRST. Each checks the exact free-block count and file
 contents or removal after recovery on a fresh mount.
 
+The reserved continuation fault regression from research commit 4a902a1 starts
+with a durable 64 KiB overwrite and a live RAM reservation. The next 64 KiB
+must extend the same physical run. It cuts every continuation write and flush,
+then tries transient and persistent failures at each boundary. A failed request
+must report zero bytes and release the file's reservation, including when the
+initial flush or recovery fails before the write transaction begins.
+
+Fresh mounts check both files' contents and metadata, the allocation map and
+free-block count. A dirty undo journal is interrupted again during recovery;
+retry must restore the version with only the first overwrite committed.
+The harness enumerates pending block versions up to 4,096 combinations and
+samples larger sets. For each continuation sector it also tears the write
+after 1, 256 and 511 bytes, requiring complete recovery or refusal to mount.
+
 ## Node-fullness correction (2026-11-04)
 
 Classic node allocation and removal now recompute fullness along the modified

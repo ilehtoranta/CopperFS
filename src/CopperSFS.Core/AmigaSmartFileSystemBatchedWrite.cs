@@ -37,7 +37,11 @@ public static partial class AmigaSmartFileSystemWriteCore
             !directory && r.Position == size)
             return Write(ref p, ref w, ref r, out actual);
         actual = 0;
-        if (!Flush(ref p, ref w) || !Recover(ref p, ref w)) return false;
+        if (!Flush(ref p, ref w) || !Recover(ref p, ref w))
+        {
+            ReleaseOverwriteReservation(ref p, ref w, r.Node);
+            return false;
+        }
         var buffered = w.Buffered; var staged = w.Batch;
         if (buffered.IsNotNull)
         {

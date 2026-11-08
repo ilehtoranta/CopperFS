@@ -7,7 +7,7 @@ using static CopperSFS.Tests.ReliabilityFixture;
 
 namespace CopperSFS.Tests;
 
-public sealed class BatchBoundaryTests(ITestOutputHelper output)
+public sealed partial class BatchBoundaryTests(ITestOutputHelper output)
 {
     // Adapted from ExpandedImage in research commit 4a902a1. Start with a real
     // one-block file and expand its extent, allocation bitmap and object together.
