@@ -64,6 +64,27 @@ $env:COPPERSHARP_KICKSTART31_ROM = '<path to decoded Kickstart 3.1 ROM>'
 dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2RecoveryMatrix
 ```
 
+## Native SFS2 CSUN crash recovery
+
+`NativeSfs2CsunRecoveryMatrix` runs the same overwrite, truncate, rename,
+delete, create and comment operations with the standalone CSUN undo handler.
+For every distinct durable disk image, the harness cuts a fresh guest run at
+the corresponding write or flush. A dirty marker must roll back to the entire
+pre-mutation manifest, including file data, metadata and free-block count.
+The matrix covers the initially empty undo chain and requires a dirty marker
+pointing to a CSUN descriptor. Clean images must preserve their manifest,
+including the fully committed result. After recovery the marker must be clean,
+and a second native mount must leave the disk byte-identical.
+
+Use a decoded Kickstart 3.1 ROM as above. CSUN recovery uses CopperSFS for
+both mounts and does not require the original SmartFilesystem binary.
+
+```powershell
+./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot "$PWD/artifacts/sfs2-csun"
+$env:COPPERFS_SFS2_CSUN_HANDLER = "$PWD/artifacts/sfs2-csun/CopperSFS"
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2CsunRecoveryMatrix
+```
+
 ## Native SFS2 file positions
 
 `NativeSfs2FilePosition` runs the two DOS packet regressions from CopperSFS

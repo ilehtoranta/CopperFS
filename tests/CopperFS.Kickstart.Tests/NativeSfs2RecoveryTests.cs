@@ -7,9 +7,9 @@ namespace CopperFS.Kickstart.Tests;
 
 public sealed class Sfs2RecoveryTheoryAttribute : TheoryAttribute
 {
-    public Sfs2RecoveryTheoryAttribute()
+    public Sfs2RecoveryTheoryAttribute(bool csun = false)
     {
-        foreach (var name in new[] { "COPPERSHARP_KICKSTART31_ROM", "COPPERFS_ORIGINAL_SFS", "COPPERFS_SFS2_TRST_HANDLER" })
+        foreach (var name in csun ? new[] { "COPPERSHARP_KICKSTART31_ROM", "COPPERFS_SFS2_CSUN_HANDLER" } : new[] { "COPPERSHARP_KICKSTART31_ROM", "COPPERFS_ORIGINAL_SFS", "COPPERFS_SFS2_TRST_HANDLER" })
             if (!File.Exists(Environment.GetEnvironmentVariable(name))) Skip = $"Supply {name} for native SFS2 recovery.";
     }
 }
@@ -27,15 +27,19 @@ public sealed partial class OriginalHandlerCorrectnessTests
         private readonly HashSet<string> seen = [];
         private byte[] durable = initial;
         private int sequence;
-        public readonly List<(int Cut, byte[] Image)> Prefixes = [];
+        public readonly List<(int Cut, string Hash)> Prefixes = [];
         public int SectorCuts, FlushCuts;
 
         private void Boundary(bool newPrefix = false)
         {
             sequence++;
             if (sequence == cutAt) throw new PowerCut();
-            if (cutAt == 0 && (sequence == 1 || newPrefix) && seen.Add(Hash(durable)))
-                Prefixes.Add((sequence, durable));
+            if (cutAt == 0 && (sequence == 1 || newPrefix))
+            {
+                var hash = Hash(durable);
+                if (seen.Add(hash))
+                    Prefixes.Add((sequence, hash));
+            }
         }
 
         public override void Read(FileStream backing, long offset, Span<byte> destination)
@@ -78,18 +82,28 @@ public sealed partial class OriginalHandlerCorrectnessTests
         }
     }
 
+    public static TheoryData<string> Mutations => new() { "Overwrite", "Truncate", "Rename", "Delete", "Create", "Comment" };
+
     [Sfs2RecoveryTheory]
-    [InlineData("Overwrite")]
-    [InlineData("Truncate")]
-    [InlineData("Rename")]
-    [InlineData("Delete")]
-    [InlineData("Create")]
-    [InlineData("Comment")]
+    [MemberData(nameof(Mutations))]
     public async Task NativeSfs2RecoveryMatrix(string operation)
     {
         var candidate = Environment.GetEnvironmentVariable("COPPERFS_SFS2_TRST_HANDLER")!;
         var original = Environment.GetEnvironmentVariable("COPPERFS_ORIGINAL_SFS")!;
         Assert.Equal("C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205", Hash(File.ReadAllBytes(original)));
+        await RunRecoveryMatrix(operation, candidate, original);
+    }
+
+    [Sfs2RecoveryTheory(csun: true)]
+    [MemberData(nameof(Mutations))]
+    public Task NativeSfs2CsunRecoveryMatrix(string operation) =>
+        RunRecoveryMatrix(operation, Environment.GetEnvironmentVariable("COPPERFS_SFS2_CSUN_HANDLER")!, null);
+
+    private async Task RunRecoveryMatrix(string operation, string candidate, string? original)
+    {
+        var undo = original == null;
+        var profile = undo ? "sfs2-csun" : "sfs2-trst";
+        string[] handlers = original == null ? [candidate] : [candidate, original];
         var initial = ReadMedia.Sfs2();
         var marker = checked((int)(BinaryPrimitives.ReadUInt32BigEndian(initial.AsSpan(104)) + 2) * 512);
         const uint clean = 0x54524F4B, dirty = 0x54524641;
@@ -104,7 +118,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var directory = Directory.CreateTempSubdirectory("CopperFS-Sfs2-").FullName;
         try
         {
-            var written = await Run(directory, "sfs2-trst", operation, candidate, initial, true,
+            var written = await Run(directory, profile, operation, candidate, initial, true,
                 "Sfs2RecoveryProbe::" + operation, storage: trace);
             var before = ManifestOf(initial);
             using var stream = new MemoryStream(written, writable: false);
@@ -129,30 +143,54 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var after = JsonSerializer.Serialize(report);
             Assert.NotEqual(before, after);
             Assert.Equal(clean, Marker(written));
-            Assert.Contains(trace.Prefixes, p => p.Image.AsSpan().SequenceEqual(written));
-            Assert.Contains(trace.Prefixes, p => Marker(p.Image) == dirty);
+            var finalHash = Hash(written);
+            Assert.Contains(trace.Prefixes, p => p.Hash == finalHash);
+            var publishedJournals = 0;
+            var restoredUndoTarget = false;
             foreach (var (cut, expected) in trace.Prefixes)
             {
                 var interrupted = new DurableTrace(initial, cut);
-                await Assert.ThrowsAsync<PowerCut>(() => Run(directory, "sfs2-trst", "cut", candidate, initial,
+                await Assert.ThrowsAsync<PowerCut>(() => Run(directory, profile, "cut", candidate, initial,
                     true, "Sfs2RecoveryProbe::" + operation, storage: interrupted));
                 var prefix = File.ReadAllBytes(Path.Combine(directory, "cut", "disk.hdf"));
-                Assert.Equal(Hash(expected), Hash(prefix));
+                Assert.Equal(expected, Hash(prefix));
+                string expectedManifest;
                 if (Marker(prefix) == dirty)
                 {
                     var head = BinaryPrimitives.ReadUInt32BigEndian(prefix.AsSpan(marker + 12));
-                    Assert.Equal(0x54525354u, BinaryPrimitives.ReadUInt32BigEndian(prefix.AsSpan(checked((int)head * 512))));
+                    // CSUN publishes an empty dirty marker before logging its first target.
+                    if (!undo || head != 0)
+                    {
+                        Assert.NotEqual(0u, head);
+                        Assert.Equal(undo ? 0x4353554Eu : 0x54525354u,
+                            BinaryPrimitives.ReadUInt32BigEndian(prefix.AsSpan(checked((int)head * 512))));
+                        publishedJournals++;
+                    }
+                    expectedManifest = undo ? before : after;
                 }
-                foreach (var handler in new[] { candidate, original })
+                else
                 {
-                    var recovered = await Run(directory, "sfs2-trst", "recover", handler, prefix, true, "Sfs2RecoveryProbe::Recover");
+                    Assert.Equal(clean, Marker(prefix));
+                    expectedManifest = ManifestOf(prefix);
+                    Assert.Contains(expectedManifest, new[] { before, after });
+                    if (expected == finalHash) Assert.Equal(after, expectedManifest);
+                }
+                foreach (var handler in handlers)
+                {
+                    var recovered = await Run(directory, profile, "recover", handler, prefix, true, "Sfs2RecoveryProbe::Recover");
                     Assert.Equal(clean, Marker(recovered));
-                    var manifest = ManifestOf(recovered);
-                    if (Marker(prefix) == dirty) Assert.Equal(after, manifest);
-                    else Assert.Contains(manifest, new[] { before, after });
-                    await Run(directory, "sfs2-trst", "reopen", handler, recovered, false, "Sfs2RecoveryProbe::Recover");
+                    Assert.Equal(expectedManifest, ManifestOf(recovered));
+                    // CSUN recovery writes the saved target sectors and the clean marker.
+                    // Require a cut where rollback actually repairs bytes outside the marker.
+                    if (undo && Marker(prefix) == dirty &&
+                        (!prefix.AsSpan(0, marker).SequenceEqual(recovered.AsSpan(0, marker)) ||
+                         !prefix.AsSpan(marker + 512).SequenceEqual(recovered.AsSpan(marker + 512))))
+                        restoredUndoTarget = true;
+                    await Run(directory, profile, "reopen", handler, recovered, false, "Sfs2RecoveryProbe::Recover");
                 }
             }
+            Assert.True(publishedJournals > 0, "No durable dirty marker referenced a journal descriptor.");
+            if (undo) Assert.True(restoredUndoTarget, "No cut required undoing a durable target write.");
             output.WriteLine($"{operation}: {trace.SectorCuts} sector writes, {trace.FlushCuts} flushes, {trace.Prefixes.Count} distinct durable images.");
         }
         finally { Directory.Delete(directory, recursive: true); }
