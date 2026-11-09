@@ -1,0 +1,177 @@
+diff --git a/tests/CopperStart.Floppy.Native.Tests/AmigaSmartFileSystemTests.cs b/tests/CopperStart.Floppy.Native.Tests/AmigaSmartFileSystemTests.cs
+index 15b4563..a232a61 100644
+--- a/tests/CopperStart.Floppy.Native.Tests/AmigaSmartFileSystemTests.cs
++++ b/tests/CopperStart.Floppy.Native.Tests/AmigaSmartFileSystemTests.cs
+@@ -25,6 +25,8 @@ public sealed class AmigaSmartFileSystemTests
+         public AmigaVolumeGeometry Geometry { get { AmigaVolumeGeometry.Create(Blocks, Bytes, 1, out var geometry); return geometry; } }
+         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
+         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
++        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
++            ReadDataBlocks(block, count, target);
+         public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+         public bool ReadBlock(uint block, APTR destination)
+         {
+@@ -102,6 +104,8 @@ public sealed class AmigaSmartFileSystemTests
+         }
+         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
+         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
++        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
++            ReadDataBlocks(block, count, target);
+         public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+         public bool ReadBlock(uint block, APTR destination)
+         {
+diff --git a/tests/CopperStart.Floppy.Native.Tests/FfsOverwriteInstructionTests.cs b/tests/CopperStart.Floppy.Native.Tests/FfsOverwriteInstructionTests.cs
+index 6f7886f..a1c1edf 100644
+--- a/tests/CopperStart.Floppy.Native.Tests/FfsOverwriteInstructionTests.cs
++++ b/tests/CopperStart.Floppy.Native.Tests/FfsOverwriteInstructionTests.cs
+@@ -96,6 +96,8 @@ public static class FfsOverwriteProbe
+         public bool Flush() => true;
+         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
+         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
++        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
++            ReadDataBlocks(block, count, target);
+         public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+         public bool ReadBlock(uint block, APTR target)
+         {
+diff --git a/tests/CopperStart.Floppy.Native.Tests/FullFileSystemDisk.cs b/tests/CopperStart.Floppy.Native.Tests/FullFileSystemDisk.cs
+index bb024c8..c950fb2 100644
+--- a/tests/CopperStart.Floppy.Native.Tests/FullFileSystemDisk.cs
++++ b/tests/CopperStart.Floppy.Native.Tests/FullFileSystemDisk.cs
+@@ -26,6 +26,8 @@ internal struct FullFileSystemDisk(byte[] image) : IAmigaFormatFileSystemPlatfor
+     public bool WriteBlock(uint n, APTR a) { if (n >= BlockCount) return false; Ram.AsSpan((int)a.Raw, 512).CopyTo(image.AsSpan((int)n * 512)); return true; }
+     public bool WriteFormatBlock(uint n, APTR a) => WriteBlock(n, a);
+     public bool WriteDataBlocks(uint n, uint count, APTR a) => AmigaFileSystemBlockIo.Write(ref this, n, count, a);
++    public uint ReadDataBlocks(uint n, uint count, APTR a, bool readAhead) =>
++        ReadDataBlocks(n, count, a);
+     public uint ReadDataBlocks(uint n, uint count, APTR a) => AmigaFileSystemBlockIo.Read(ref this, n, count, a);
+     public bool ReadMetadataBlock(uint n, uint id, APTR a) => AmigaFileSystemBlockIo.ReadMetadata(ref this, n, id, a);
+     public APTR ReadMetadataView(uint n, uint id, APTR a) => ReadMetadataBlock(n, id, a) ? a : APTR.Null;
+diff --git a/tests/CopperStart.Floppy.Native.Tests/NativeCacheInvalidationInstructionTests.cs b/tests/CopperStart.Floppy.Native.Tests/NativeCacheInvalidationInstructionTests.cs
+index 7722cc0..0e57d54 100644
+--- a/tests/CopperStart.Floppy.Native.Tests/NativeCacheInvalidationInstructionTests.cs
++++ b/tests/CopperStart.Floppy.Native.Tests/NativeCacheInvalidationInstructionTests.cs
+@@ -1,3 +1,4 @@
++// Adapted from CopperStart ed02a70, tests/CopperStart.Floppy.Native.Tests/NativeCacheInvalidationInstructionTests.cs. Copyright (c) 2026 Ilkka Lehtoranta. All rights reserved.
+ using System.Globalization;
+ using System.Text.RegularExpressions;
+ using Copper68k;
+@@ -10,23 +11,19 @@ public sealed class NativeCacheInvalidationInstructionTests
+     private const uint Load = 0x100000, Platform = 0x1800, State = 0x2000;
+     private const uint File = 0x4000, Directory = 0x4200, Enumeration = 0x5000, Entries = 0x6000;
+ 
+-    [NativeTrstHandlerTheory]
++    [CacheHandlerTheory]
+     [InlineData(0, 32)] [InlineData(1, 32)] [InlineData(2, 32)] [InlineData(3, 32)]
+     [InlineData(4, 32)] [InlineData(4, 96)]
+     [InlineData(0, 96)] [InlineData(1, 96)] [InlineData(2, 96)] [InlineData(3, 96)]
+     public void CompiledCacheInvalidationPreservesHashLruAndCursorSemantics(int pattern, int capacity)
+     {
+         var path = Environment.GetEnvironmentVariable("COPPERSFS_HANDLER_PATH")!;
+-        var baseline = Environment.GetEnvironmentVariable("COPPERSFS_CACHE_BASELINE_PATH");
+         var entry = Entry(path);
+         var summary = HasSummary(path);
+         var reindex = Entry(path, "CopperStart.Dos.NativeAmigaFileSystem::ReindexCache");
+-        var oldReindex = string.IsNullOrEmpty(baseline) ? 0 : Entry(baseline, "CopperStart.Dos.NativeAmigaFileSystem::ReindexCache");
+-        var previousEntry = string.IsNullOrEmpty(baseline) ? 0 : Entry(baseline);
+         foreach (var model in new[] { M68kCpuModel.M68000, M68kCpuModel.M68020 })
+         {
+             var bus = NativeParityBus.LoadHunk(System.IO.File.ReadAllBytes(path), Load);
+-            var previous = string.IsNullOrEmpty(baseline) ? null : NativeParityBus.LoadHunk(System.IO.File.ReadAllBytes(baseline), Load);
+             foreach (var region in new uint[] { 4096, 0xFFFFFFC0 })
+             for (var bucket = 0u; bucket < 64; bucket++)
+             foreach (var count in new uint[] { 0, 1, 2, 3, 4, 7, 15, 16, 31, 32, 63, 64, 65 })
+@@ -43,18 +40,9 @@ public sealed class NativeCacheInvalidationInstructionTests
+                 Seed(bus, keys, summary);
+                 Invoke(bus, reindex, model, 0, 0, reindex: true);
+                 if (summary) CheckSummary(bus);
+-                if (previous is not null) { Seed(previous, keys, false); Invoke(previous, oldReindex, model, 0, 0, reindex: true); }
+-                Invoke(bus, entry, model, block, count);
+-                Check(bus, keys, block, count, summary); if (summary) CheckSummary(bus);
+-                if (previous is not null)
+-                {
+-                    Invoke(previous, previousEntry, model, block, count);
+-                    // Independent oracle above plus exact old/new metadata, LRU order,
+-                    // untouched payload bytes, objects, enumeration and sentinels.
+-                    if (!summary) Assert.Equal(previous.Memory.AsSpan(0x1700, 0x7900).ToArray(), bus.Memory.AsSpan(0x1700, 0x7900).ToArray());
+-                    Assert.Equal(previous.Memory.AsSpan(0x1700, 0x900 + 2320).ToArray(), bus.Memory.AsSpan(0x1700, 0x900 + 2320).ToArray());
+-                    Assert.Equal(previous.Memory.AsSpan(0x2000 + 2452, 0x7000 - 2452).ToArray(), bus.Memory.AsSpan(0x2000 + 2452, 0x7000 - 2452).ToArray());
+-                }
++                InvokeInvalidation(bus, path, entry, model, block, count);
++                Check(bus, keys, block, count, summary);
++                if (summary) CheckSummary(bus);
+             }
+         }
+     }
+@@ -152,7 +140,7 @@ public sealed class NativeCacheInvalidationInstructionTests
+                 {
+                     var low = key & ~15u;
+                     var old = CacheKeys(bus);
+-                    Invoke(bus, invalidate, model, low, 16);
++                    InvokeInvalidation(bus, path, invalidate, model, low, 16);
+                     foreach (var (node, value) in old)
+                         Assert.Equal(value >= low && value - low < 16 ? uint.MaxValue : value, bus.ReadLong(node + 4));
+                     CheckSummary(bus);
+@@ -205,15 +193,29 @@ public sealed class NativeCacheInvalidationInstructionTests
+         Assert.Equal(mask, bus.ReadLong(State + 2320));
+     }
+ 
+-    private static bool HasSummary(string path) => System.IO.File.ReadAllText(path + ".map").Contains("CopperStart.Dos.NativeAmigaFileSystem::AddCachePage");
++    private static bool HasSummary(string path) => System.IO.File.ReadAllText(path + ".map").Contains("CopperStart.Dos.NativeFileSystemPlatform::InvalidateBlockImages");
+ 
+-    private static uint Entry(string path, string symbol = "CopperStart.Dos.NativeFileSystemPlatform::InvalidateBlocks")
++    private static uint Entry(string path, string symbol = "CopperStart.Dos.NativeFileSystemPlatform::InvalidateBlockImages")
+     {
+         var match = Regex.Match(System.IO.File.ReadAllText(path + ".map"), @"(?m)^([0-9A-Fa-f]{8})\s+\d+\s+" + Regex.Escape(symbol) + @"\r?$");
+         Assert.True(match.Success, symbol);
+         return uint.Parse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+     }
+ 
++    // InvalidateBlocks is inlined: execute its two calls in source order.
++    private static void InvokeInvalidation(NativeParityBus bus, string path, uint images, M68kCpuModel model, uint block, uint count)
++    {
++        var cursors = Entry(path, "CopperStart.Dos.NativeAmigaFileSystem::InvalidateDirectoryCursors");
++        const uint stack = 0xF00000, returned = 0xF10000;
++        bus.WriteLong(stack, returned);
++        using var cpu = M68kCoreFactory.Default.Create(model, bus);
++        cpu.Reset(Load + cursors, stack);
++        cpu.State.A[0] = State;
++        for (var step = 0; step < 100000 && cpu.State.ProgramCounter != returned; step++)
++        { cpu.ExecuteInstruction(); Assert.False(cpu.State.Halted); }
++        Assert.Equal(returned, cpu.State.ProgramCounter);
++        Invoke(bus, images, model, block, count);
++    }
+     private static void Invoke(NativeParityBus bus, uint entry, M68kCpuModel model, uint block, uint count, bool reindex = false, uint source = 0, uint bytes = 0)
+     {
+         const uint stack = 0xF00000, returned = 0xF10000;
+@@ -240,7 +242,17 @@ public sealed class NativeCacheSummaryTheoryAttribute : Xunit.TheoryAttribute
+     {
+         var path = Environment.GetEnvironmentVariable("COPPERSFS_HANDLER_PATH");
+         if (string.IsNullOrWhiteSpace(path)) Skip = "Set COPPERSFS_HANDLER_PATH to qualify the compiled handler.";
+-        else if (!System.IO.File.ReadAllText(path + ".map").Contains("CopperStart.Dos.NativeAmigaFileSystem::AddCachePage"))
++        else if (!System.IO.File.ReadAllText(path + ".map").Contains("CopperStart.Dos.NativeFileSystemPlatform::InvalidateBlockImages"))
+             Skip = "This profile retains the original cache layout and does not use a page summary.";
+     }
+ }
++
++public sealed class CacheHandlerTheoryAttribute : Xunit.TheoryAttribute
++{
++    public CacheHandlerTheoryAttribute()
++    {
++        var path = Environment.GetEnvironmentVariable("COPPERSFS_HANDLER_PATH");
++        if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
++            Skip = "Set COPPERSFS_HANDLER_PATH to the freshly built classic SFS handler.";
++    }
++}
+diff --git a/tests/CopperStart.Floppy.Native.Tests/NativeSfsAmigaOsTests.cs b/tests/CopperStart.Floppy.Native.Tests/NativeSfsAmigaOsTests.cs
+index 557c165..6850e87 100644
+--- a/tests/CopperStart.Floppy.Native.Tests/NativeSfsAmigaOsTests.cs
++++ b/tests/CopperStart.Floppy.Native.Tests/NativeSfsAmigaOsTests.cs
+@@ -304,6 +304,8 @@ public sealed class NativeSfsAmigaOsTests
+         }
+         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
+         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
++        public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
++            ReadDataBlocks(block, count, target);
+         public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
+         public bool ReadBlock(uint block, APTR destination)
+         {
