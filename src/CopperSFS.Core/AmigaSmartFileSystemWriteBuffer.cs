@@ -67,6 +67,13 @@ public static class AmigaSmartFileSystemWriteBuffer
     internal static void Discard<T>(ref T p, APTR buffer) where T : struct, IAmigaGuestMemory
     { p.WriteUInt32(buffer, BufferHeader.Count, 0); p.Clear(APTR.FromPointer(buffer.Raw + BufferHeader.HashBuckets), BufferLayout.HashBytes); }
 
+    public static bool HasAcknowledgedCheckpoint<T>(ref T p, APTR buffer, uint rootContainer)
+        where T : struct, IAmigaGuestMemory =>
+        buffer.IsNotNull && p.ReadUInt32(buffer, BufferHeader.Hidden) == 0 &&
+        p.ReadUInt32(buffer, BufferHeader.PendingCommit) != 0 &&
+        p.ReadUInt32(buffer, BufferHeader.Count) != 0 &&
+        p.ReadUInt32(buffer, BufferHeader.RootContainer) == rootContainer;
+
     public static bool TryRead<T>(ref T p, APTR buffer, uint bytes, uint block, APTR destination, uint metadataId,
         out bool found) where T : struct, IAmigaFileSystemPlatform
     {

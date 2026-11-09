@@ -243,7 +243,7 @@ public static class CorrectnessProbe
         return APTR.ReadUInt8(source, offset + value.Length) == 0;
     }
 
-    internal static int Mount(APTR control, uint kind, bool floppy = false, bool unknown = false)
+    internal static int Mount(APTR control, uint kind, bool floppy = false, bool unknown = false, uint hardDiskHighCylinder = 127, uint sfs2ReservedBlocks = 1)
     {
         var format = kind % 10;
         var segment = DOS.LoadSeg("HANDLER");
@@ -273,8 +273,8 @@ public static class CorrectnessProbe
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.Surfaces, 2);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.SectorsPerBlock, 1);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.BlocksPerTrack, kind >= 20 ? 22u : kind >= 10 ? 11u : 128u);
-        APTR.WriteUInt32(environment, DosLayout.DosEnvec.Reserved, format == 3 ? 1u : 2u);
-        APTR.WriteUInt32(environment, DosLayout.DosEnvec.HighCylinder, kind >= 10 ? 79u : 127u);
+        APTR.WriteUInt32(environment, DosLayout.DosEnvec.Reserved, format == 3 ? sfs2ReservedBlocks : 2u);
+        APTR.WriteUInt32(environment, DosLayout.DosEnvec.HighCylinder, kind >= 10 ? 79u : hardDiskHighCylinder);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.NumberOfBuffers, 32);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.BufferMemoryType, 1);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.MaximumTransfer, 65536);
@@ -290,7 +290,7 @@ public static class CorrectnessProbe
     }
 
 
-    private static int Failed(APTR control, uint stage)
+    internal static int Failed(APTR control, uint stage)
     {
         APTR.WriteUInt32(control, 20, stage); APTR.WriteUInt32(control, 24, (uint)DOS.IoErr());
         Report(250); return (int)stage;

@@ -135,3 +135,123 @@ a fresh matrix manifest. It collects one cold trial per selected size and
 marks the case `diagnostic-cpu-profile.json`. Select either CPU profiling or
 mount tracing. The formal matrix runner clears this environment variable and
 rejects diagnostic cases from throughput reports.
+
+## Native SFS2 TRST crash recovery
+
+`NativeSfs2RecoveryMatrix` ports the six single-mutation cases from the
+CopperSFS research snapshot `4a902a1`. It boots Kickstart with a synthetic
+16 MiB SFS2 partition, performs each mutation through DOS with the standalone
+CopperSFS TRST handler, and checks the uninterrupted result. The mutations
+overwrite across a sector boundary, truncate, rename, delete, create an empty
+file, and set a comment.
+
+The device model accepts atomic 512-byte writes into volatile storage and
+makes them durable on flush. The test traces every sector write and flush,
+then repeats the guest workload and interrupts it once per distinct durable
+image. It compares the interrupted disk byte for byte with the traced image.
+CopperSFS and original SmartFilesystem 1.279 independently mount copies of
+that disk. A published TRST journal must recover the complete committed
+manifest, including free space and file hashes. Each handler must leave a
+clean marker and preserve the disk byte for byte on its next boot.
+
+Build the handler and set the local input paths before running:
+
+```powershell
+./build/Build-Handler.ps1 -Sfs2 -Sfs2TrstWrites -ArtifactRoot "$PWD/artifacts/sfs2-trst"
+$env:COPPERFS_SFS2_TRST_HANDLER = "$PWD/artifacts/sfs2-trst/CopperSFS"
+$env:COPPERFS_ORIGINAL_SFS = '<path to original SmartFilesystem 1.279>'
+$env:COPPERSHARP_KICKSTART31_ROM = '<path to decoded Kickstart 3.1 ROM>'
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2RecoveryMatrix
+```
+
+## Native SFS2 CSUN crash recovery
+
+`NativeSfs2CsunRecoveryMatrix` runs the same overwrite, truncate, rename,
+delete, create and comment operations with the standalone CSUN undo handler.
+For every distinct durable disk image, the harness cuts a fresh guest run at
+the corresponding write or flush. A dirty marker must roll back to the entire
+pre-mutation manifest, including file data, metadata and free-block count.
+The matrix covers the initially empty undo chain and requires a dirty marker
+pointing to a CSUN descriptor. Clean images must preserve their manifest,
+including the fully committed result. After recovery the marker must be clean,
+and a second native mount must leave the disk byte-identical.
+
+Use a decoded Kickstart 3.1 ROM as above. CSUN recovery uses CopperSFS for
+both mounts and does not require the original SmartFilesystem binary.
+
+```powershell
+./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot "$PWD/artifacts/sfs2-csun"
+$env:COPPERFS_SFS2_CSUN_HANDLER = "$PWD/artifacts/sfs2-csun/CopperSFS"
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2CsunRecoveryMatrix
+```
+
+## Native SFS2 file positions
+
+`NativeSfs2FilePosition` runs the two DOS packet regressions from CopperSFS
+research commit `4a902a1`. Use the Kickstart ROM and freshly built SFS2 TRST
+handler variables from the recovery matrix above, then run:
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2FilePosition
+```
+
+The wide case requires a sparse-capable temporary directory. Its 136 GiB
+logical HDF places a file extent at 128 GiB. The guest writes 1,027 bytes
+starting three bytes below 4 GiB, checks both words of the resulting position
+and file size, and checks that shrinking respects a second open handle's
+position. After that handle closes, the guest shrinks the file. A fresh
+Kickstart boot verifies the surviving 512 bytes and EOF without writing the
+disk. Host inspection checks the affected extent, object, bitmap, free count
+and clean journal marker without scanning the whole logical device.
+
+The exhaustion case writes a 17-byte prefix, then submits a 256 KiB write
+which must report NoFreeStore and preserve position 17. A 1 KiB retry on the
+same handle must succeed, with the original prefix and exact EOF intact.
+The host checks the persisted file hash and observes TRST journal writes.
+
+## Recover an original SFS2 redo transaction
+
+`NativeCopperSfsRecoversOriginalSfs2Redo` uses the 16 MiB raw partition
+captured by the research reference tool at commit `4a902a1`. Original
+SmartFilesystem 1.279 had published a nonempty TRFA marker pointing to a
+TRST journal. The archived capture has SHA-256
+`01212067D559A385FF8B1E29AF81D71E7438B46751C6A0DFD5C0C9E621B8D4ED`.
+
+Use the Kickstart and CopperSFS TRST handler settings from the native TRST
+matrix above. Point the test at the dirty capture, which it copies for replay:
+
+```powershell
+$env:COPPERSFS_SFS2_NATIVE_REDO_IMAGE = '<path to capture-redo/reference.hdf>'
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeCopperSfsRecoversOriginalSfs2Redo
+```
+
+The guest mounts with the capture's two reserved blocks, reads the patterned
+payload, examines its size and date, and enumerates all 81 entries in Docs.
+The host checks the clean TROK marker, replay outside the marker sector, and
+the recovered files with the independent image checker. A fresh Kickstart
+machine mounts with the same handler and repeats the guest checks; the
+complete resulting partition must match the first recovered image byte for byte.
+
+## Original SFS2 image on 68000 and 68020
+
+The `OriginalSfs2Image` tests port the full original-image workload at
+research commit `4a902a1`. Supply the clean 16 MiB, two-reserved-block
+partition created by SmartFilesystem 1.279. The archived original-06
+fixture has SHA-256 `B11C46915C402D5A8E617FBC2F0BC2CD67549E4FD03F9363256148AD168D65B0`.
+
+Set the Kickstart ROM, original SmartFilesystem and both CopperSFS handler
+variables from the CSUN and TRST sections above. Build both CopperSFS handlers
+for 68000 so the same executable runs on both emulated CPUs. Then run:
+
+```powershell
+$env:COPPERSFS_SFS2_REFERENCE_IMAGE = '<path to clean original-06/reference.hdf>'
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~OriginalSfs2Image
+```
+
+Each case reads a copy of the original image and enumerates its directory.
+A second boot creates files and a directory, renames a file, sets its comment,
+date and protection, overwrites across a sector boundary, grows the original
+payload and deletes a file. A fresh CopperSFS boot on the selected CPU checks
+the persisted bytes and metadata. Original SmartFilesystem independently
+reads the same changed image on a 68020. Each read-only verification boot must
+leave the complete partition byte-identical.

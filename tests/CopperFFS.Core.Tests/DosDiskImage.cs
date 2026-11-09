@@ -207,7 +207,7 @@ internal sealed class DosDiskImage(bool ffs, bool highDensity = false, uint firs
         if (remaining < 0 || budget < 1) throw new ArgumentOutOfRangeException(nameof(remaining));
         var dataBlocks = 0;
         while (1 + dataBlocks + 1 + dataBlocks / 72 <= budget) dataBlocks++;
-        AddDataFile("DiskFullFiller", new byte[dataBlocks * 512]);
+        AddDataFile("DiskFullFiller", new byte[dataBlocks * (ffs ? 512 : 488)]);
         var consumed = 1 + dataBlocks + (dataBlocks == 0 ? 0 : (dataBlocks - 1) / 72);
         if (consumed < budget) AddDataFile("DiskFullRemainder", []);
     }

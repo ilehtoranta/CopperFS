@@ -84,15 +84,20 @@ public static partial class AmigaSmartFileSystemCore
         return first ? View(ref p, 0, RootId, scratch, blockCount) : APTR.Null;
     }
 
+    // Recovery and in-flight mutations use their own validated roots. Public
+    // traversals must verify the transaction marker before exposing records.
+    private static bool TransactionReadable<T>(ref T p, uint container, APTR scratch, uint blocks)
+        where T : struct, IAmigaFileSystemPlatform =>
+        container < blocks - 2 && (View(ref p, container + 2, 0x54524F4B, scratch, blocks).IsNotNull ||
+            (p.HasAcknowledgedCheckpoint(container) &&
+             (View(ref p, container + 2, 0x54524641, scratch, blocks).IsNotNull || // TRFA undo/indirect redo
+              View(ref p, container + 2, 0x54525354, scratch, blocks).IsNotNull))); // inline TRST redo
+
     public static bool Mount<T>(ref T p, APTR metadata) where T : struct, IAmigaFileSystemPlatform
     {
         if (!Root(ref p, metadata)) return false;
         var rootContainer = p.ReadUInt32(metadata, 104);
-        // An unfinished transaction requires the original handler's replay logic.
-        var transaction = rootContainer + 2;
-        if (transaction >= p.BlockCount || !p.ReadBlock(transaction, metadata) ||
-            p.ReadUInt32(metadata, 8) != transaction || !Checksum(ref p, metadata) ||
-            p.ReadUInt32(metadata) == 0x54524641) return false; // TRFA
+        if (!TransactionReadable(ref p, rootContainer, metadata, p.BlockCount)) return false;
         if (!Block(ref p, rootContainer, ObjectId, metadata)) return false;
         return p.ReadUInt32(metadata, 28) == RootNode && (p.ReadUInt8(metadata, 48) & 128) != 0 &&
             p.ReadUInt8(metadata, 49) != 0;
@@ -131,22 +136,25 @@ public static partial class AmigaSmartFileSystemCore
     internal static bool Object<T>(ref T p, uint node, APTR buffer, out int offset)
         where T : struct, IAmigaFileSystemPlatform
     {
-        var view = ObjectView(ref p, node, buffer, out offset);
+        var view = ObjectView(ref p, node, buffer, out offset, out _);
         if (view.IsNull) return false;
         if (view != buffer) p.Copy(view, buffer, p.BlockBytes);
         return true;
     }
 
-    private static APTR ObjectView<T>(ref T p, uint node, APTR scratch, out int offset)
+    private static APTR ObjectView<T>(ref T p, uint node, APTR scratch, out int offset, out DOS.Error lookupError)
         where T : struct, IAmigaFileSystemPlatform
     {
-        offset = 0;
+        offset = 0; lookupError = DOS.Error.InvalidLock;
         if (node == 0) return APTR.Null;
         var blockCount = p.BlockCount; var blockBytes = p.BlockBytes;
         var buffer = RootView(ref p, scratch, blockCount, blockBytes);
-        if (buffer.IsNull) return APTR.Null;
+        if (buffer.IsNull) { lookupError = DOS.Error.DiskNotValidated; return APTR.Null; }
         var container = p.ReadUInt32(buffer, 104);
-        return ObjectViewFromRoots(ref p, node, container, p.ReadUInt32(buffer, 112),
+        var index = p.ReadUInt32(buffer, 112);
+        if (!TransactionReadable(ref p, container, scratch, blockCount))
+        { lookupError = DOS.Error.DiskNotValidated; return APTR.Null; }
+        return ObjectViewFromRoots(ref p, node, container, index,
             blockCount, blockBytes, scratch, out offset);
     }
 
@@ -209,7 +217,7 @@ public static partial class AmigaSmartFileSystemCore
         out uint parent) where T : struct, IAmigaFileSystemPlatform
     {
         size = 0; directory = false; parent = 0;
-        var view = ObjectView(ref p, node, metadata, out var at);
+        var view = ObjectView(ref p, node, metadata, out var at, out _);
         if (view.IsNull) return false;
         var bits = p.ReadUInt8(view, at + 24);
         directory = (bits & 128) != 0;
@@ -237,6 +245,8 @@ public static partial class AmigaSmartFileSystemCore
         var caseSensitive = (p.ReadUInt8(view, 20) & 128) != 0;
         var rootContainer = p.ReadUInt32(view, 104);
         var nodeRoot = p.ReadUInt32(view, 112);
+        if (!TransactionReadable(ref p, rootContainer, metadata, blockCount))
+        { error = DOS.Error.DiskNotValidated; return 0; }
         return ResolveFromRoots(ref p, directory, name, length, metadata, rootContainer, nodeRoot,
             blockCount, blockBytes, caseSensitive, out error, out record, out recordOffset);
     }
@@ -446,7 +456,7 @@ public static partial class AmigaSmartFileSystemCore
         if (cursor.Node != node || node == 0)
         {
             cursor.Node = 0;
-            var view = ObjectView(ref p, node, metadata, out var at);
+            var view = ObjectView(ref p, node, metadata, out var at, out _);
             if (view.IsNull) { error = DOS.Error.DiskNotValidated; return -1; }
             if ((p.ReadUInt8(view, at + 24) & (128 | 64)) != 0) { error = DOS.Error.ObjectWrongType; return -1; }
             cursor.Size = p.ReadUInt32(view, at + 16);
@@ -533,7 +543,7 @@ public static partial class AmigaSmartFileSystemCore
     public static bool Examine<T>(ref T p, uint node, APTR fib, APTR metadata) where T : struct, IAmigaFileSystemPlatform
     {
         if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes)) return false;
-        var view = ObjectView(ref p, node, metadata, out var at);
+        var view = ObjectView(ref p, node, metadata, out var at, out _);
         return view.IsNotNull && ExamineObject(ref p, node, fib, view, at, p.BlockBytes);
     }
 
@@ -578,8 +588,8 @@ public static partial class AmigaSmartFileSystemCore
         where T : struct, IAmigaFileSystemPlatform
     {
         if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes)) return DOS.Error.InvalidLock;
-        var view = ObjectView(ref p, directory, metadata, out var at);
-        if (view.IsNull) return DOS.Error.InvalidLock;
+        var view = ObjectView(ref p, directory, metadata, out var at, out var lookupError);
+        if (view.IsNull) return lookupError;
         if ((p.ReadUInt8(view, at + 24) & 128) == 0) return DOS.Error.ObjectWrongType;
         var blockCount = p.BlockCount; var blockBytes = p.BlockBytes;
         var wanted = p.ReadUInt32(fib);
@@ -621,6 +631,7 @@ public static partial class AmigaSmartFileSystemCore
         if (view.IsNull) return false;
         var blockCount = p.BlockCount; var blockBytes = p.BlockBytes;
         var rootContainer = p.ReadUInt32(view, 104);
+        if (!TransactionReadable(ref p, rootContainer, buffer, blockCount)) return false;
         view = View(ref p, rootContainer, ObjectId, buffer, blockCount);
         if (view.IsNull) return false;
         var free = p.ReadUInt32(view, (int)blockBytes - 28);

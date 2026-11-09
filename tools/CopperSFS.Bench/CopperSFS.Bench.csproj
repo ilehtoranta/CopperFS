@@ -9,5 +9,6 @@
     <ProjectReference Include="../../src/CopperSFS.Core/CopperSFS.Core.csproj" />
     <ProjectReference Include="../CopperSFS.Check/CopperSFS.Check.csproj" />
     <InternalsVisibleTo Include="CopperSFS.Core.Tests" />
+    <InternalsVisibleTo Include="CopperFS.Kickstart.Tests" />
   </ItemGroup>
 </Project>

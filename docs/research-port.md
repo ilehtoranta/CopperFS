@@ -74,18 +74,110 @@ available at the source commit. No assertions were weakened to hide these cases.
 
 | Research suites / cases | Observation and follow-up |
 | --- | --- |
-| FileSystemCompatibilityTests | Packed containers, embedded-null comments, new extent owner tags and metadata relocation need focused investigation. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
-| FileSystemRegressionTests | Node-branch growth failure scenario needs comparison with current tree allocation behavior. |
-| TransactionRegressionTests | Archive-bit updates, empty directory-container unlinking and reads after failed writes differ. Check current mount/read contracts before porting fixes. |
-| ReliabilityTests advanced growth scenarios | Admin-growth setup failed; advanced growth and packed cases are not part of the selected basic-mutation matrix. |
+| FileSystemCompatibilityTests | Packed containers and embedded-null comments are resolved by the correction below. The extent-owner and metadata-relocation correction below covers the remaining two cases. The initial benchmark failed its setup checker with `Block 6: incorrect node fullness flag`; the node-fullness correction below resolves that finding. |
+| FileSystemRegressionTests | Node-branch growth and recovery regressions are ported. The historical failure was the node-fullness flag corrected in 6979849. |
+| TransactionRegressionTests | Archive-bit updates, empty-container unlinking and read visibility are covered by the classic transaction correction below. |
+| ReliabilityTests advanced growth scenarios | Admin growth now uses reachable directories and children to fill the two initial admin ranges. The regression detects the mutation that first uses a third range, reopens both images, and replays that mutation through the crash matrix. Extent growth fills the 35-record root leaf with live file extents, verifies the next write produces a two-child branch after reopen, and exercises mutation and recovery failures at the split. The near-full fixture appends one committed block at a time until 20 blocks remain. It reopens that image, attempts an 8 KiB append, and checks that disk-full recovery preserves both the file contents and the free-space count. At each near-full mutation fault, the harness varies pending versions of every original block read by recovery or by the independent checker. It repeats when those choices expose additional blocks. Recovery cuts use the full persistence product. The matrix also covers creating and removing directories, renaming a directory with a child, growing the directory container chain, growing a file by resize, and updating comments, protection and dates. |
 | BatchedWriteTests, RelocationTests, ReservedOverwriteTests | Old range-count and scratch-buffer assumptions differ from current scalar/range APIs and small-write policy. Main's existing batching/relocation tests remain intact. |
 | TrstWriteTests | Hard-coded marker position, four-flush expectation and journal-space assumptions differ from current TRST placement and reservation. Main's existing TRST tests remain intact. |
-| Native reference runners and original-handler handoff suites | Depend on external emulator/compiler harnesses, media and old reflection contracts. Only captured-image recovery is included here. |
+| Native reference runners and original-handler handoff suites | Classic CopperSFS-to-original TRST recovery is ported to the current Kickstart harness (see below). The native SFS2 TRST crash matrix now runs through the same Kickstart harness. It checks six guest DOS mutations with both CopperSFS and original SmartFilesystem, including byte-stable repeat mounts. See the [native recovery test instructions](../tests/CopperFS.Kickstart.Tests/README.md#native-sfs2-trst-crash-recovery). The [CSUN matrix](../tests/CopperFS.Kickstart.Tests/README.md#native-sfs2-csun-crash-recovery) checks the same six operations under undo logging, including rollback after target writes become durable and preservation of committed mutations. The two native SFS2 file-position cases also run in the current harness: [wide DOS packets and TRST arena exhaustion](../tests/CopperFS.Kickstart.Tests/README.md#native-sfs2-file-positions). The [native original SFS2 redo regression](../tests/CopperFS.Kickstart.Tests/README.md#recover-an-original-sfs2-redo-transaction) boots CopperSFS on the captured original-handler transaction and verifies a byte-stable second mount. The [original-image SFS2 regression](../tests/CopperFS.Kickstart.Tests/README.md#original-sfs2-image-on-68000-and-68020) exercises read, mutation and cold remount with CopperSFS on both emulated CPUs, then verifies the result with SmartFilesystem 1.279. Other historical native runners remain in the research snapshot. |
 
 Classic historical zero first-extent backlinks are accepted by main's checker.
 The old test rejecting that representation was omitted; the existing wrong-owner
 corruption case remains. The original port's benchmark failure is retained in its historical receipt.
 The subsequent node-fullness fix makes the current benchmark pass.
+
+## Classic TRST handoff to original SmartFilesystem
+
+The optional Kickstart regression ports the seven transaction scenarios from
+research commit 4a902a1. It generates a synthetic 16 MiB classic SFS volume,
+interrupts CopperSFS at every write/flush event, and boots each distinct dirty
+image with either none or all of the pending writes persisted. The guest mounts
+the image using original SmartFilesystem 1.279. For overwrite, append and first
+write, it reads and checks the resulting 1,024 bytes through DOS. For all seven
+operations the host checks the persisted TROK marker, file and directory
+metadata, file hashes, and free-block count against the uninterrupted result.
+
+The native run passed all seven scenarios, recovering 37 distinct dirty images
+across 87 write/flush cut points.
+
+Set COPPERSHARP_KICKSTART31_ROM to the local decoded Kickstart 3.1 ROM and
+COPPERFS_ORIGINAL_SFS to the extracted original SmartFilesystem executable
+(SHA-256 C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205).
+With CopperSharp68k and CopperScreen beside CopperFS, run:
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~OriginalHandlerRecoversCopperSfsTrst
+```
+
+## Classic batching boundaries
+
+The two boundary cases from research commit 4a902a1 run in
+`BatchBoundaryTests`. With four free blocks, a 4 KiB overwrite uses 1 KiB
+batches. The regression observes the first batch in a crash image, checks
+the disk-full error and zero reported bytes, then verifies the original file
+hash, metadata and allocation count after recovery at every write/flush cut.
+
+A second fixture starts with a single 65,535-block extent. The two-block
+append from the research suite and an eight-block append exercise the current
+small-write and batched paths. Both must retain the full extent, link its
+successor in both directions, and preserve the complete file across reopen.
+
+The relocation case from research commit 4a902a1 overwrites a 128 KiB file
+stored in four extents. At cut 151 the device view contains the new 64 KiB
+prefix, its owner tag and its link to the original tail. The request later
+reports disk full and zero bytes written. The regression reopens sampled
+persistence states at all 303 write/flush cuts and after failure (3,040 images
+in this run), checking both files, extent records, allocation bitmap, free
+space and repeat recovery.
+
+The indexed extent replacement regression from 4a902a1 overwrites 64 KiB
+starting at byte 13. One fixture starts with a full 35-record leaf and the
+replacement splits it. The other starts with an indexed root. Both check the
+relocated successor of the retained first block and the hash of the entire
+file, including its untouched edges. At every write/flush cut and transient
+or persistent write/flush failure, sampled images recover the complete old or
+new manifest and free-block count, and a second recovery preserves the image.
+
+## Classic overwrite reservations
+
+`OverwriteReservationTests` ports the table exhaustion, allocation pressure
+and release cases from `ReservedOverwriteTests` at research commit 4a902a1.
+Eight files hold partial overwrite reservations while a ninth overwrite succeeds
+without one. A competing file grows until the allocator drops a reservation,
+then all nine overwrites finish. After reopen the checker verifies each file's
+hash and that only the competing file consumed additional blocks.
+
+The release cases start with a confirmed reservation and exercise explicit
+release on close, a discontinuous write, shrink, truncate, removal, scalar
+write and entry into TRST. Each checks the exact free-block count and file
+contents or removal after recovery on a fresh mount.
+
+The reserved continuation fault regression from research commit 4a902a1 starts
+with a durable 64 KiB overwrite and a live RAM reservation. The next 64 KiB
+must extend the same physical run. It cuts every continuation write and flush,
+then tries transient and persistent failures at each boundary. A failed request
+must report zero bytes and release the file's reservation, including when the
+initial flush or recovery fails before the write transaction begins.
+
+Fresh mounts check both files' contents and metadata, the allocation map and
+free-block count. A dirty undo journal is interrupted again during recovery;
+retry must restore the version with only the first overwrite committed.
+The harness enumerates pending block versions up to 4,096 combinations and
+samples larger sets. For each continuation sector it also tears the write
+after 1, 256 and 511 bytes, requiring complete recovery or refusal to mount.
+
+The remaining layout regressions from `ReservedOverwriteTests` at 4a902a1
+run under the `ReservedLayout` test filter. A 1 MiB + 123 byte rewrite grew
+one extent across bitmap block coverage (physical blocks 2113 through 4161)
+and released its reservation after the 123-byte final write. A second fixture
+skipped a 473-block free run that could hold one batch but not the 512-block
+file. With and without interleaved appends to another file, each 64 KiB
+overwrite extended the same destination and the unused reservation tail stayed
+free in the on-disk bitmap. Fresh mounts verified the completed extents, file
+hashes, neighbour and free-space accounting. These checks use the current
+study disk's sector I/O path; the historical bulk-transfer counter is not
+a measure of reservation layout.
 
 ## Node-fullness correction (2026-11-04)
 
@@ -115,6 +207,108 @@ Current validation receipts are under `artifacts/node-fullness-*`. The benchmark
 is a synthetic in-memory host study; passing it establishes workload integrity,
 not real-disk or Amiga performance. Other deferred compatibility findings above
 are outside this fix.
+
+## Packed-container and comment correction (2026-11-04)
+
+Classic SFS now accepts complete object records up to the block boundary, including
+containers with fewer than 27 unused tail bytes. Insertion and comment growth can
+use that final space without reserving an extra sentinel record. Every occupied
+record must still have a nonempty, terminated name and a terminated comment;
+malformed strings fail validation. The on-disk format is unchanged.
+
+Length-delimited comments containing NUL are rejected with BadNumber before the
+metadata operation prepares or edits disk state. Empty comments and the maximum
+79-byte comment remain supported. SFS2 already rejects embedded NULs and is unchanged.
+
+The parser correction and compatibility fixtures were selectively adapted from
+research commit 4a902a1ff9189bbdff841c23441c66678a6e2427, specifically
+FileSystemCompatibilityTests. The original 13 imported cases reproduce 11 failures
+on unmodified main and all pass with the correction. Expanded coverage checks
+exact-end insertion/comment growth, empty/maximum comments, every write/flush cut
+and failure for create/remove/rename/comment under CSUN and TRST, and buffered
+mutations followed by rejection, flush and reopen. A rejected buffered comment
+must preserve previously acknowledged edits and neighbouring objects.
+
+The Release solution build passed with one existing CS8602 warning in the sibling
+CopperSharp compiler. The complete solution suite, including both extended batch
+cases, passed 1,153 tests; three external-media tests were unavailable. The focused selection passed 30 tests (26 new cases and four
+existing packed-object cases). The combined study passed 98 benchmark configurations
+and 40 recovery scenarios with unchanged source hashes. Concurrent host builds mean
+these results establish integrity only; no timing or throughput claim is made.
+
+Both default TRST and legacy CSUN 68000 handlers compiled successfully and passed
+CopperStart's classic write/delete/manual-TRIM/rewrite/cold-reboot replay on
+Windows/NTFS, one pass per variant with no skips. CopperTrim was rebuilt as well.
+Native builds used isolated intermediates after a shared-build collision; no build
+script changes were needed. These guest replays are integration coverage; the new
+packed-boundary and invalid-comment checks are managed regressions. Linux/macOS
+and external original-handler images were not exercised.
+
+General metadata relocation when a container genuinely lacks space remains
+outside this correction. Validation receipts use the ignored artifacts/packed-*
+paths; managed boundary/crash tests and native integration replays are reported
+separately.
+
+## Extent owner tags and metadata relocation (2026-11-06)
+
+Classic SFS now records the owning object node with its high bit set in every
+new first extent. Later extents point back to the previous extent. The insertion
+helper applies this rule to scalar and batched writes, contiguous allocation and
+resize. Older files with a zero first backlink remain readable and writable.
+
+When a longer comment no longer fits, SetComment moves the object within its
+parent directory in the same transaction and updates its node's container pointer.
+The object keeps its node, name, hash-chain position, attributes and file data.
+Rename and recycling also keep the source record in the data scratch block so
+the allocator can use bitmap scratch when the directory needs more admin space.
+
+The compatibility and crash regressions in ExtentOwnerAndMetadataTests come
+from research commit 4a902a1. They cover native first backlinks, comment growth,
+rename of files and directories, admin-pool expansion and recovery after each
+write or flush interruption. Additional cases check contiguous allocation and
+reopen after buffered and TRST relocation. Local validation logs are under
+`artifacts/owner-*`.
+
+## Node-branch growth investigation (2026-11-06)
+
+The three classic SFS cases in NodeBranchGrowthTests are adapted from
+FileSystemRegressionTests at 4a902a1. All three reproduced an incorrect parent
+fullness flag on ec93282, passed on the immediately following fullness fix
+6979849, and passed on main at 536b882.
+
+The flat and nested fixtures each create 300 files and resolve every name to its
+original node after remount. The failure-injection fixture fills two 49-node
+leaves, then verifies that the next create installs a third leaf starting at
+node 99 in the existing index. Across 36 write/flush boundaries, the test checked
+321 crash images from power cuts and transient or persistent I/O failures.
+Recovery produced either the complete old or new directory and was byte-stable
+on a second recovery.
+
+## Classic transaction correction (2026-11-06)
+
+TransactionRegressionTests was ported from research commit 4a902a1. Eleven of
+its 24 cases failed on main at 8f06e4c. A successful nonempty write or size
+change now clears the archive bit inside the content transaction. Zero-length
+writes, same-size resizes and truncation of an empty file preserve the bit.
+
+Removing the last object from a container repairs the adjacent links or the
+parent's first-container pointer, then frees the admin slot in the same
+transaction. The tests exercise head, middle, tail and only-child removal,
+same-directory rename with immediate reuse, and recovery after interrupted
+writes and flushes.
+
+Classic file and metadata queries check the transaction marker before starting
+traversal. A failed strict mutation blocks reads with DiskNotValidated until
+recovery. The live mount may still read a complete acknowledged version after
+a failed write-back or grouped TRST checkpoint while its matching overlay is
+visible. A remount must recover from the on-disk marker. Callers invalidate
+read and enumeration cursors on mutation and media change.
+
+The Windows Release build passed. The solution suite passed 1,250 tests and
+skipped three external-media cases. CopperStart's native classic SFS replay
+passed separately with rebuilt 68000 TRST and CSUN handlers. Each replay
+covered writing, deleting, manual TRIM, rewriting and a cold reboot on NTFS.
+The managed regression suite exercised transaction fault injection.
 
 ## Original selective-port validation
 

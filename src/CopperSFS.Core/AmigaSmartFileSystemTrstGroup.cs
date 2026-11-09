@@ -40,6 +40,12 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
         => group.IsNotNull && (p.ReadUInt32(group, 4) & 1) != 0;
 
+    public static bool HasAcknowledgedTrstCheckpoint<T>(ref T p, APTR group, uint rootContainer)
+        where T : struct, IAmigaWritableFileSystemPlatform =>
+        group.IsNotNull && p.RedoOverlay.IsNotNull && TrstGroupValid(ref p, group) &&
+        p.ReadUInt32(group, 4) == 3 && p.ReadUInt32(group, 16) == p.RedoOverlay.Raw &&
+        p.ReadUInt32(group, 24) == rootContainer;
+
     private static bool TrstGroupValid<T>(ref T p, APTR group)
         where T : struct, IAmigaWritableFileSystemPlatform
         => group.IsNotNull && p.IsMapped(group, TrstGroupHeaderBytes) && p.ReadUInt32(group) == TrstGroupMagic &&

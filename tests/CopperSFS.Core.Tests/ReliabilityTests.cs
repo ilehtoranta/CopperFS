@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -111,17 +112,43 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         Validate(disk.Snapshot(), model);
     }
     private static byte[] Pattern(int length, int seed = 7) => Enumerable.Range(0, length).Select(i => (byte)(i * 29 + seed)).ToArray();
-    // Selected basic mutations; growth/packed-container regressions remain tracked in docs/research-port.md.
+    // Additional research scenarios are tracked in docs/research-port.md.
     public static IEnumerable<object[]> Scenarios => new[]
-    { "create", "overwrite", "append", "shrink", "truncate", "delete", "rename" }
+    {
+        "create", "mkdir", "overwrite", "append", "shrink", "grow", "truncate", "delete", "rename",
+        "rename-directory", "comment", "protect", "date", "rmdir", "directory-growth",
+        "admin-growth", "extent-growth", "near-full"
+    }
     .Select(name => new object[] { name });
 
     private static (byte[] Image, List<Expected> Before, Mutation Mutation) Prepare(string scenario)
     {
         var image = Image(); var model = InitialModel(); Validate(image, model);
+        if (scenario == "admin-growth") return PrepareAdminGrowth(image, model);
+        if (scenario == "extent-growth") return PrepareExtentGrowth(image, model);
+        if (scenario == "near-full") return PrepareNearFull(image, model);
+        if (scenario is "rmdir" or "directory-growth")
+        {
+            var disk = new ReliabilityDisk(image);
+            if (scenario == "rmdir")
+            {
+                Commit(ref disk, ref model, new("mkdir", Name: "Empty"));
+                return (disk.Snapshot(), model, new("remove", Node: model[^1].Node));
+            }
+            // Research commit 4a902a1 fills the first root directory container with long names.
+            for (var i = 0; i < 3; i++)
+                Commit(ref disk, ref model, new("create", Name: $"{i}" + new string('x', 99)));
+            return (disk.Snapshot(), model, new("create", Name: new string('y', 100)));
+        }
         Mutation mutation = scenario switch
         {
             "create" => new("create"),
+            "mkdir" => new("mkdir"),
+            "grow" => new("resize", Size: 2301),
+            "rename-directory" => new("rename", Node: 2, Name: "Moved"),
+            "comment" => new("comment", Data: Encoding.Latin1.GetBytes("a longer replacement comment")),
+            "protect" => new("protect", Size: 0x20),
+            "date" => new("date"),
             "overwrite" => new("write", Position: 399, Data: Pattern(733)),
             "append" => new("write", Position: 1300, Data: Pattern(1001)),
             "shrink" => new("resize", Size: 513),
@@ -133,20 +160,163 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         return (image, model, mutation);
     }
 
+    private static (byte[] Image, List<Expected> Before, Mutation Mutation) PrepareAdminGrowth(
+        byte[] image, List<Expected> model)
+    {
+        var disk = new ReliabilityDisk(image);
+        // Research fixture 4a902a1 seeds two 32-block ranges in ADMC block 10.
+        const int thirdRange = 24 + 2 * 8;
+        for (var i = 0; i < 100; i++)
+        {
+            var directory = $"D{i:D3}";
+            foreach (var mutation in new[] { new Mutation("mkdir", Name: directory),
+                         new Mutation("create", Name: directory + "/Child") })
+            {
+                var before = disk.Snapshot();
+                var previous = model;
+                Commit(ref disk, ref model, mutation);
+                var after = disk.Snapshot();
+                if (U32(Block(after, 10), thirdRange) == 0) continue;
+                Assert.Equal(uint.MaxValue, U32(Block(after, 10), 28));
+                Assert.Equal(uint.MaxValue, U32(Block(after, 10), 36));
+                Assert.NotEqual(0u, U32(Block(after, 10), thirdRange + 4));
+
+                Assert.Equal(0u, U32(Block(before, 10), thirdRange));
+                var reopened = new ReliabilityDisk(before);
+                Assert.True(Recover(ref reopened));
+                Validate(reopened.Snapshot(), previous);
+                var expanded = new ReliabilityDisk(after);
+                Assert.True(Recover(ref expanded));
+                Validate(expanded.Snapshot(), model);
+                return (before, previous, mutation);
+            }
+        }
+        throw new InvalidOperationException("No third admin range allocated.");
+    }
+
+    private static (byte[] Image, List<Expected> Before, Mutation Mutation) PrepareExtentGrowth(
+        byte[] image, List<Expected> model)
+    {
+        // Research commit 4a902a1: each nonempty file needs its own extent.
+        const int rootBlock = 5, headerBytes = 16, leafStride = 14;
+        const int capacity = (Bytes - headerBytes) / leafStride;
+        var disk = new ReliabilityDisk(image);
+        var initialCount = BinaryPrimitives.ReadUInt16BigEndian(Block(image, rootBlock)[12..]);
+        for (var i = initialCount; i < capacity; i++)
+        {
+            Commit(ref disk, ref model, new("create", Name: $"F{i:D3}"));
+            Commit(ref disk, ref model, new("write", Node: model[^1].Node, Data: Pattern(1, i)));
+        }
+        Commit(ref disk, ref model, new("create", Name: "Extra"));
+        var before = disk.Snapshot();
+        var reopened = new ReliabilityDisk(before);
+        Assert.True(Recover(ref reopened));
+        Validate(reopened.Snapshot(), model);
+        var leaf = Block(before, rootBlock);
+        Assert.Equal(1, leaf[14]);
+        Assert.Equal(leafStride, leaf[15]);
+        Assert.Equal(capacity, BinaryPrimitives.ReadUInt16BigEndian(leaf[12..]));
+
+        var mutation = new Mutation("write", Node: model[^1].Node, Data: Pattern(1));
+        var expandedModel = model;
+        Commit(ref reopened, ref expandedModel, mutation);
+        var expanded = new ReliabilityDisk(reopened.Snapshot());
+        Assert.True(Recover(ref expanded));
+        var after = expanded.Snapshot();
+        Validate(after, expandedModel);
+        var branch = Block(after, rootBlock);
+        Assert.Equal(0, branch[14]);
+        Assert.Equal(8, branch[15]);
+        Assert.Equal(2, BinaryPrimitives.ReadUInt16BigEndian(branch[12..]));
+        var left = U32(branch, 20);
+        var right = U32(branch, 28);
+        Assert.NotEqual(left, right);
+        var total = 0;
+        foreach (var child in new[] { left, right })
+        {
+            var childLeaf = Block(after, checked((int)child));
+            Assert.Equal(1, childLeaf[14]);
+            Assert.Equal(leafStride, childLeaf[15]);
+            total += BinaryPrimitives.ReadUInt16BigEndian(childLeaf[12..]);
+        }
+        Assert.Equal(capacity + 1, total);
+        return (before, model, mutation);
+    }
+
+    private const uint NearFullFreeBlocks = 20;
+
+    private static (byte[] Image, List<Expected> Before, Mutation Mutation) PrepareNearFull(
+        byte[] image, List<Expected> model)
+    {
+        // Research fixture 4a902a1 fills /Hello one committed block at a time.
+
+        var disk = new ReliabilityDisk(image);
+        var position = (uint)model.Single(entry => entry.Path == "/Hello").Data.Length;
+        var free = Inspect(image).FreeBlocks;
+        Assert.True(free > NearFullFreeBlocks);
+        while (free > NearFullFreeBlocks)
+        {
+            Commit(ref disk, ref model, new("write", Position: position, Data: Pattern(Bytes)));
+            position += Bytes;
+            var next = Inspect(disk.Snapshot()).FreeBlocks;
+            Assert.Equal(free - 1, next);
+            free = next;
+        }
+        var before = disk.Snapshot();
+        var reopened = new ReliabilityDisk(before);
+        Assert.True(Recover(ref reopened));
+        var stable = reopened.Snapshot();
+        Validate(stable, model);
+        Assert.Equal(NearFullFreeBlocks, Inspect(stable).FreeBlocks);
+        Assert.Equal(before, stable);
+        return (stable, model, new("write", Position: position, Data: Pattern(8192)));
+    }
+
+    [Fact]
+    public void NearFullAppendReopensWithConsistentFreeSpace()
+    {
+        var (image, model, mutation) = Prepare("near-full");
+        var disk = new ReliabilityDisk(image);
+        Assert.False(Execute(ref disk, mutation, out _, out var error));
+        Assert.Equal(DOS.Error.DiskFull, error);
+        var reopened = new ReliabilityDisk(disk.Snapshot());
+        Assert.True(Recover(ref reopened));
+        var recovered = reopened.Snapshot();
+        Validate(recovered, model);
+        Assert.Equal(NearFullFreeBlocks, Inspect(recovered).FreeBlocks);
+    }
+
     private static bool Recover(ref ReliabilityDisk disk)
     {
         var work = Work(); return AmigaSmartFileSystemWriteCore.Recover(ref disk, ref work);
     }
-    internal static void CheckRecovered(byte[] image, string before, string after, string context)
+    private sealed class ObservedImage(byte[] image, ReliabilityDisk disk) : MemoryStream(image, writable: false)
+    {
+        public override int Read(Span<byte> buffer)
+        {
+            var start = Position;
+            var count = base.Read(buffer);
+            for (var block = start / Bytes; block * Bytes < start + count && count > 0; block++)
+                disk.ObserveOriginal((uint)block);
+            return count;
+        }
+    }
+
+    internal static void CheckRecovered(byte[] image, string before, string after, string context, HashSet<uint>? reads = null, uint? expectedFree = null)
     {
         try
         {
-            var disk = new ReliabilityDisk(image);
+            var disk = new ReliabilityDisk(image, reads);
             Assert.True(Recover(ref disk), $"Recovery failed: {context}");
-            var report = Inspect(disk.Snapshot()); var manifest = Manifest(report.Entries);
-            Assert.True(manifest == before || manifest == after, $"Mixed or damaged volume: {context}\n{manifest}");
             var stable = disk.Snapshot();
+            using var observed = reads is null ? null : new ObservedImage(stable, disk);
+            var report = observed is null ? Inspect(stable) : SfsImageChecker.Check(observed);
+            if (expectedFree.HasValue) Assert.Equal(expectedFree.Value, report.FreeBlocks);
+            var manifest = Manifest(report.Entries);
+            Assert.True(manifest == before || manifest == after, $"Mixed or damaged volume: {context}\n{manifest}");
+            var writes = disk.Writes;
             Assert.True(Recover(ref disk), context);
+            if (reads is not null) Assert.Equal(writes, disk.Writes);
             Assert.Equal(stable, disk.Snapshot());
         }
         catch
@@ -172,22 +342,44 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
         var (image, model, mutation) = Prepare(scenario);
         var before = Manifest(model); var probe = new ReliabilityDisk(image);
         var success = Execute(ref probe, mutation, out var created, out var error);
+        if (scenario != "near-full") Assert.True(success, $"{scenario} failed after reopen: {error}");
         var after = before;
         if (success)
         {
+            if (scenario == "directory-growth")
+            {
+                // The fixture root object points to its first OBJC at offset 40.
+                // Its next link at offset 16 gains a second container on this insert.
+                var first = checked((int)U32(Block(image, 2), 40));
+                Assert.Equal(0u, U32(Block(image, first), 16));
+                Assert.NotEqual(0u, U32(Block(probe.Snapshot(), first), 16));
+            }
             var updated = Update(model, mutation, created); Validate(probe.Snapshot(), updated); after = Manifest(updated);
         }
         else Assert.Equal(DOS.Error.DiskFull, error);
         var images = 0; byte[]? dirty = null;
+        void Verify(ReliabilityDisk disk, string expected, string fault, bool keepDirty = false)
+        {
+            // Vary all versions of the input blocks that recovery or the checker reads.
+            // Newly observed reads expand the Cartesian product until it is stable.
+            HashSet<uint>? reads = scenario == "near-full" ? new() { 4 } : null;
+            int previous;
+            do
+            {
+                previous = reads?.Count ?? 0;
+                foreach (var saved in disk.CrashImages(reads))
+                {
+                    CheckRecovered(saved, expected, after, $"{scenario}, {fault}, image {images++}", reads,
+                        scenario == "near-full" ? NearFullFreeBlocks : null);
+                    if (keepDirty && U32(Block(saved, 4), 0) == 0x54524641) dirty = saved;
+                }
+            } while (reads is not null && reads.Count > previous);
+        }
         for (var cut = 1; cut <= probe.Events; cut++)
         {
             var disk = new ReliabilityDisk(image) { CutAfterEvent = cut };
             Assert.Throws<SimulatedPowerCut>(() => Execute(ref disk, mutation, out _, out _));
-            foreach (var saved in disk.CrashImages())
-            {
-                CheckRecovered(saved, before, after, $"{scenario}, cut {cut}, image {images++}");
-                if (U32(Block(saved, 4), 0) == 0x54524641) dirty = saved;
-            }
+            Verify(disk, before, $"cut {cut}", keepDirty: true);
         }
         foreach (var persistent in new[] { false, true })
         {
@@ -195,16 +387,13 @@ public sealed class ReliabilityTests(ITestOutputHelper output)
             {
                 var disk = new ReliabilityDisk(image) { FailAtEvent = fail, PersistentFailure = persistent };
                 Assert.False(Execute(ref disk, mutation, out _, out _), $"Missed I/O failure: {scenario}, {fail}");
-                foreach (var saved in disk.CrashImages())
-                    CheckRecovered(saved, before, after, $"{scenario}, I/O failure {fail}, persistent {persistent}, image {images++}");
+                Verify(disk, before, $"I/O failure {fail}, persistent {persistent}");
             }
             for (var fail = 1; fail <= probe.Reads; fail++)
             {
                 var disk = new ReliabilityDisk(image) { FailAtRead = fail, PersistentFailure = persistent };
                 var completed = Execute(ref disk, mutation, out _, out _);
-                foreach (var saved in disk.CrashImages())
-                    CheckRecovered(saved, completed ? after : before, after,
-                        $"{scenario}, read failure {fail}, persistent {persistent}, image {images++}");
+                Verify(disk, completed ? after : before, $"read failure {fail}, persistent {persistent}");
             }
         }
         Assert.NotNull(dirty);

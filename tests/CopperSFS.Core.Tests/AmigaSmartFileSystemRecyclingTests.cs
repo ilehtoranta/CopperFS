@@ -12,7 +12,14 @@ public sealed partial class AmigaSmartFileSystemTests
         { Block(image, block)[20] = 64; Sum(Block(image, block)); }
         Block(image, 7).Clear(); Header(image, 7, Objects);
         var entries = Block(image, 7); U32(entries, 12, 1);
-        var at = Object(entries, 24, 2, 0, 8, 135, ".recycled");
+        // The last-child container must belong to an admin range so restore can free it.
+        const int container = 64;
+        Block(image, 8).CopyTo(Block(image, container)); U32(Block(image, container), 8, container); Sum(Block(image, container));
+        U32(Block(image, 10), 28, 0x80000000); Sum(Block(image, 10));
+        U32(Block(image, 6), 50, container); Sum(Block(image, 6));
+        Block(image, 9)[13] |= 0x80; Sum(Block(image, 9)); // release old block 8
+        U32(Block(image, 2), Bytes - 28, 83);
+        var at = Object(entries, 24, 2, 0, container, 135, ".recycled");
         Object(entries, at, 3, 20, 1300, 0, "Hello", "greeting"); Sum(entries);
         // Nested is an existing recycled file, occupying one block.
         U32(Block(image, 2), Bytes - 36, 1); U32(Block(image, 2), Bytes - 32, 1); Sum(Block(image, 2));

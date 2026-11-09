@@ -8,9 +8,9 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
     AmigaVolumeGeometry Geometry { get; }
     /// <summary>Stable mounted geometry scalars, identical to Geometry's fields.
     /// Native platforms can return them without constructing the device descriptor.</summary>
-    uint BlockCount { get; }
-    uint BlockBytes { get; }
-    uint ReservedBlocks { get; }
+    uint BlockCount => Geometry.BlockCount;
+    uint BlockBytes => Geometry.BlockBytes;
+    uint ReservedBlocks => Geometry.ReservedBlocks;
     bool ReadBlock(uint block, APTR destination);
     /// <summary>Optionally supply a logically current FFS metadata image.
     /// True means the platform handled the read; view is null on I/O failure.
@@ -37,6 +37,9 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
         view = APTR.Null;
         return false;
     }
+    /// <summary>True only while reads on this mount overlay the complete acknowledged
+    /// set of home blocks retained after an interrupted write-back checkpoint.</summary>
+    bool HasAcknowledgedCheckpoint(uint rootContainer) => false;
     /// <summary>Optional read-only image already retained by the platform, or
     /// null when unavailable. Performs no block I/O; bytes must match ReadBlock,
     /// including pending writes. No checksum/type validation is implied. Consume

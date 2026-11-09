@@ -37,7 +37,11 @@ public static partial class AmigaSmartFileSystemWriteCore
             !directory && r.Position == size)
             return Write(ref p, ref w, ref r, out actual);
         actual = 0;
-        if (!Flush(ref p, ref w) || !Recover(ref p, ref w)) return false;
+        if (!Flush(ref p, ref w) || !Recover(ref p, ref w))
+        {
+            ReleaseOverwriteReservation(ref p, ref w, r.Node);
+            return false;
+        }
         var buffered = w.Buffered; var staged = w.Batch;
         if (buffered.IsNotNull)
         {
@@ -120,7 +124,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                 }
                 else
                 {
-                    if (!InsertExtent(ref p, ref w, block, last == 0 ? r.Node | 0x80000000 : last)) return false;
+                    if (!InsertExtent(ref p, ref w, block, last, r.Node)) return false;
                     if (count > 1 && !GrowExtentRun(ref p, ref w, block, block + 1, count - 1)) return false;
                 }
                 if (first == 0) first = block;
