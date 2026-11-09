@@ -2,6 +2,11 @@
 
 ## Ownership
 
+Standalone and CopperStart extension builds select TRST for SFS2 by default.
+Use `-Sfs2 -Sfs2CsunWrites` for the low-memory CSUN writer, or pass
+`-Sfs2CsunWrites` when building the A1200 Full ROM pair. Each profile runs
+the shared SFS2 recovery code for interrupted transactions from either writer.
+
 CopperStart's A1200 Full ROM consumer defines
 `COPPERSTART_FULL_FILESYSTEM_EXTENSION`. Its CSEE/15 profile keeps the common
 packet task in a 512 KiB extension, while standalone handlers retain their own
@@ -26,14 +31,15 @@ CopperStart maintains its Exec/DOS services, OS-specific codecs, extension ROM
 registration and native integration replays. CopperDisk and CopperScreen retain
 HDF I/O, sparse host deallocation, profiles, backups and desktop controls.
 
-CopperStart imports build/CopperFS.Amiga.props from external/CopperFS. This
-includes the maintained sources in the existing CopperStart.Dos native assembly.
-It preserves native entry and managed type identities without an extra device
-abstraction or runtime dispatch layer. CopperFFS.Core is also independently
+CopperStart references CopperSFS.Core and source-links selected filesystem
+sources from the sibling CopperFS checkout into CopperStart.Dos. This preserves
+native entry and managed type identities without an extra device abstraction or
+runtime dispatch layer. CopperFFS.Core is also independently
 buildable for host consumers; do not reference that assembly together with a
 CopperStart.Dos assembly which already includes those same types.
 
-CopperSFS.Core remains the owner of existing geometry, platform and TRIM packet
+CopperFS owns CopperSFS.Core, including the existing geometry, platform and
+TRIM packet
 types. Splitting these into another assembly would be a separate ABI migration.
 The old CopperSFS.slnx remains a compatibility entry for SFS-only work;
 CopperFS.slnx builds and tests both maintained cores.
@@ -52,6 +58,16 @@ standalone profile excludes those integration paths and uses standard AmigaOS
 library calls. Existing type namespaces, entry names and conditional symbol names
 are retained for compatibility; they do not require CopperStart assemblies.
 
+## CopperStart core dependency
+
+CopperStart resolves `CopperSFS.Core` and its shared test fixtures from this
+checkout using `CopperFSRoot`, defaulting to a sibling `CopperFS` directory.
+Its CI records a CopperFS revision in `build/dependencies.json`. The previous
+CopperStart submodule revision `cd606a947dac8132168bad6109526f191e77ed59` is
+an ancestor of the CopperFS repository; the retained benchmark fixture and
+image checker are maintained in `tools/CopperSFS.Bench` and
+`tools/CopperSFS.Check`, respectively. The checker includes later recycling
+validation. Existing namespace and assembly identities remain unchanged.
 ## Provenance
 
 The repository starts from CopperSFS commit

@@ -984,6 +984,11 @@ public static partial class NativeAmigaFileSystem
         if (!Smart(state)) return;
 #endif
         if (!HasBufferedWrites(state) || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset) != 0) return;
+        StartWriteTimer(state);
+    }
+
+    private static void StartWriteTimer(APTR state)
+    {
         var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset));
         if (request.IsNull) return;
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, (ushort)TimerCommand.AddRequest);
@@ -3307,6 +3312,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     }
 
     public bool ReadBlock(uint block, APTR destination) => ReadCached(block, 0, destination);
+
     public bool HasAcknowledgedCheckpoint(uint rootContainer)
     {
 #if COPPERSTART_SFS_TRST_BUFFERED
@@ -3320,7 +3326,6 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return false;
 #endif
     }
-
 
     public bool TryBorrowFfsMetadataBlock(uint block, APTR scratch, APTR output, uint outputBytes, out APTR view)
     {

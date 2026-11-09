@@ -12,6 +12,11 @@ The nine cases are OFS/FFS at 16 MiB, OFS/FFS at DD and HD capacities/geometries
 classic SFS with buffered TRST, and SFS2 with CSUN or TRST. Each case boots both
 writers from identical media, independently checks their persisted images, then
 fresh-boots both readers against each writer's output (six boots per case).
+Two additional SFS2 cases capture the first durable TRST redo log and the last
+durable dirty CSUN image for a directory creation. Each case checks the journal
+ID emitted by its writer and boots both Copper handlers from the captured image.
+The independent image checker verifies that TRST completes the creation and CSUN
+undoes it.
 The guest checks large growth, fragmented allocation opportunities, unaligned
 overwrites, truncation by reopening, rename, comment/protection/date, directory
 enumeration, missing objects, nonempty-directory deletion and EOF/backward seeks.
@@ -130,6 +135,7 @@ a fresh matrix manifest. It collects one cold trial per selected size and
 marks the case `diagnostic-cpu-profile.json`. Select either CPU profiling or
 mount tracing. The formal matrix runner clears this environment variable and
 rejects diagnostic cases from throughput reports.
+
 ## Native SFS2 TRST crash recovery
 
 `NativeSfs2RecoveryMatrix` ports the six single-mutation cases from the

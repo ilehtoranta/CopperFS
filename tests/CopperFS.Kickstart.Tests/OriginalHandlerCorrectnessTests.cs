@@ -101,14 +101,15 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
 
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
         string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null,
-        M68kCpuModel cpu = M68kCpuModel.M68020)
+        M68kCpuModel cpu = M68kCpuModel.M68020, Action<FileStream>? afterFlush = null)
     {
         var directory = Path.Combine(root, label);
         Directory.CreateDirectory(directory);
         var media = Path.Combine(directory, floppy ? "disk.adf" : "disk.hdf");
         File.WriteAllBytes(media, initial);
+        var hook = storage ?? (afterFlush != null ? new WritableHook(afterFlush) : null);
         await BootMedia(directory, profile, label, handler, media, write, guestEntry, observe,
-            floppy ? initial : null, storage, Hash(initial), cpu);
+            floppy ? initial : null, hook, Hash(initial), cpu);
         return File.ReadAllBytes(media);
     }
 
@@ -188,7 +189,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
-    private class WritableHook : IAmigaHardfileIoHook
+    private class WritableHook(Action<FileStream>? afterFlush = null) : IAmigaHardfileIoHook
     {
         public int ReadCommands, WriteCommands, Writes, Flushes;
         public bool FlushOnDispose => false;
@@ -202,6 +203,6 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         { backing.Position = offset; backing.ReadExactly(destination); }
         public virtual void Write(FileStream backing, long offset, ReadOnlySpan<byte> source)
         { Writes++; backing.Position = offset; backing.Write(source); }
-        public virtual void Flush(FileStream backing) { Flushes++; backing.Flush(true); }
+        public virtual void Flush(FileStream backing) { Flushes++; backing.Flush(true); afterFlush?.Invoke(backing); }
     }
 }
