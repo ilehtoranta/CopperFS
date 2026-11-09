@@ -1,0 +1,1155 @@
+diff --git a/CopperMod.Amiga.Lightweight/LightweightA1200Io.cs b/CopperMod.Amiga.Lightweight/LightweightA1200Io.cs
+index 2bc0a59..aa77dbc 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightA1200Io.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightA1200Io.cs
+@@ -6,10 +6,10 @@
+ namespace CopperMod.Amiga.Lightweight;
+ 
+ /// <summary>
+-/// A1200 motherboard decode with no IDE drive and no PCMCIA card installed.
+-/// Values model floating, physically absent devices; no boot-delay shortcuts are used.
++/// A1200 motherboard decode with an optional read-only IDE master and no PCMCIA
++/// card. Unfitted devices float high; no boot-delay shortcuts are used.
+ /// </summary>
+-internal sealed class LightweightA1200Io
++internal sealed class LightweightA1200Io : IDisposable
+ {
+     internal const uint PcmciaStart = 0x0060_0000;
+     internal const uint PcmciaEndExclusive = 0x00A8_0000;
+@@ -28,12 +28,33 @@ internal sealed class LightweightA1200Io
+     private byte _interruptEnable;
+     private byte _configuration;
+     private int _identificationBit;
++    private LightweightAtaDrive? _ide;
++    private bool _ideInterruptLine;
++    private long _lastAccessEnd;
++    internal bool HasDrive => _ide is not null;
++    internal long NextCycle => _ide?.NextCycle ?? long.MaxValue;
++    internal void Attach(LightweightIdeDriveConfiguration configuration, ILightweightStorageObserver? observer)
++        => _ide = new(configuration, observer);
++    internal void Step(long cycle) { _ide?.Step(cycle); SyncInterrupt(); }
++    internal void Grant(long cycle, out long grant, out long end)
++    { grant = Math.Max(cycle, _lastAccessEnd); end = checked(grant + 5); _lastAccessEnd = end; }
++    private void SyncInterrupt()
++    {
++        // Keep the drive's live status separate from Gayle's change latch.
++        // Acknowledging Gayle before ATA must not immediately relatch a held
++        // input; the next assertion is a new interrupt event.
++        var line=_ide?.InterruptAsserted==true;
++        if (line && !_ideInterruptLine) _interruptRequest|=0x80;
++        _ideInterruptLine=line;
++    }
++    private static bool TaskFileLane(uint address) => (address & 0x1000) == 0 &&
++        (address & 3) == ((address & 0x2000) != 0 ? 0u : 2u);
+ 
+     internal byte CardControl => _cardControl;
+     internal byte InterruptRequest => _interruptRequest;
+     internal byte InterruptEnable => _interruptEnable;
+     internal byte Configuration => _configuration;
+-    internal bool InterruptAsserted => false;
++    internal bool InterruptAsserted => (_interruptRequest & _interruptEnable & 0x80) != 0;
+ 
+     internal static bool ContainsAddress(uint address)
+         => address is >= PcmciaStart and < PcmciaEndExclusive ||
+@@ -42,12 +63,12 @@ internal sealed class LightweightA1200Io
+ 
+     internal byte PeekByte(uint address) => ReadByte(address, false);
+ 
+-    internal byte ReadByte(uint address, bool strobe = true)
++    internal byte ReadByte(uint address, bool strobe = true, long cycle = 0)
+     {
+         address &= 0x00FF_FFFF;
+         if (address == GayleCardStatus)
+         {
+-            return _cardControl;
++            return (byte)(_cardControl | (_ideInterruptLine ? 0x80 : 0));
+         }
+ 
+         if (address == GayleInterruptRequest)
+@@ -75,6 +96,17 @@ internal sealed class LightweightA1200Io
+ 
+         if (address is >= IdeStart and < GayleCardStatus)
+         {
++            if (_ide is not null && address < IdeStart+0x4000)
++            {
++                if (_ide.DataRegister(address))
++                {
++                    var word = _ide.ReadData(cycle, strobe); SyncInterrupt();
++                    return (address & 1) == 0 ? (byte)(word >> 8) : (byte)word;
++                }
++                var alternate = (address & 0x101C) == 0x1018;
++                if (alternate || TaskFileLane(address))
++                { var value = _ide.ReadRegister(alternate ? 7 : (int)(address >> 2 & 7), alternate, strobe); SyncInterrupt(); return value; }
++            }
+             // An unattached ATA bus floats high. In particular, status is FF rather
+             // than the emulator-specific 7F fast-boot value used by some emulators.
+             return 0xFF;
+@@ -84,7 +116,14 @@ internal sealed class LightweightA1200Io
+         return 0xFF;
+     }
+ 
+-    internal void WriteByte(uint address, byte value)
++    internal ushort ReadWord(uint address, long cycle, bool strobe = true)
++    {
++        if (_ide is not null && address is >= IdeStart and < GayleCardStatus && _ide.DataRegister(address))
++        { var result = _ide.ReadData(cycle, strobe); SyncInterrupt(); return result; }
++        return (ushort)((ReadByte(address, strobe, cycle) << 8) | ReadByte(address + 1, strobe, cycle));
++    }
++
++    internal void WriteByte(uint address, byte value, long cycle = 0)
+     {
+         address &= 0x00FF_FFFF;
+         if (address == GayleCardStatus)
+@@ -107,6 +146,12 @@ internal sealed class LightweightA1200Io
+         {
+             _identificationBit = 0;
+         }
++        else if (_ide is not null && address is >= IdeStart and < IdeStart+0x4000)
++        {
++            if ((address & 0x101C) == 0x1018) _ide.WriteControl(value, cycle);
++            else if (TaskFileLane(address)) _ide.WriteRegister((int)(address >> 2 & 7), value, cycle);
++            SyncInterrupt();
++        }
+     }
+ 
+     internal void Reset()
+@@ -116,5 +161,7 @@ internal sealed class LightweightA1200Io
+         _interruptEnable = 0;
+         _configuration = 0;
+         _identificationBit = 0;
++        _lastAccessEnd = 0; _ideInterruptLine=false; _ide?.Reset();
+     }
++    public void Dispose() => _ide?.Dispose();
+ }
+diff --git a/CopperMod.Amiga.Lightweight/LightweightA500Configuration.cs b/CopperMod.Amiga.Lightweight/LightweightA500Configuration.cs
+index fdbc81f..f56e00b 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightA500Configuration.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightA500Configuration.cs
+@@ -22,6 +22,13 @@ public sealed record LightweightA500Configuration
+     public IReadOnlyList<LightweightFloppyDriveType> FloppyDriveTypes { get; init; } = [];
+     /// <summary>File-backed CopperHDF units, attached at construction. Changes require a new machine.</summary>
+     public IReadOnlyList<AmigaHardfileConfiguration> Hardfiles { get; init; } = [];
++    /// <summary>Optional synthetic timing per CopperHDF unit. Omitted units remain synchronous.</summary>
++    public IReadOnlyDictionary<int, LightweightDriveTimingProfile> HardfileTimings { get; init; } =
++        new Dictionary<int, LightweightDriveTimingProfile>();
++    /// <summary>Optional read-only ATA master. Requires an A1200 profile.</summary>
++    public LightweightIdeDriveConfiguration? IdeMaster { get; init; }
++    /// <summary>Optional storage observations; absent from ordinary device execution.</summary>
++    public ILightweightStorageObserver? StorageObserver { get; init; }
+     /// <summary>Live host-folder DOS volumes. Attach/detach requires a new machine.</summary>
+     public IReadOnlyList<LightweightHostDirectoryConfiguration> HostDirectories { get; init; } = [];
+     public LightweightAgnusModel AgnusModel { get; init; } = LightweightAgnusModel.Mos8371;
+diff --git a/CopperMod.Amiga.Lightweight/LightweightA500Machine.Storage.cs b/CopperMod.Amiga.Lightweight/LightweightA500Machine.Storage.cs
+index bc5cc15..874e759 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightA500Machine.Storage.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightA500Machine.Storage.cs
+@@ -2,6 +2,26 @@ namespace CopperMod.Amiga.Lightweight;
+ 
+ public sealed partial class LightweightA500Machine
+ {
++    private long _nextStorageCycle = long.MaxValue;
++    private readonly bool _hasClockedStorage;
++    internal bool HasClockedStorage => _hasClockedStorage;
++    internal long NextStorageCycle => _nextStorageCycle;
++    internal IReadOnlyDictionary<int, LightweightDriveTimingProfile> StorageTimings => _configuration.HardfileTimings;
++    internal ILightweightStorageObserver? StorageObserver => _configuration.StorageObserver;
++    private bool TimedStorageInterrupt => _hdf?.CopperHdf.TimedInterrupt == true;
++    internal void TickStorage(long cycle)
++    {
++        _a1200Io?.Step(cycle);
++        _hdf?.CopperHdf.StepTimed(cycle);
++        RefreshStorageSchedule(cycle);
++    }
++    internal void RefreshStorageSchedule(long cycle)
++    {
++        _nextStorageCycle = Math.Min(_a1200Io?.NextCycle ?? long.MaxValue, _hdf?.CopperHdf.NextTimedCycle ?? long.MaxValue);
++        if (_a1200Io?.InterruptAsserted == true || TimedStorageInterrupt)
++            LatchHardwareInterrupt(0x0008, cycle, cpuVisibilityDelay: 0);
++        RefreshNextDeviceCycle();
++    }
+     /// <summary>Flush host-backed storage on the machine owner without advancing guest time.</summary>
+     public void FlushPersistentStorage()
+     {
+diff --git a/CopperMod.Amiga.Lightweight/LightweightA500Machine.cs b/CopperMod.Amiga.Lightweight/LightweightA500Machine.cs
+index 2c12baf..a66965c 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightA500Machine.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightA500Machine.cs
+@@ -114,6 +114,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+         LightweightRealTimeClock? previousRtc = null)
+     {
+         _configuration = configuration ?? new LightweightA500Configuration();
++        _hasClockedStorage = _configuration.IdeMaster is not null || _configuration.HardfileTimings.Count != 0;
+         _rtc = _configuration.RtcEnabled
+             ? previousRtc?.CreateRestartClock(_configuration.RtcNowProvider) ?? new(_configuration.RtcNowProvider)
+             : null;
+@@ -140,6 +141,8 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+         if (IsAga && _configuration.CpuModel is M68kCpuModel.M68000 or M68kCpuModel.M68010)
+             throw new ArgumentException("A1200 requires 68EC020 or a 68020/030/040/060 upgrade.", nameof(configuration));
+         _a1200Io = IsAga ? new() : null;
++        if (_configuration.IdeMaster is not null && !IsAga)
++            throw new ArgumentException("Native Gayle IDE requires an A1200 motherboard.", nameof(configuration));
+         _registers = new(IsEcsAgnus ? 0x001F_FFFEu : 0x0007_FFFEu);
+         _copper = new(_registers.DmaAddressMask);
+         _bitplanes = new(_registers.DmaAddressMask, IsEcsAgnus, IsAga);
+@@ -183,6 +186,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+         _enableConservativeCpuLoopBatch = enableConservativeCpuLoopBatch;
+         try
+         {
++            if (_configuration.IdeMaster is { } ide) _a1200Io!.Attach(ide, _configuration.StorageObserver);
+             if (_configuration.Hardfiles.Count != 0 || _configuration.HostDirectories.Count != 0)
+                 _hdf = new(this, _configuration.Hardfiles, previousHardfiles, _configuration.HostDirectories);
+             if (_fastRam is not null || _hdf is not null)
+@@ -196,7 +200,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+             InstallResetLoop();
+             Reset();
+         }
+-        catch { try { _hdf?.Dispose(); } finally { _cpu.Dispose(); } throw; }
++        catch { try { _hdf?.Dispose(); _a1200Io?.Dispose(); } finally { _cpu.Dispose(); } throw; }
+     }
+ 
+     public M68kCpuState Cpu => _cpu.State;
+@@ -394,6 +398,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+         _nextOutputCycle = MaximumOutputIntervalCycles;
+         _unsynchronizedField = false;
+         _nextDeviceCycle = long.MaxValue;
++        _nextStorageCycle = long.MaxValue;
+         _nextVerticalBlankLatchCycle = long.MaxValue;
+         _nextCiaInterruptCycle = long.MaxValue;
+         _nextInterruptPinEvaluationCycle = long.MaxValue;
+@@ -760,7 +765,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+     {
+         if (_disposed) return;
+         _disposed = true;
+-        try { _hdf?.Dispose(); }
++        try { _hdf?.Dispose(); _a1200Io?.Dispose(); }
+         finally { _cpu.Dispose(); }
+     }
+ 
+@@ -859,6 +864,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+         _registers.Reset();
+         _a1200Io?.Reset();
+         _rtc?.ResetControlRegisters();
++        RefreshStorageSchedule(cycle);
+         ResetEcsRegisters();
+         _copper.Reset();
+         _bitplanes.Reset();
+@@ -910,6 +916,12 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+         bool byteAccess = false)
+     {
+         var start = Math.Max(requestedCycle, _clock.Cycle);
++        if (_a1200Io?.HasDrive == true && address is >= LightweightA1200Io.IdeStart and < LightweightA1200Io.GayleCardStatus)
++        {
++            _a1200Io.Grant(start, out grantedCycle, out completedCycle);
++            AdvanceHardwareTo(grantedCycle);
++            return;
++        }
+         // Agnus regions cannot overlap either CIA byte lane. Classify the
+         // common RAM/custom path before decoding the peripheral fallback.
+         if (UsesAgnusBus(address))
+@@ -1447,6 +1459,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+             _nextVerticalBlankLatchCycle = long.MaxValue;
+             LatchHardwareInterrupt(0x0020, cycle, cpuVisibilityDelay: 0);
+         }
++        if (cycle == _nextStorageCycle) TickStorage(cycle);
+ 
+         if (cycle >= _nextInterruptPinEvaluationCycle)
+         {
+@@ -1707,6 +1720,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+             next = _nextCiaInterruptCycle;
+         if (_nextInterruptPinEvaluationCycle < next)
+             next = _nextInterruptPinEvaluationCycle;
++        if (_nextStorageCycle < next) next = _nextStorageCycle;
+         _nextDeviceCycle = next;
+     }
+ 
+@@ -1796,7 +1810,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+             return ReadRomWord((int)(address - RomBase));
+         if (_fastRam is { } ram && ram.ContainsRange(address, 2))
+             return BinaryPrimitives.ReadUInt16BigEndian(ram.Memory.AsSpan((int)(address - ram.ConfiguredBase), 2));
+-        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address)) return (ushort)((_a1200Io.PeekByte(address) << 8) | _a1200Io.PeekByte(address + 1));
++        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address)) return _a1200Io.ReadWord(address, Cycle, false);
+         if (_rtc is not null && LightweightRealTimeClock.ContainsAddress(address))
+         {
+             _rtc.TryReadByte(address, out var high);
+@@ -1809,7 +1823,10 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+ 
+     private ushort ReadWordAt(uint address, long cycle)
+     {
+-        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address)) return (ushort)((_a1200Io.ReadByte(address) << 8) | _a1200Io.ReadByte(address + 1));
++        if (_hasClockedStorage && address >= 0x200000 && _hdf?.CopperHdf.TryReadCompletionWord(address, out var completion) == true)
++        { RefreshStorageSchedule(cycle); return completion; }
++        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address))
++        { var value = _a1200Io.ReadWord(address, cycle); if (_a1200Io.HasDrive) { _configuration.StorageObserver?.AtaAccess(address, 2, false, value, cycle); RefreshStorageSchedule(cycle); } return value; }
+         if ((address & 0x00FF_FFFEu) == CustomBase + LightweightRegisters.Clxdat)
+             return _sprites.ReadCollisionData();
+         StrobeCopperRead(address, cycle);
+@@ -1830,8 +1847,11 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+ 
+     private byte ReadByteAt(uint address, long cycle)
+     {
++        if (_hasClockedStorage && address >= 0x200000 && _hdf?.CopperHdf.TryReadCompletionByte(address, out var completion) == true)
++        { RefreshStorageSchedule(cycle); return completion; }
+         if (_rtc is not null && _rtc.TryReadByte(address, out var rtcValue)) return rtcValue;
+-        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address)) return _a1200Io.ReadByte(address);
++        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address))
++        { var value = _a1200Io.ReadByte(address, true, cycle); if (_a1200Io.HasDrive) { _configuration.StorageObserver?.AtaAccess(address, 1, false, value, cycle); RefreshStorageSchedule(cycle); } return value; }
+         if ((address & 0x00FF_FFFEu) == CustomBase + LightweightRegisters.Clxdat)
+         {
+             var collision = _sprites.ReadCollisionData();
+@@ -1873,7 +1893,8 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+ 
+         address &= 0x00FF_FFFFu;
+         if (_rtc is not null && _rtc.TryWriteByte(address, value)) return;
+-        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address)) { _a1200Io.WriteByte(address, value); return; }
++        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address))
++        { _a1200Io.WriteByte(address, value, cycle); if (_a1200Io.HasDrive) { _configuration.StorageObserver?.AtaAccess(address, 1, true, value, cycle); RefreshStorageSchedule(cycle); } return; }
+         if (address >= 0x200000 && TryWriteExpansionByte(address, value)) return;
+         var aligned = address & ~1u;
+         if (IsCiaWordAccess(aligned))
+@@ -1928,7 +1949,8 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+             NotifyJitRamWrite(address, 2);
+             return;
+         }
+-        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address)) { _a1200Io.WriteByte(address, (byte)(value >> 8)); _a1200Io.WriteByte(address + 1, (byte)value); return; }
++        if (_a1200Io is not null && LightweightA1200Io.ContainsAddress(address))
++        { _a1200Io.WriteByte(address, (byte)(value >> 8), cycle); _a1200Io.WriteByte(address + 1, (byte)value, cycle); if (_a1200Io.HasDrive) { _configuration.StorageObserver?.AtaAccess(address, 2, true, value, cycle); RefreshStorageSchedule(cycle); } return; }
+         if (_rtc is not null && LightweightRealTimeClock.ContainsAddress(address))
+         {
+             _rtc.TryWriteByte(address, (byte)(value >> 8));
+@@ -2179,6 +2201,7 @@ public sealed partial class LightweightA500Machine : IM68kBus, IM68000BusCycleTi
+                     {
+                         ushort held = 0;
+                         if (_ciaA.InterruptAsserted) held |= 0x0008;
++                        if (_a1200Io?.InterruptAsserted == true || TimedStorageInterrupt) held |= 0x0008;
+                         if (_ciaB.InterruptAsserted) held |= 0x2000;
+                         _registers.SetHardwareInterruptRequest((ushort)(held & value));
+                     }
+diff --git a/CopperMod.Amiga.Lightweight/LightweightAtaDrive.cs b/CopperMod.Amiga.Lightweight/LightweightAtaDrive.cs
+new file mode 100644
+index 0000000..06c8065
+--- /dev/null
++++ b/CopperMod.Amiga.Lightweight/LightweightAtaDrive.cs
+@@ -0,0 +1,204 @@
++using System.Buffers.Binary;
++using CopperDisk;
++
++namespace CopperMod.Amiga.Lightweight;
++
++/// <summary>Read-only ATA-2 PIO master. Backing sectors use the canonical Amiga HDF byte order.</summary>
++internal sealed class LightweightAtaDrive : IDisposable
++{
++    private readonly AmigaHardfile _media;
++    private readonly LightweightStorageDrive _drive;
++    private readonly ILightweightStorageObserver? _observer;
++    private readonly byte[] _pio = new byte[16 * 512];
++    private byte _error, _features, _count = 1, _sector = 1, _low, _high, _device = 0xA0;
++    private byte _status = 0x50, _control, _command, _multiple = 1;
++    private uint _nextLba;
++    private int _remaining, _loadRemaining, _blockSectors, _pioLength, _pioAt;
++    private bool _loading, _identify, _irq, _resetting;
++    private long _phaseCycle = long.MaxValue;
++    private int _heads, _sectors;
++    internal bool InterruptAsserted => _irq && (_control & 2) == 0;
++    internal long NextCycle => Math.Min(_phaseCycle, _drive.NextCycle);
++    internal bool DataRegister(uint address) => (address & 0x1C) == 0 && (address & 0xF000) is 0 or 0x2000;
++
++    internal LightweightAtaDrive(LightweightIdeDriveConfiguration configuration, ILightweightStorageObserver? observer)
++    {
++        if (!configuration.Media.ReadOnly || configuration.Media.Unit != 0)
++            throw new ArgumentException("The initial Gayle ATA model requires a read-only master at unit zero.");
++        _media = AmigaHardfile.Open(configuration.Media);
++        try
++        {
++            if (_media.SectorCount is < 1 or > 0x0FFFFFFF) throw new ArgumentException("IDE media requires 512-byte sectors within LBA28.");
++            _drive = new(_media, configuration.Timing, observer);
++        }
++        catch { _media.Dispose(); throw; }
++        _observer = observer; _heads = configuration.Timing.Heads; _sectors = configuration.Timing.SectorsPerTrack;
++    }
++
++    internal void Reset()
++    {
++        _drive.Reset(); Signature(); _control = _command = 0; _multiple = 1;
++        _heads = _drive.Profile.Heads; _sectors = _drive.Profile.SectorsPerTrack;
++        _irq = _loading = _identify = _resetting = false;
++        _phaseCycle = long.MaxValue; _pioLength = _pioAt = _remaining = 0;
++    }
++
++    private void Signature()
++    { _error = 1; _count = _sector = 1; _low = _high = 0; _device = 0xA0; _status = 0x50; }
++
++    internal byte ReadRegister(int register, bool alternate, bool strobe)
++    {
++        if ((_device & 0x10) != 0) return 0xFF;
++        if (register == 7)
++        {
++            if (!alternate && strobe) _irq = false;
++            return _status;
++        }
++        return register switch { 1 => _error, 2 => _count, 3 => _sector, 4 => _low, 5 => _high, 6 => _device, _ => (byte)0xFF };
++    }
++
++    internal ushort ReadData(long cycle, bool strobe)
++    {
++        if ((_device & 0x10) != 0 || (_status & 8) == 0 || _pioAt >= _pioLength) return 0xFFFF;
++        var value = BinaryPrimitives.ReadUInt16BigEndian(_pio.AsSpan(_pioAt, 2));
++        if (!strobe) return value;
++        _observer?.PioRead(2, cycle); _pioAt += 2;
++        if (_pioAt == _pioLength)
++        {
++            _pioAt = _pioLength = 0;
++            if (_identify) { _identify = false; _status = 0x50; return value; }
++            _remaining -= _blockSectors; _count = (byte)_remaining;
++            SetPosition(_nextLba);
++            if (_remaining == 0) { _status = 0x50; _observer?.Completed(true, cycle); }
++            else { _status = 0x80; _phaseCycle = cycle + 1; }
++        }
++        return value;
++    }
++
++    internal void WriteRegister(int register, byte value, long cycle)
++    {
++        switch (register)
++        {
++            case 1: _features = value; break;
++            case 2: _count = value; break;
++            case 3: _sector = value; break;
++            case 4: _low = value; break;
++            case 5: _high = value; break;
++            case 6: _device = value; break;
++            case 7:
++                if ((_device & 0x10) != 0) return;
++                if ((_status & 0x80) != 0) return;
++                _drive.CancelForeground(cycle); _loading = false; _pioAt = _pioLength = 0;
++                _command = value; _error = 0; _irq = false; _status = 0x80;
++                _remaining = 0; _identify = false;
++                _phaseCycle = checked(cycle + Math.Max(1, _drive.CommandCycles));
++                break;
++        }
++    }
++
++    internal void WriteControl(byte value, long cycle)
++    {
++        var previous = _control; _control = value;
++        if ((value & 4) != 0)
++        {
++            _drive.CancelForeground(cycle); _loading = false; _resetting = true;
++            _status = 0x80; _irq = false; _phaseCycle = long.MaxValue; _pioAt = _pioLength = 0;
++        }
++        else if ((previous & 4) != 0) _phaseCycle = cycle + LightweightStorageDrive.Microseconds(5);
++    }
++
++    internal void Step(long cycle)
++    {
++        _drive.Step(cycle);
++        if (_loading) Pump(cycle);
++        if (_phaseCycle != cycle) return;
++        _phaseCycle = long.MaxValue;
++        if (_resetting) { Signature(); _resetting = false; return; }
++        if (_remaining != 0) { BeginBlock(cycle); return; }
++        switch (_command)
++        {
++            case 0xEC: Identify(); _identify = true; _status = 0x58; _irq = true; break;
++            case 0x20: case 0x21: case 0xC4:
++                if (!Position(out _nextLba)) { Error(0x10); break; }
++                _remaining = _count == 0 ? 256 : _count;
++                if ((ulong)_nextLba + (uint)_remaining > (ulong)_drive.SectorCount) { _remaining = 0; Error(0x10); break; }
++                _observer?.ReadCommand(true, _nextLba, (uint)_remaining * 512, cycle);
++                BeginBlock(cycle); break;
++            case 0xC6:
++                if (_count == 0 || _count > 16 || (_count & (_count - 1)) != 0) Error(4);
++                else { _multiple = _count; Complete(); } break;
++            case 0x91:
++                if (_count == 0) Error(4);
++                else { _heads = (_device & 15) + 1; _sectors = _count; Complete(); } break;
++            case 0x90: Signature(); _irq = true; break;
++            case 0xEF:
++                if (_features is 0xAA or 0x55) { _drive.SetReadAhead(_features == 0xAA, cycle); Complete(); }
++                else if (_features == 3 && (_count is 0 or 1 or 8)) Complete();
++                else Error(4); break;
++            case 0xE7: Complete(); break;
++            case >= 0x10 and <= 0x1F: Complete(); break;
++            case >= 0x70 and <= 0x7F: case 0x40: case 0x41:
++                if (!Position(out var position) || position >= _drive.SectorCount) Error(0x10); else Complete(); break;
++            default: Error(4); break;
++        }
++    }
++
++    private void BeginBlock(long cycle)
++    {
++        _blockSectors = Math.Min(_remaining, _command == 0xC4 ? _multiple : 1);
++        _loadRemaining = _blockSectors; _pioAt = _pioLength = 0; _loading = true;
++        _drive.Request(_nextLba, cycle); Pump(cycle);
++    }
++
++    private void Pump(long cycle)
++    {
++        while (_loading && _drive.Ready)
++        {
++            if (_drive.Failed) { _loading = false; _remaining = 0; Error(0x40); return; }
++            _drive.CopySector(_pio.AsSpan(_pioLength, 512)); _pioLength += 512; _nextLba++;
++            if (--_loadRemaining == 0) { _loading = false; _status = 0x58; _irq = true; return; }
++            _drive.Request(_nextLba, cycle);
++        }
++    }
++
++    private void Error(byte error) { _error = error; _status = 0x51; _irq = true; }
++    private void Complete() { _status = 0x50; _irq = true; }
++    private bool Position(out uint lba)
++    {
++        if ((_device & 0x40) != 0) { lba = (uint)((_device & 15) << 24 | _high << 16 | _low << 8 | _sector); return true; }
++        var cylinder = _high << 8 | _low; var head = _device & 15;
++        lba = (uint)((cylinder * _heads + head) * _sectors + _sector - 1);
++        return _sector != 0 && _sector <= _sectors && head < _heads;
++    }
++    private void SetPosition(uint lba)
++    {
++        if ((_device & 0x40) != 0)
++        { _sector = (byte)lba; _low = (byte)(lba >> 8); _high = (byte)(lba >> 16); _device = (byte)((uint)(_device & 0xF0) | (lba >> 24 & 15)); }
++        else
++        {
++            _sector = (byte)(lba % _sectors + 1); var track = lba / (uint)_sectors;
++            _device = (byte)((uint)(_device & 0xF0) | track % (uint)_heads); var cylinder = track / (uint)_heads;
++            _low = (byte)cylinder; _high = (byte)(cylinder >> 8);
++        }
++    }
++    private void Identify()
++    {
++        _pio.AsSpan().Clear();
++        // Gayle exposes the ATA byte lanes in memory order. IDENTIFY numeric
++        // words are little-endian, unlike the Amiga filesystem's sector bytes.
++        void Word(int index, uint value) => BinaryPrimitives.WriteUInt16LittleEndian(_pio.AsSpan(index * 2, 2), (ushort)value);
++        void Text(int index, int words, string value)
++        { for (var i = 0; i < words * 2; i++) _pio[index * 2 + (i ^ 1)] = i < value.Length ? (byte)value[i] : (byte)' '; }
++        Word(0, 0x0040); Word(1, (uint)Math.Min(16383, _drive.SectorCount / (_heads * _sectors)));
++        Word(3, (uint)_heads); Word(6, (uint)_sectors);
++        Text(10, 10, "COPPER00000000000001"); Text(23, 4, "1.0"); Text(27, 20, "Copper synthetic read-only ATA");
++        Word(47, 0x8010); Word(49, 0x0200); Word(51, 0); Word(53, 1);
++        Word(54, (uint)Math.Min(16383, _drive.SectorCount / (_heads * _sectors)));
++        Word(55, (uint)_heads); Word(56, (uint)_sectors);
++        Word(57, (uint)_drive.SectorCount); Word(58, (uint)(_drive.SectorCount >> 16));
++        Word(59, (uint)(0x100 | _multiple)); Word(60, (uint)_drive.SectorCount); Word(61, (uint)(_drive.SectorCount >> 16));
++        Word(80, 2); Word(82, _drive.Profile.ReadAheadBytes == 0 ? 0u : 0x40u); Word(85, _drive.Profile.ReadAheadBytes == 0 ? 0u : 0x40u);
++        _pioAt = 0; _pioLength = 512;
++    }
++    public void Dispose() => _media.Dispose();
++}
+diff --git a/CopperMod.Amiga.Lightweight/LightweightClock.cs b/CopperMod.Amiga.Lightweight/LightweightClock.cs
+index e992bed..e381910 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightClock.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightClock.cs
+@@ -151,6 +151,16 @@ internal sealed class LightweightClock
+         machine.UpdateCpuRequestCandidate(firstCandidate);
+         AdvanceTo<TPath>(firstCandidate, machine);
+         System.Diagnostics.Debug.Assert(_cpuPhase == 0);
++        if (machine.HasClockedStorage)
++        {
++            while (machine.IsCpuOutputOwned(Cycle))
++            {
++                var next = Cycle + CpuCyclesPerColorClock;
++                machine.UpdateCpuRequestCandidate(next);
++                AdvanceTo<TPath>(next, machine);
++            }
++            return Cycle;
++        }
+         while (machine.IsCpuOutputOwned(Cycle))
+         {
+             var next = Cycle + CpuCyclesPerColorClock;
+@@ -165,6 +175,24 @@ internal sealed class LightweightClock
+         System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+     internal void AdvanceTo<TPath>(long targetCycle, LightweightA500Machine machine)
+         where TPath : struct, ILightweightExecutionPath
++    {
++        if (!machine.HasClockedStorage)
++        { AdvanceClockTo<TPath>(targetCycle, machine); return; }
++        while (true)
++        {
++            var boundary = Math.Min(targetCycle, machine.NextStorageCycle);
++            AdvanceClockTo<TPath>(boundary, machine);
++            // Storage is not restricted to an Agnus CCK edge. In particular a
++            // STOPped CPU must observe an odd-cycle completion without waiting
++            // for another bus access. Even edges may already have retired it.
++            if (machine.NextStorageCycle == Cycle) machine.TickStorage(Cycle);
++            if (Cycle == targetCycle) return;
++        }
++    }
++
++    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
++    private void AdvanceClockTo<TPath>(long targetCycle, LightweightA500Machine machine)
++        where TPath : struct, ILightweightExecutionPath
+     {
+         if (targetCycle < Cycle)
+             throw new InvalidOperationException("The lightweight clock cannot move backwards.");
+diff --git a/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.Timing.cs b/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.Timing.cs
+new file mode 100644
+index 0000000..8b9a48f
+--- /dev/null
++++ b/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.Timing.cs
+@@ -0,0 +1,211 @@
++using Copper68k;
++using CopperDisk;
++using System.Buffers.Binary;
++
++namespace CopperMod.Amiga.Lightweight;
++
++internal sealed partial class CopperHdfController
++{
++    private readonly record struct TimedRequest(uint Address, uint Destination, ulong Sector, int Bytes);
++    private sealed class TimedUnit(int number, LightweightStorageDrive drive)
++    {
++        internal readonly int Number = number;
++        internal readonly LightweightStorageDrive Drive = drive;
++        internal readonly TimedRequest[] Queue = new TimedRequest[64];
++        internal readonly byte[] Staging = new byte[1024 * 1024];
++        internal TimedRequest Active;
++        internal int Head, Count, Outstanding, Completed, Copied;
++        internal bool Running, WaitingSector;
++        internal long PhaseCycle = long.MaxValue;
++        internal int Phase;
++    }
++    private readonly record struct ReadyRequest(uint Address, TimedUnit Unit);
++    private TimedUnit[] _timedUnits = [];
++    private ReadyRequest[] _readyRequests = [];
++    private int _readyHead, _readyCount;
++    private uint _completionLatch;
++    private bool _timedInterruptInstalled;
++    private ILightweightStorageObserver? _storageObserver;
++    internal bool TimedInterrupt => _readyCount != 0;
++    internal long NextTimedCycle
++    {
++        get
++        {
++            var next = long.MaxValue;
++            foreach (var unit in _timedUnits) next = Math.Min(next, Math.Min(unit.PhaseCycle, unit.Drive.NextCycle));
++            return next;
++        }
++    }
++
++    internal void ConfigureTimings(IReadOnlyDictionary<int, LightweightDriveTimingProfile> profiles, ILightweightStorageObserver? observer)
++    {
++        if (profiles.Count == 0) return;
++        var units = new TimedUnit[profiles.Count]; var index = 0;
++        foreach (var pair in profiles.OrderBy(p => p.Key))
++        {
++            if (!_hardfiles.TryGetValue(pair.Key, out var media) || !media.ReadOnly)
++                throw new ArgumentException("Timed CopperHDF profiles require an attached read-only unit.");
++            units[index++] = new(pair.Key, new LightweightStorageDrive(media, pair.Value, observer));
++        }
++        _storageObserver = observer; _timedUnits = units; _readyRequests = new ReadyRequest[checked(units.Length * 64)];
++    }
++
++    internal void ResetTimedStorage()
++    {
++        _readyHead = _readyCount = 0; _completionLatch = 0; _timedInterruptInstalled = false;
++        foreach (var unit in _timedUnits)
++        { unit.Head = unit.Count = unit.Outstanding = 0; unit.Running = unit.WaitingSector = false; unit.PhaseCycle = long.MaxValue; unit.Drive.Reset(); }
++    }
++
++    private bool TryQueueTimedRead(LightweightHdfBus bus, uint request, M68kCpuState state)
++    {
++        if (_timedUnits.Length == 0) return false;
++        var command = bus.ReadWord(request + IoCommandOffset);
++        if (command is not (CmdRead or TdRead64 or CmdUpdate or CmdClear or CmdFlush)) return false;
++        TimedUnit? unit = null; var number = ReadUnit(bus, request);
++        foreach (var candidate in _timedUnits) if (candidate.Number == number) { unit = candidate; break; }
++        if (unit is null) return false;
++        var read = command is CmdRead or TdRead64;
++        var length = read ? bus.ReadLong(request + IoLengthOffset) : 0;
++        var destination = read ? bus.ReadLong(request + IoDataOffset) : 0;
++        var offset = read ? command == TdRead64 ? ReadOffset64(bus, request) : ReadOffset32(bus, request) : 0;
++        byte error = 0;
++        if (length > unit.Staging.Length || (length & 511) != 0 || (offset & 511) != 0 ||
++            offset > (ulong)unit.Drive.SectorCount * 512 || length > (ulong)unit.Drive.SectorCount * 512 - offset) error = IoErrBadLength;
++        else if (length != 0 && !bus.IsMappedMemoryRange(destination, (int)length)) error = IoErrBadAddress;
++        else if (unit.Outstanding == 64) error = 0xFA; // IOERR_UNITBUSY
++        if (error != 0)
++        {
++            CompleteIo(bus, request, error, 0);
++            if ((bus.ReadByte(request + IoFlagsOffset) & 1) == 0)
++            { var stack = state.A[7] - 4; bus.WriteLong(stack, _diagCopyBase + ReplyThunkOffset); state.A[7] = stack; }
++            return true;
++        }
++        _hardfiles[number].IoHook?.ObserveCommand(command);
++        if (read) _storageObserver?.ReadCommand(false, offset >> 9, length, bus.Cycle);
++        // DoIO may reuse a request whose node is still NT_REPLYMSG. A deferred
++        // device owns it as NT_MESSAGE until the real guest ReplyMsg runs.
++        bus.WriteByte(request + 8, 5);
++        bus.WriteByte(request + IoFlagsOffset, (byte)(bus.ReadByte(request + IoFlagsOffset) & ~1));
++        CompleteIo(bus, request, 0, 0);
++        unit.Queue[(unit.Head + unit.Count) % 64] = new(request, destination, offset >> 9, (int)length);
++        unit.Count++; unit.Outstanding++;
++        StartTimed(unit, bus.Cycle); bus.StorageChanged(); return true;
++    }
++
++    private static void StartTimed(TimedUnit unit, long cycle)
++    {
++        if (unit.Running || unit.Count == 0) return;
++        unit.Active = unit.Queue[unit.Head]; unit.Head = (unit.Head + 1) % 64; unit.Count--;
++        unit.Running = true; unit.WaitingSector = false; unit.Completed = unit.Copied = 0;
++        unit.Phase = 1; unit.PhaseCycle = checked(cycle + Math.Max(1, unit.Drive.CommandCycles));
++    }
++
++    internal void StepTimed(long cycle)
++    {
++        if (_bootstrapBus is not { } bus) return;
++        foreach (var unit in _timedUnits)
++        {
++            unit.Drive.Step(cycle);
++            if (unit.PhaseCycle == cycle)
++            {
++                unit.PhaseCycle = long.MaxValue;
++                if (unit.Phase == 1)
++                {
++                    if (unit.Active.Bytes == 0) { CompleteTimed(unit, 0, cycle); continue; }
++                    unit.WaitingSector = true; unit.Drive.Request(unit.Active.Sector, cycle);
++                }
++                else
++                {
++                    unit.Completed = unit.Copied;
++                    if (unit.Completed == unit.Active.Bytes) { CompleteTimed(unit, 0, cycle); continue; }
++                    unit.WaitingSector = true;
++                }
++            }
++            if (!unit.Running || !unit.WaitingSector || !unit.Drive.Ready) continue;
++            if (unit.Drive.Failed) { CompleteTimed(unit, 20, cycle); continue; }
++            unit.Drive.CopySector(unit.Staging.AsSpan(unit.Copied, 512)); unit.Copied += 512;
++            unit.WaitingSector = false; unit.Phase = 2;
++            unit.PhaseCycle = checked(cycle + Math.Max(1, unit.Drive.InterfaceCycles(512)));
++            // Prepare the following media sector while this one traverses the
++            // abstract interface. The medium and link are pipelined, not summed.
++            if (unit.Copied < unit.Active.Bytes) unit.Drive.Request(unit.Active.Sector + (uint)(unit.Copied >> 9), cycle);
++        }
++    }
++
++    private void CompleteTimed(TimedUnit unit, byte error, long cycle)
++    {
++        var bus = _bootstrapBus!; var request = unit.Active;
++        if (unit.Completed != 0) bus.CopyToMemory(request.Destination, unit.Staging.AsSpan(0, unit.Completed));
++        CompleteIo(bus, request.Address, error, (uint)unit.Completed);
++        _readyRequests[(_readyHead + _readyCount) % _readyRequests.Length] = new(request.Address, unit); _readyCount++;
++        _storageObserver?.Completed(false, cycle);
++        unit.Running = unit.WaitingSector = false; unit.PhaseCycle = long.MaxValue;
++        StartTimed(unit, cycle);
++    }
++
++    private bool AbortTimed(LightweightHdfBus bus, uint request)
++    {
++        for (var i = 0; i < _readyCount; i++)
++            if (_readyRequests[(_readyHead + i) % _readyRequests.Length].Address == request) return true;
++        foreach (var unit in _timedUnits)
++        {
++            if (unit.Running && unit.Active.Address == request)
++            {
++                unit.Drive.CancelForeground(bus.Cycle); CompleteTimed(unit, 0xFE, bus.Cycle); bus.StorageChanged(); return true;
++            }
++            for (var i = 0; i < unit.Count; i++)
++            {
++                if (unit.Queue[(unit.Head + i) % 64].Address != request) continue;
++                for (var j = i; j < unit.Count - 1; j++) unit.Queue[(unit.Head + j) % 64] = unit.Queue[(unit.Head + j + 1) % 64];
++                unit.Count--; CompleteIo(bus, request, 0xFE, 0);
++                _readyRequests[(_readyHead + _readyCount) % _readyRequests.Length] = new(request, unit); _readyCount++;
++                bus.StorageChanged(); return true;
++            }
++        }
++        return false;
++    }
++
++    private uint PeekCompletion() => _readyCount == 0 ? 0 : _readyRequests[_readyHead].Address;
++    private void PopCompletion()
++    {
++        if (_readyCount == 0 || _completionLatch != PeekCompletion()) return;
++        var entry = _readyRequests[_readyHead]; _readyRequests[_readyHead] = default;
++        entry.Unit.Outstanding--; _readyHead = (_readyHead + 1) % _readyRequests.Length; _readyCount--; _completionLatch = 0;
++    }
++    internal bool TryReadCompletionWord(uint address, out ushort value)
++    {
++        value = 0;
++        if (_timedUnits.Length == 0 || !IsConfigured || address < ConfiguredBase || address - ConfiguredBase is not (0x6000 or 0x6002)) return false;
++        if (address - ConfiguredBase == 0x6000) { _completionLatch = PeekCompletion(); value = (ushort)(_completionLatch >> 16); }
++        else { value = (ushort)_completionLatch; PopCompletion(); }
++        return true;
++    }
++    internal bool TryReadCompletionByte(uint address, out byte value)
++    {
++        value = 0;
++        if (_timedUnits.Length == 0 || !IsConfigured || address < ConfiguredBase || address - ConfiguredBase is < 0x6000 or > 0x6003) return false;
++        var index = (int)(address - ConfiguredBase - 0x6000);
++        if (index == 0) _completionLatch = PeekCompletion();
++        value = (byte)(_completionLatch >> ((3 - index) * 8)); if (index == 3) PopCompletion(); return true;
++    }
++
++    private void InstallTimedCompletion(M68kCpuState state)
++    {
++        if (_timedUnits.Length == 0 || _timedInterruptInstalled || _deviceBase == 0 || _bootstrapBus is not { } bus) return;
++        var image = LightweightStorageCompletionCode.Image;
++        var allocator = new BootMetadataAllocator(bus, 0, _execBase);
++        var region = allocator.Allocate(image.Length + 40);
++        if (region == 0) throw new InvalidOperationException("No public RAM for timed CopperHDF completion server.");
++        var node = region; var context = region + 24; var code = region + 40;
++        bus.CopyToMemory(code, image);
++        foreach (var offset in LightweightStorageCompletionCode.Relocations)
++            bus.WriteLong(code + (uint)offset, code + bus.ReadLong(code + (uint)offset));
++        bus.WriteByte(node + 8, 2); bus.WriteLong(node + 10, _diagCopyBase + NameOffset);
++        bus.WriteLong(node + 14, context); bus.WriteLong(node + 18, code + LightweightStorageCompletionCode.InterruptOffset);
++        bus.WriteLong(context, ConfiguredBase); bus.WriteLong(context + 4, node); bus.WriteLong(context + 8, _deviceBase);
++        state.A[1] = context; state.A[6] = _execBase;
++        var stack = state.A[7] - 4; bus.WriteLong(stack, code + LightweightStorageCompletionCode.InitializeOffset); state.A[7] = stack;
++        _timedInterruptInstalled = true;
++    }
++}
+diff --git a/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.cs b/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.cs
+index a262362..7730517 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightCopperHdfController.cs
+@@ -10,7 +10,7 @@ using System.Collections.Generic;
+ 
+ namespace CopperMod.Amiga.Lightweight
+ {
+-    internal sealed class CopperHdfController : AutoconfigBoard, IDisposable
++    internal sealed partial class CopperHdfController : AutoconfigBoard, IDisposable
+     {
+         public const string DeviceName = "copperhdf.device";
+         public const uint AutoConfigBase = AutoconfigChain.ZorroIIConfigBase;
+@@ -198,6 +198,8 @@ namespace CopperMod.Amiga.Lightweight
+         public override byte ReadBoardByte(uint address)
+         {
+             var offset = (int)((address - ConfiguredBase) & (BoardSize - 1));
++            if (_timedUnits.Length != 0 && offset is >= 0x6000 and < 0x6004)
++                return (byte)(PeekCompletion() >> ((3 - (offset - 0x6000)) * 8));
+             return _boardRom[offset];
+         }
+ 
+@@ -281,6 +283,7 @@ namespace CopperMod.Amiga.Lightweight
+                         // The hardfile is fixed media, but a registered change
+                         // request remains pending until TD_REMCHANGEINT.
+                         _changeInterruptRequests.Add(ioRequestAddress);
++                        bus.WriteByte(ioRequestAddress + 8, 5, 0); // NT_MESSAGE until the pending request is removed/replied
+                         CompleteIo(bus, ioRequestAddress, 0, 0);
+                         bus.WriteByte(ioRequestAddress + IoFlagsOffset,
+                             (byte)(bus.ReadByte(ioRequestAddress + IoFlagsOffset) & ~1), 0);
+@@ -392,6 +395,7 @@ namespace CopperMod.Amiga.Lightweight
+             ResidentInitCalled = true;
+             RegisterSystemIntegration(state);
+             state.D[0] = _deviceBase != 0 ? _deviceBase : 1;
++            InstallTimedCompletion(state);
+         }
+ 
+         private void RegisterSystemIntegration(M68kCpuState state)
+@@ -957,6 +961,7 @@ namespace CopperMod.Amiga.Lightweight
+                 CompleteIo(bus, ioRequest, IoErrBadAddress, 0);
+                 return;
+             }
++            if (TryQueueTimedRead(bus, ioRequest, state)) return;
+             // Complete synchronously, but preserve the caller's IO_QUICK contract.
+             if (!TryExecuteIoRequest(bus, ioRequest))
+             {
+@@ -977,6 +982,7 @@ namespace CopperMod.Amiga.Lightweight
+         {
+             var bus = _bootstrapBus;
+             var ioRequest = state.A[1];
++            if (bus is not null && AbortTimed(bus, ioRequest)) { state.D[0] = 0; return; }
+             if (bus != null && ioRequest != 0 && bus.IsMappedMemoryRange(ioRequest, 0x20))
+             {
+                 _changeInterruptRequests.Remove(ioRequest);
+diff --git a/CopperMod.Amiga.Lightweight/LightweightHdfBus.cs b/CopperMod.Amiga.Lightweight/LightweightHdfBus.cs
+index ed9e93a..f717b89 100644
+--- a/CopperMod.Amiga.Lightweight/LightweightHdfBus.cs
++++ b/CopperMod.Amiga.Lightweight/LightweightHdfBus.cs
+@@ -21,6 +21,7 @@ internal sealed class LightweightHdfBus : IDisposable
+         CopperHdf = new(configurations, previous?.CopperHdf);
+         try
+         {
++            CopperHdf.ConfigureTimings(machine.StorageTimings, machine.StorageObserver);
+             if (hostDirectories is { Count: > 0 })
+             {
+                 var names = CopperHdf.Hardfiles.Values.SelectMany(h => h.GetMountablePartitions()).Select(p => p.DeviceName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+@@ -34,6 +35,7 @@ internal sealed class LightweightHdfBus : IDisposable
+ 
+     internal void Reset()
+     {
++        CopperHdf.ResetTimedStorage();
+         _callbacks.Clear();
+         _fixedGateways.Clear();
+         _nextToken = 0;
+@@ -44,6 +46,8 @@ internal sealed class LightweightHdfBus : IDisposable
+ 
+     internal byte ReadExpansionByte(uint address)
+         => _machine.ReadExpansionByte(address);
++    internal long Cycle => _machine.Cycle;
++    internal void StorageChanged() => _machine.RefreshStorageSchedule(_machine.Cycle);
+ 
+     internal bool TryWriteExpansionByte(uint address, byte value)
+         => _machine.TryWriteExpansionByte(address, value);
+diff --git a/CopperMod.Amiga.Lightweight/LightweightStorageCompletionCode.g.cs b/CopperMod.Amiga.Lightweight/LightweightStorageCompletionCode.g.cs
+new file mode 100644
+index 0000000..e896828
+--- /dev/null
++++ b/CopperMod.Amiga.Lightweight/LightweightStorageCompletionCode.g.cs
+@@ -0,0 +1,19 @@
++// Generated by tools/GenerateStorageCompletion from C#; do not edit instruction bytes.
++// Linked code SHA-256: 2B548BDC9A478596A2031B4D87BD70FE1CB38CB76A7E19BD09EBB23E688F6862
++namespace CopperMod.Amiga.Lightweight;
++internal static class LightweightStorageCompletionCode
++{
++    internal const uint InitializeOffset = 74;
++    internal const uint InterruptOffset = 0;
++    internal static readonly byte[] Image =
++    [
++        0x48, 0xE7, 0x20, 0x26, 0x24, 0x38, 0x00, 0x04, 0x22, 0x11, 0x20, 0x3C, 0x00, 0x00, 0x60, 0x00,
++        0xD2, 0x80, 0x24, 0x41, 0x22, 0x12, 0x67, 0x0E, 0x2A, 0x42, 0x4B, 0xED, 0xFE, 0x86, 0x22, 0x41,
++        0x2C, 0x42, 0x4E, 0x95, 0x60, 0xEE, 0x70, 0x00, 0x4C, 0xDF, 0x64, 0x04, 0x4E, 0x75, 0x24, 0x3C,
++        0x00, 0x00, 0x01, 0x00, 0x22, 0x38, 0x00, 0x04, 0x20, 0x42, 0x20, 0x28, 0x00, 0x0C, 0x67, 0x06,
++        0x22, 0x42, 0x60, 0x00, 0xFF, 0xBC, 0x22, 0x42, 0x2C, 0x41, 0x48, 0xE7, 0x00, 0x26, 0x24, 0x49,
++        0x20, 0x3C, 0x00, 0x00, 0x00, 0xA8, 0x2A, 0x4E, 0x9B, 0xC0, 0x22, 0x2A, 0x00, 0x04, 0x70, 0x03,
++        0x22, 0x41, 0x4E, 0x95, 0x20, 0x2A, 0x00, 0x08, 0x4C, 0xDF, 0x64, 0x00, 0x4E, 0x75,
++    ];
++    internal static readonly int[] Relocations = [];
++}
+diff --git a/CopperMod.Amiga.Lightweight/LightweightStorageConfiguration.cs b/CopperMod.Amiga.Lightweight/LightweightStorageConfiguration.cs
+new file mode 100644
+index 0000000..63a289f
+--- /dev/null
++++ b/CopperMod.Amiga.Lightweight/LightweightStorageConfiguration.cs
+@@ -0,0 +1,55 @@
++using CopperDisk;
++
++namespace CopperMod.Amiga.Lightweight;
++
++/// <summary>Versioned synthetic media parameters. Times are microseconds; rates are bytes/second.</summary>
++public sealed record LightweightDriveTimingProfile
++{
++    public int Version { get; init; } = 1;
++    public string Name { get; init; } = "hdd-like-v1";
++    public int CommandMicroseconds { get; init; } = 500;
++    public int Heads { get; init; } = 4;
++    public int SectorsPerTrack { get; init; } = 64;
++    public int RevolutionsPerMinute { get; init; } = 3600;
++    public int SeekBaseMicroseconds { get; init; } = 2000;
++    public int SeekPerCylinderMicroseconds { get; init; } = 80;
++    public int HeadSwitchMicroseconds { get; init; } = 200;
++    public int TrackSkewSectors { get; init; } = 1;
++    public int ReadAheadBytes { get; init; } = 65536;
++    public long TransferBytesPerSecond { get; init; } = 2 * 1024 * 1024;
++    public static LightweightDriveTimingProfile Hdd { get; } = new();
++    public static LightweightDriveTimingProfile Cf { get; } = new()
++    {
++        Name = "cf-like-v1", CommandMicroseconds = 50, RevolutionsPerMinute = 0,
++        SeekBaseMicroseconds = 0, SeekPerCylinderMicroseconds = 0,
++        HeadSwitchMicroseconds = 0, TrackSkewSectors = 0, ReadAheadBytes = 0,
++        TransferBytesPerSecond = 8 * 1024 * 1024
++    };
++
++    internal void Validate()
++    {
++        if (Version != 1 || string.IsNullOrWhiteSpace(Name) || CommandMicroseconds < 0 ||
++            Heads is < 1 or > 16 || SectorsPerTrack is < 1 or > 255 ||
++            RevolutionsPerMinute is < 0 or > 30000 || SeekBaseMicroseconds < 0 ||
++            SeekPerCylinderMicroseconds < 0 || HeadSwitchMicroseconds < 0 ||
++            TrackSkewSectors < 0 || ReadAheadBytes is < 0 or > 1048576 ||
++            ReadAheadBytes % 512 != 0 || TransferBytesPerSecond is < 1 or > 1_000_000_000)
++            throw new ArgumentException("Invalid synthetic drive timing profile.");
++    }
++}
++
++/// <summary>Read-only ATA master on the A1200's native Gayle interface.</summary>
++public sealed record LightweightIdeDriveConfiguration(AmigaHardfileConfiguration Media)
++{
++    public LightweightDriveTimingProfile Timing { get; init; } = LightweightDriveTimingProfile.Hdd;
++}
++
++/// <summary>Optional bounded storage observations, invoked only by fitted storage operations.</summary>
++public interface ILightweightStorageObserver
++{
++    void ReadCommand(bool ide, ulong sector, uint bytes, long cycle);
++    void MediaRead(ulong sector, long cycle);
++    void PioRead(int bytes, long cycle);
++    void Completed(bool ide, long cycle);
++    void AtaAccess(uint address, int bytes, bool write, uint value, long cycle) { }
++}
+diff --git a/CopperMod.Amiga.Lightweight/LightweightStorageDrive.cs b/CopperMod.Amiga.Lightweight/LightweightStorageDrive.cs
+new file mode 100644
+index 0000000..56203b6
+--- /dev/null
++++ b/CopperMod.Amiga.Lightweight/LightweightStorageDrive.cs
+@@ -0,0 +1,181 @@
++using CopperDisk;
++
++namespace CopperMod.Amiga.Lightweight;
++
++/// <summary>One owner, one scheduled sector, and bounded read-ahead. All timestamps use machine cycles.</summary>
++internal sealed class LightweightStorageDrive
++{
++    internal const long ClockHz = 7_093_790;
++    private readonly AmigaHardfile _media;
++    private readonly LightweightDriveTimingProfile _profile;
++    private readonly ILightweightStorageObserver? _observer;
++    private readonly byte[] _cache;
++    private readonly ulong[] _keys;
++    private readonly bool[] _consumed;
++    private readonly byte[] _sector = new byte[512];
++    private int _replacement;
++    private ulong _scheduled, _prefetchNext, _streamFirst;
++    private long _seekStart, _seekEnd;
++    private long _seekFromCylinder, _seekToCylinder;
++    private uint _head;
++    private bool _foreground, _readAhead;
++    internal long NextCycle { get; private set; } = long.MaxValue;
++    internal bool Ready { get; private set; }
++    internal bool Failed { get; private set; }
++    internal ulong ReadySector { get; private set; }
++    internal long SectorCount => _media.SectorCount;
++    internal LightweightDriveTimingProfile Profile => _profile;
++    internal long CommandCycles => Microseconds(_profile.CommandMicroseconds);
++    internal long InterfaceCycles(int bytes) => Ratio((Int128)bytes * ClockHz, _profile.TransferBytesPerSecond);
++    internal static long Microseconds(long value) => Ratio((Int128)value * ClockHz, 1_000_000);
++    private static long Ratio(Int128 numerator, long denominator) => checked((long)((numerator + denominator - 1) / denominator));
++
++    internal LightweightStorageDrive(AmigaHardfile media, LightweightDriveTimingProfile profile, ILightweightStorageObserver? observer)
++    {
++        profile.Validate();
++        _media = media; _profile = profile; _observer = observer;
++        _cache = new byte[profile.ReadAheadBytes]; _keys = new ulong[profile.ReadAheadBytes / 512];
++        _consumed = new bool[_keys.Length];
++        Reset();
++    }
++
++    internal void Reset()
++    {
++        Array.Fill(_keys, ulong.MaxValue); Array.Clear(_consumed);
++        _replacement = 0;
++        _seekStart = _seekEnd = _seekFromCylinder = _seekToCylinder = 0; _head = 0;
++        _readAhead = _keys.Length != 0; Ready = Failed = false;
++        _foreground = false; _prefetchNext = _streamFirst = ulong.MaxValue; NextCycle = long.MaxValue;
++    }
++
++    internal void SetReadAhead(bool enabled, long cycle)
++    {
++        _readAhead = enabled && _keys.Length != 0;
++        if (!_readAhead && !_foreground) NextCycle = long.MaxValue;
++        else ResumePrefetch(cycle);
++    }
++
++    internal void Request(ulong sector, long cycle)
++    {
++        Ready = Failed = false; ReadySector = sector;
++        if (sector >= (ulong)SectorCount) { Failed = true; Ready = true; return; }
++        for (var i = 0; i < _keys.Length; i++)
++        {
++            if (_keys[i] != sector) continue;
++            if (sector < _streamFirst || sector >= _prefetchNext) RedirectStream(sector);
++            _cache.AsSpan(i * 512, 512).CopyTo(_sector); _consumed[i] = true;
++            Ready = true; ResumePrefetch(cycle); return;
++        }
++        if (NextCycle != long.MaxValue && !_foreground && _scheduled == sector)
++        { _foreground = true; return; }
++        // A miss redirects the speculative stream. Old cache entries remain
++        // readable, but cannot pin space needed by the new read-ahead stream.
++        // Unread foreground data lives in its separate protected sector buffer.
++        RedirectStream(sector);
++        _scheduled = sector; _foreground = true;
++        NextCycle = MediaReadyCycle(sector, cycle);
++        if (NextCycle == cycle) Step(cycle);
++    }
++
++    internal void CopySector(Span<byte> destination)
++    {
++        if (!Ready || Failed || destination.Length != 512) throw new InvalidOperationException("Sector is not ready.");
++        _sector.CopyTo(destination); Ready = false;
++    }
++
++    internal void CancelForeground(long cycle)
++    {
++        Ready = Failed = false;
++        if (_foreground) { _foreground = false; NextCycle = long.MaxValue; }
++        ResumePrefetch(cycle);
++    }
++
++    internal void Step(long cycle)
++    {
++        if (cycle != NextCycle) return;
++        var requested = _foreground; var sector = _scheduled;
++        NextCycle = long.MaxValue; _foreground = false;
++        var slot = CacheSlot(requested);
++        if (!requested && slot < 0) return;
++        var target = requested ? _sector.AsSpan() : _cache.AsSpan(slot * 512, 512);
++        try { _media.Read(checked((long)sector * 512), target); _observer?.MediaRead(sector, cycle); }
++        catch (IOException) { if (requested) { Failed = Ready = true; } return; }
++        if (slot >= 0)
++        {
++            if (requested) _sector.CopyTo(_cache, slot * 512);
++            _keys[slot] = sector; _consumed[slot] = requested;
++            _replacement = (slot + 1) % _keys.Length;
++        }
++        if (requested) { ReadySector = sector; Ready = true; }
++        _prefetchNext = sector + 1;
++        ResumePrefetch(cycle);
++    }
++
++    private int CacheSlot(bool foreground)
++    {
++        for (var i = 0; i < _keys.Length; i++)
++        {
++            var slot = (_replacement + i) % _keys.Length;
++            if (_keys[slot] == ulong.MaxValue || _consumed[slot]) return slot;
++        }
++        // Foreground has its own protected sector buffer; speculative entries
++        // may be displaced, but pending command data is never overwritten.
++        return foreground && _keys.Length != 0 ? _replacement : -1;
++    }
++
++    private void ResumePrefetch(long cycle)
++    {
++        if (!_readAhead || _foreground || NextCycle != long.MaxValue || _prefetchNext >= (ulong)SectorCount || CacheSlot(false) < 0) return;
++        // A resumed stream can already contain several successors. Skip
++        // those hits instead of pausing forever at its first retained sector.
++        for (var skipped = 0; skipped < _keys.Length; skipped++)
++        {
++            var found = false;
++            for (var i = 0; i < _keys.Length; i++)
++                if (_keys[i] == _prefetchNext) { found = true; break; }
++            if (!found) break;
++            if (++_prefetchNext >= (ulong)SectorCount) return;
++        }
++        _scheduled = _prefetchNext;
++        NextCycle = MediaReadyCycle(_scheduled, cycle);
++    }
++
++    private void RedirectStream(ulong sector)
++    {
++        _streamFirst = sector; _prefetchNext = sector + 1;
++        if (!_foreground) NextCycle = long.MaxValue;
++        // Cached successors of the resumed stream are still unread. Protect
++        // them while allowing the abandoned stream's entries to be replaced.
++        for (var i = 0; i < _keys.Length; i++)
++            _consumed[i] = !(_keys[i] > sector && _keys[i] - sector < (ulong)_keys.Length);
++    }
++
++    private long MediaReadyCycle(ulong sector, long cycle)
++    {
++        // The CF preset specifies no mechanical/media delay. Its configured
++        // transfer limit belongs to the abstract CopperHDF link; IDE instead
++        // pays for actual PIO bus accesses. Charging it here would count the
++        // same abstract transfer twice, especially for one-sector commands.
++        if (_profile.RevolutionsPerMinute == 0) return cycle;
++        var track = sector / (uint)_profile.SectorsPerTrack;
++        var cylinder = track / (uint)_profile.Heads;
++        var oldCylinder = cycle >= _seekEnd ? _seekToCylinder : _seekFromCylinder +
++            (long)((Int128)(_seekToCylinder-_seekFromCylinder) * Math.Max(0,cycle-_seekStart) / Math.Max(1,_seekEnd-_seekStart));
++        var delta = Math.Abs((long)cylinder - oldCylinder);
++        var head = track % (uint)_profile.Heads;
++        var seek = delta != 0 ? Microseconds(checked(_profile.SeekBaseMicroseconds + delta * _profile.SeekPerCylinderMicroseconds)) :
++            head != _head ? Microseconds(_profile.HeadSwitchMicroseconds) : 0;
++        _seekFromCylinder=oldCylinder; _seekToCylinder=(long)cylinder; _seekStart=cycle; _seekEnd=checked(cycle+seek); _head=(uint)head;
++        cycle=_seekEnd;
++        var denominator = checked((long)_profile.RevolutionsPerMinute * _profile.SectorsPerTrack);
++        var numerator = 60 * ClockHz;
++        var slot = checked((long)((Int128)cycle * denominator / numerator));
++        // A sector edge is quantized upward to a machine cycle. Arriving on
++        // that same quantized edge must not miss the next sector by a turn.
++        if (Ratio((Int128)slot * numerator, denominator) < cycle) slot++;
++        var target = (sector % (uint)_profile.SectorsPerTrack + track % (uint)_profile.SectorsPerTrack *
++            ((uint)_profile.TrackSkewSectors % (uint)_profile.SectorsPerTrack)) % (uint)_profile.SectorsPerTrack;
++        slot += ((long)target - slot % _profile.SectorsPerTrack + _profile.SectorsPerTrack) % _profile.SectorsPerTrack;
++        return Ratio((Int128)(slot + 1) * numerator, denominator);
++    }
++}

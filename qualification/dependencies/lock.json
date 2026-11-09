@@ -1,0 +1,27 @@
+{
+  "dotnetSdk": "10.0.401",
+  "repositories": {
+    "CopperSharp68k": {
+      "url": "https://github.com/ilehtoranta/CopperSharp68k.git",
+      "revision": "e16a42fbeff7a15376564fed63791081c7fe8fef"
+    },
+    "CopperStart": {
+      "url": "https://github.com/ilehtoranta/CopperStart.git",
+      "revision": "ed02a70a2c500c79884c7030d2267b4b1e62f197",
+      "patch": "copperstart-fixtures.patch",
+      "patchSha256": "62AA817CCE2F7FCA107771C2F7190913309E740E53A796D6188E9C20AFC40B69",
+      "patchedTree": "063cb0692c5c6b144b726afcb67ce80cf6e944f6"
+    },
+    "CopperScreen": {
+      "url": "https://github.com/ilehtoranta/CopperScreen.git",
+      "revision": "7304daac403c1fecf7aead0eac0193392a58e014",
+      "patch": "copperscreen-storage.patch",
+      "patchSha256": "EFCCAC98D27D3A871E0134D4BC8BAFB80511C2C78C48F106BCBF34E97A515FE3",
+      "patchedTree": "51266c82fffed8697483763bc2f5b3d22fe2be21"
+    },
+    "CopperOS": {
+      "url": "https://github.com/ilehtoranta/CopperOS.git",
+      "revision": "c256bcd7ef3ab1dfd7438ce55881002bfe610c58"
+    }
+  }
+}
