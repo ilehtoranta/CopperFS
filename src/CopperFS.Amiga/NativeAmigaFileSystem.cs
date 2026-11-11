@@ -76,7 +76,7 @@ public static partial class NativeAmigaFileSystem
     public static void CopyVolumeName(APTR state, APTR destination)
     {
         var metadata = Metadata(state);
-        if (Smart(state))
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
         {
             var offset = NativeSfs2Bridge.IsSfs2(state) ? 51 : 49;
             var length = 0;
@@ -94,7 +94,7 @@ public static partial class NativeAmigaFileSystem
     }
     public static void CopyVolumeDate(APTR state, APTR volume)
     {
-        if (!Smart(state))
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)))
         {
             var root = Metadata(state);
             var tail = (int)APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset) - 512;
@@ -119,8 +119,17 @@ public static partial class NativeAmigaFileSystem
     }
     private const uint ObjectBytes = 216, Magic = 0x41465331;
     internal const int SmartReadCursorOffset = 56;
+    // Only packet and post-acceptance paths use these constants. Startup can
+    // mount and recover a foreign format before its final type check.
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY
+    private const bool SpecializeFormat = true, FormatIsSmart = false;
+#elif COPPERSTART_SFS_STANDALONE && COPPERSTART_SMART_ONLY
+    private const bool SpecializeFormat = true, FormatIsSmart = true;
+#else
+    private const bool SpecializeFormat = false, FormatIsSmart = false;
+#endif
     private static bool Smart(APTR state) => APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType;
-    private static uint RootKey(APTR state) => Smart(state) ? AmigaSmartFileSystemCore.RootNode : DiskRootBlock(state);
+    private static uint RootKey(APTR state) => (SpecializeFormat ? FormatIsSmart : Smart(state)) ? AmigaSmartFileSystemCore.RootNode : DiskRootBlock(state);
     // Keep the by-value disk geometry out of the shared DOS open packet's stack frame.
     private static uint DiskRootBlock(APTR state)
     {
@@ -524,7 +533,7 @@ public static partial class NativeAmigaFileSystem
 #endif
         var enumeration = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset);
         if (enumeration != 0) global::Amiga.Exec.FreeMem(enumeration, SmartEnumerationCacheBytes);
-#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+#if COPPERSTART_NATIVE_SFS_WRITES
         var combine = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteCombinerOffset);
         if (combine != 0) global::Amiga.Exec.FreeMem(combine,
             AmigaFileSystemWriteCombiner.StorageBytes(APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset), SmartWriteQueueCapacity));
@@ -935,14 +944,14 @@ public static partial class NativeAmigaFileSystem
 #if COPPERFS_NATIVE_FFS_READAHEAD
         // FFS owns a timer request for allocation-free stream cost sampling.
         // It is never armed; normal unmount cleanup closes it with the device.
-        if (!Smart(state) && (APTR.ReadUInt32(state, FixedHardDiskOffset) == 0 ||
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && (APTR.ReadUInt32(state, FixedHardDiskOffset) == 0 ||
             APTR.ReadUInt32(state, PayloadCacheBypassOffset) != 0)) return;
         // Chip-only mounts keep the payload window: probing direct transfers
         // pays controller setup without the Fast-RAM copy saving. Use Exec's
         // real allocation attributes, independent of device names or emulator.
-        if (!Smart(state) && (global::Amiga.Exec.TypeOfMem(
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && (global::Amiga.Exec.TypeOfMem(
             APTR.FromPointer(APTR.ReadUInt32(state, CacheOffset))) & (uint)global::Amiga.Exec.MemoryFlags.Fast) == 0) return;
-        if (!Smart(state))
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)))
         {
             // This request is only an OpenDevice/CloseDevice handle. It is
             // never queued: ReadEClock uses its device base directly.
@@ -958,7 +967,7 @@ public static partial class NativeAmigaFileSystem
             return;
         }
 #else
-        if (!Smart(state)) return;
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) return;
 #endif
 #else
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) == 0) return;
@@ -981,7 +990,7 @@ public static partial class NativeAmigaFileSystem
 #if COPPERFS_NATIVE_FFS_READAHEAD
         // The optional FFS sampling request is never a deferred-write timer.
         // Avoid walking SFS transaction state after every FFS packet.
-        if (!Smart(state)) return;
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) return;
 #endif
         if (!HasBufferedWrites(state) || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset) != 0) return;
         StartWriteTimer(state);
@@ -1235,6 +1244,8 @@ public static partial class NativeAmigaFileSystem
     {
         // Read and enumeration packets need no mutation work area. Keep recovery
         // and inhibited-media handling in the full dispatcher below.
+        // The FFS-only standalone entry reaches packet dispatch only after it
+        // accepts an FFS/OFS mount; foreign recovery still occurs at startup.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
 #if COPPERFS_NATIVE_FFS_READAHEAD
         if (action == DosPacketAction.Read)
@@ -1242,19 +1253,19 @@ public static partial class NativeAmigaFileSystem
             var cachedLength = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
             if (cachedLength >= 512 && cachedLength <= 4096 &&
                 NativeFileSystemPlatform.TryDispatchCachedFfsRead(state, packet)) return;
-            if (cachedLength == 4096 && APTR.ReadUInt32(state, SmartTimerOffset) != 0 && !Smart(state))
+            if (cachedLength == 4096 && APTR.ReadUInt32(state, SmartTimerOffset) != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state)))
             { DispatchAdaptiveReadPacket(state, packet); return; }
             // DispatchPacket repeats the action/type checks before reaching
             // this same reader. FFS/OFS have no SFS recovery gate to traverse.
-            if (!Smart(state)) { DispatchReadPacket(state, packet); return; }
+            if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { DispatchReadPacket(state, packet); return; }
         }
 #endif
-#if COPPERSTART_NATIVE_SFS_WRITES
-        if (action == DosPacketAction.Write && Smart(state) &&
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+        if (action == DosPacketAction.Write && (SpecializeFormat ? FormatIsSmart : Smart(state)) &&
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) == 0 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) == 0)
         { DispatchSmartWrite(state, packet); return; }
 #endif
-        if (action is not (DosPacketAction.Read or DosPacketAction.ExamineNext) || !Smart(state) ||
+        if (action is not (DosPacketAction.Read or DosPacketAction.ExamineNext) || !(SpecializeFormat ? FormatIsSmart : Smart(state)) ||
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0)
         { DispatchPacket(state, packet); return; }
 #if COPPERFS_NATIVE_FFS_READAHEAD
@@ -1423,7 +1434,7 @@ public static partial class NativeAmigaFileSystem
     {
         error = DOS.Error.None;
         var required = NativeFileSystemAttributeCore.RequiredSize(attribute);
-        if (required == 0 || (Smart(state) && attribute == FileSystemQueryAttribute.MaxVolumeNameLength) ||
+        if (required == 0 || ((SpecializeFormat ? FormatIsSmart : Smart(state)) && attribute == FileSystemQueryAttribute.MaxVolumeNameLength) ||
             (NativeSfs2Bridge.IsSfs2(state) && attribute == FileSystemQueryAttribute.IsCaseSensitive))
         { error = DOS.Error.BadNumber; return 0; }
         if (storageSize < 0 || (uint)storageSize < required)
@@ -1433,7 +1444,7 @@ public static partial class NativeAmigaFileSystem
         ulong value;
         switch (attribute)
         {
-            case FileSystemQueryAttribute.MaxFileNameLength: value = NativeSfs2Bridge.IsSfs2(state) ? 107u : Smart(state) ? 100u : 30u; break;
+            case FileSystemQueryAttribute.MaxFileNameLength: value = NativeSfs2Bridge.IsSfs2(state) ? 107u : (SpecializeFormat ? FormatIsSmart : Smart(state)) ? 100u : 30u; break;
             case FileSystemQueryAttribute.MaxVolumeNameLength:
                 value = 30; break;
             case FileSystemQueryAttribute.MaxFileSize: value = NativeSfs2Bridge.IsSfs2(state) ? AmigaSmartFileSystem2WriteCore.MaxFileSize : uint.MaxValue; break;
@@ -1441,7 +1452,7 @@ public static partial class NativeAmigaFileSystem
             case FileSystemQueryAttribute.DeviceType: value = 31; break; // DG_UNKNOWN
             case FileSystemQueryAttribute.NumBlocks: value = p.BlockCount; break;
             case FileSystemQueryAttribute.NumBlocksUsed:
-                if (!(Smart(state) ? NativeSfsExtension.CountUsed(state, out var countedUsed) :
+                if (!((SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.CountUsed(state, out var countedUsed) :
                     AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out countedUsed)))
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 value = countedUsed;
@@ -1486,7 +1497,7 @@ public static partial class NativeAmigaFileSystem
         }
 #endif
         if (action == DosPacketAction.Read &&
-            (!Smart(state) || (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) == 0 &&
+            (!(SpecializeFormat ? FormatIsSmart : Smart(state)) || (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) == 0 &&
                 APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) == 0)))
         {
             DispatchReadPacket(state, packet);
@@ -1520,7 +1531,7 @@ public static partial class NativeAmigaFileSystem
             var position = FilePosition(file);
             var target = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
             var length = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
-            if (Smart(state))
+            if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
                 result = NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, target, length, out error);
 #if !COPPERFS_NATIVE_FFS_READAHEAD
             else if (length > 512 && length <= 4096 && NativeFileSystemPlatform.TryReadFfsCached(state, file, (uint)position, target, length))
@@ -1567,7 +1578,7 @@ public static partial class NativeAmigaFileSystem
                 var c = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
                 var input = action == DosPacketAction.FindInput;
                 var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
-                var smart = dosType is AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType;
+                var smart = SpecializeFormat ? FormatIsSmart : dosType is AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType;
                 var baseToken = input ? b : a;
                 var baseLock = baseToken == 0 ? APTR.Null : Object(state, baseToken, false);
                 var directory = baseToken == 0 ? (smart ? AmigaSmartFileSystemCore.RootNode : DiskRootBlock(state))
@@ -1635,10 +1646,10 @@ public static partial class NativeAmigaFileSystem
                 if (retired.IsNull && a != 0) { error = DOS.Error.InvalidLock; break; }
                 var changedKey = retired.IsNotNull && action == DosPacketAction.End && APTR.ReadUInt32(retired, 40) != 0 ? APTR.ReadUInt32(retired, 4) : 0;
 #if COPPERSTART_SFS_TRST_BUFFERED
-                if (changedKey != 0 && Smart(state) && !FlushSmart(state))
+                if (changedKey != 0 && (SpecializeFormat ? FormatIsSmart : Smart(state)) && !FlushSmart(state))
                 { error = DOS.Error.DiskNotValidated; break; }
 #endif
-                if (retired.IsNotNull && action == DosPacketAction.End && Smart(state) &&
+                if (retired.IsNotNull && action == DosPacketAction.End && (SpecializeFormat ? FormatIsSmart : Smart(state)) &&
                     APTR.ReadUInt32(state, SmartReservationsOffset) != 0)
                 {
                     ReleaseFileReservation(state, APTR.ReadUInt32(retired, 4));
@@ -1658,7 +1669,7 @@ public static partial class NativeAmigaFileSystem
         InvalidateDirectoryCursors(state);
         if (inhibit)
         {
-            if (!(Smart(state) ? FlushSmart(state) : p.Flush())) { error = DOS.Error.DiskNotValidated; return 0; }
+            if (!((SpecializeFormat ? FormatIsSmart : Smart(state)) ? FlushSmart(state) : p.Flush())) { error = DOS.Error.DiskNotValidated; return 0; }
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 1);
         }
         else if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0)
@@ -1686,7 +1697,7 @@ public static partial class NativeAmigaFileSystem
 #endif
             {
                 ReindexCache(state);
-                mounted = Smart(state) ? NativeSfsExtension.Mount(state) : AmigaDiskFileSystemCore.Mount(ref p, Metadata(state), out _);
+                mounted = (SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.Mount(state) : AmigaDiskFileSystemCore.Mount(ref p, Metadata(state), out _);
             }
             if (!mounted)
             { error = DOS.Error.DiskNotValidated; return 0; }
@@ -1719,8 +1730,8 @@ public static partial class NativeAmigaFileSystem
             return;
         }
 #endif
-        if (Smart(state) && SmartMutation(action)) InvalidateDirectoryCursors(state);
-        if (Smart(state) && APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 &&
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)) && SmartMutation(action)) InvalidateDirectoryCursors(state);
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)) && APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 &&
             SmartMediaAccess(action) && action is not
                 (DosPacketAction.Inhibit or DosPacketAction.Info or DosPacketAction.DiskInfo))
         {
@@ -1730,7 +1741,7 @@ public static partial class NativeAmigaFileSystem
             return;
         }
 #if COPPERSTART_NATIVE_SFS_WRITES
-        if (Smart(state) && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0 && SmartMediaAccess(action))
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)) && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0 && SmartMediaAccess(action))
         {
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_NATIVE_SFS2
             var pathCache = APTR.FromPointer(APTR.ReadUInt32(state, SmartEnumerationCacheOffset));
@@ -1758,7 +1769,7 @@ public static partial class NativeAmigaFileSystem
 #if COPPERSTART_PACKED_EXTENSION
         // Handles keep their original public volume identity across removal.
         // Cleanup remains legal, but an old handle must not read a new disk.
-        if (!Smart(state) && APTR.ReadUInt32(state, 60) != 0 && SmartMediaAccess(action))
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && APTR.ReadUInt32(state, 60) != 0 && SmartMediaAccess(action))
         {
             var volume = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.VolumeOffset));
             // FINDINPUT carries its base lock in Arg2; Arg1 is the new FH.
@@ -1801,7 +1812,7 @@ public static partial class NativeAmigaFileSystem
                     : NativeRecordLockCore.Unlock(ref recordPlatform, state, file, rangeOffset, rangeLength, out error);
                 break;
             case DosPacketAction.NewReadLink:
-                if (Smart(state)) { error = DOS.Error.ActionNotKnown; break; }
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
                 if (key == 0) { result = -1; error = DOS.Error.InvalidLock; break; }
                 result = AmigaFfsReadLinkCore.Read(ref p, key, APTR.FromPointer(b), APTR.FromPointer(c),
                     unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset)),
@@ -1816,7 +1827,7 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.DiskType: result = unchecked((int)APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset)); break;
             case DosPacketAction.Flush:
 #if COPPERSTART_NATIVE_SFS_WRITES
-                if (Smart(state)) { if (FlushSmart(state)) result = -1; else error = DOS.Error.DiskNotValidated; break; }
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { if (FlushSmart(state)) result = -1; else error = DOS.Error.DiskNotValidated; break; }
 #endif
                 if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0 || p.Transfer(4, 0, 0, APTR.Null)) result = -1;
                 else error = DOS.Error.DiskNotValidated;
@@ -1835,7 +1846,7 @@ public static partial class NativeAmigaFileSystem
                 result = -1;
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 var position = FilePosition(file);
-                result = Smart(state)
+                result = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, APTR.FromPointer(b), c, out error)
                     : NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4), APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
                         APTR.FromPointer(b), c, metadata, data, out error);
@@ -1858,14 +1869,14 @@ public static partial class NativeAmigaFileSystem
                 if (!AmigaFilePositionCore.Seek(old, size, (b & 0x80000000) == 0 ? 0u : uint.MaxValue,
                     b, mode, out var nextPosition))
                 { error = DOS.Error.SeekError; break; }
-                if (nextPosition != old && Smart(state))
+                if (nextPosition != old && (SpecializeFormat ? FormatIsSmart : Smart(state)))
                 {
                     InitializeSmartWriteWork(state, out var reservationWork);
                     AmigaSmartFileSystemWriteCore.ReleaseOverwriteReservation(ref p, ref reservationWork, APTR.ReadUInt32(file, 4));
                 }
                 APTR.WriteUInt32(file, 12, nextPosition);
 #if COPPERFS_NATIVE_FFS_READAHEAD
-                if (!Smart(state)) NativeFfsSequentialRead.Reset(file);
+                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) NativeFfsSequentialRead.Reset(file);
 #endif
                 result = unchecked((int)old);
                 break;
@@ -1879,13 +1890,13 @@ public static partial class NativeAmigaFileSystem
                 if (!AmigaFilePositionCore.Offset64(previousPosition, FileSize(file),
                     p.ReadUInt32(seekInput), p.ReadUInt32(seekInput, 4), unchecked((int)c), FileSize(file), out var widePosition))
                 { error = DOS.Error.SeekError; break; }
-                if (widePosition != previousPosition && Smart(state))
+                if (widePosition != previousPosition && (SpecializeFormat ? FormatIsSmart : Smart(state)))
                 {
                     InitializeSmartWriteWork(state, out var reservationWork);
                     AmigaSmartFileSystemWriteCore.ReleaseOverwriteReservation(ref p, ref reservationWork, APTR.ReadUInt32(file, 4));
                 }
 #if COPPERFS_NATIVE_FFS_READAHEAD
-                if (!Smart(state)) NativeFfsSequentialRead.Reset(file);
+                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) NativeFfsSequentialRead.Reset(file);
 #endif
                 p.WriteUInt32(seekOutput, 0, (uint)(previousPosition >> 32));
                 p.WriteUInt32(seekOutput, 4, (uint)previousPosition);
@@ -1893,8 +1904,8 @@ public static partial class NativeAmigaFileSystem
                 result = -1;
                 break;
             case (DosPacketAction)DosNativeExtendedPacketAction.SetFileSize64:
-#if COPPERSTART_NATIVE_SFS_WRITES
-                if (!Smart(state)) { error = DOS.Error.ActionNotKnown; break; }
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 var resizeInput = APTR.FromPointer(b);
                 var resizeOutput = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset));
@@ -1924,7 +1935,11 @@ public static partial class NativeAmigaFileSystem
                 result = -1;
                 break;
 #else
+#if COPPERSTART_FFS_ONLY
+                error = DOS.Error.ActionNotKnown; break;
+#else
                 error = DOS.Error.DiskWriteProtected; break;
+#endif
 #endif
             case DosPacketAction.CopyDirectory:
             case DosPacketAction.CopyDirectoryFromFileHandle:
@@ -1936,7 +1951,7 @@ public static partial class NativeAmigaFileSystem
                 if (action == DosPacketAction.Parent || action == DosPacketAction.ParentFileHandle)
                 {
                     if (key == RootKey(state)) break;
-                    if (Smart(state))
+                    if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
                     {
                         if (!NativeSfsExtension.Describe(state, key, out _, out _, out key))
                         { error = DOS.Error.DiskNotValidated; break; }
@@ -1958,7 +1973,7 @@ public static partial class NativeAmigaFileSystem
                 { error = DOS.Error.InvalidLock; break; }
                 var transferredKey = APTR.ReadUInt32(transferred, 4);
                 ulong transferredSize;
-                if (Smart(state))
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
                 {
                     if (!NativeSfsExtension.Describe(state, transferredKey, out transferredSize, out var isDirectory, out _))
                     { error = DOS.Error.DiskNotValidated; break; }
@@ -1997,7 +2012,7 @@ public static partial class NativeAmigaFileSystem
                 if (action is DosPacketAction.ExamineFileHandle or DosPacketAction.ExamineFileHandle64)
                     key = file.IsNotNull ? APTR.ReadUInt32(file, 4) : 0;
                 if (key == 0) { error = DOS.Error.InvalidLock; break; }
-                result = (Smart(state)
+                result = ((SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.Examine(state, key, APTR.FromPointer(b << 2))
                     : AmigaDiskFileSystemCore.Examine(ref p, key, APTR.FromPointer(b << 2), metadata)) ? -1 : 0;
                 if (result == 0) error = DOS.Error.DiskNotValidated;
@@ -2007,7 +2022,7 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.ExamineNext64:
             case DosPacketAction.ExamineNext:
                 if (key == 0) { error = DOS.Error.InvalidLock; break; }
-                error = Smart(state)
+                error = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.ExamineNext(state, locked, key, APTR.FromPointer(b << 2))
                     : NextDirectory(state, locked, key, APTR.FromPointer(b << 2), metadata, data);
                 result = error == DOS.Error.None ? -1 : 0;
@@ -2018,15 +2033,15 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.DiskInfo:
                 var info = APTR.FromPointer((action == DosPacketAction.Info ? b : a) << 2);
                 if (!p.IsMapped(info, 36)) { error = DOS.Error.BadNumber; break; }
-                var counted = Smart(state)
+                var counted = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.CountUsed(state, out var smartUsed)
                     : AmigaDiskFileSystemCore.CountUsed(ref p, metadata, data, out smartUsed);
                 var usedBlocks = smartUsed;
-                if (!counted || (!Smart(state) && !AmigaDiskFileSystemCore.Header(ref p, p.Geometry.RootBlock, metadata)))
+                if (!counted || (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && !AmigaDiskFileSystemCore.Header(ref p, p.Geometry.RootBlock, metadata)))
                 { error = DOS.Error.DiskNotValidated; break; }
                 p.Clear(info, 36);
-                p.WriteUInt32(info, 8, p.WriteProtected() ? 80u : Smart(state) ? 82u : p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 312) != uint.MaxValue ? 81u : 82u);
-                p.WriteUInt32(info, 12, Smart(state) ? p.BlockCount - p.ReservedBlocks - 1 : p.BlockCount);
+                p.WriteUInt32(info, 8, p.WriteProtected() ? 80u : (SpecializeFormat ? FormatIsSmart : Smart(state)) ? 82u : p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 312) != uint.MaxValue ? 81u : 82u);
+                p.WriteUInt32(info, 12, (SpecializeFormat ? FormatIsSmart : Smart(state)) ? p.BlockCount - p.ReservedBlocks - 1 : p.BlockCount);
                 p.WriteUInt32(info, 16, usedBlocks);
                 p.WriteUInt32(info, 20, p.BlockBytes);
                 p.WriteUInt32(info, 24, APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset));
@@ -2035,8 +2050,10 @@ public static partial class NativeAmigaFileSystem
                 break;
             case DosPacketAction.FindOutput:
             case DosPacketAction.FindUpdate:
-#if COPPERSTART_NATIVE_SFS_WRITES
-                result = Smart(state) ? NativeSfsExtension.Packet(state, packet, action, out error) : OpenWrite(state, packet, action, out error);
+#if COPPERSTART_SMART_ONLY
+                result = NativeSfsExtension.Packet(state, packet, action, out error);
+#elif COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+                result = (SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.Packet(state, packet, action, out error) : OpenWrite(state, packet, action, out error);
 #else
                 result = OpenWrite(state, packet, action, out error);
 #endif
@@ -2046,8 +2063,12 @@ public static partial class NativeAmigaFileSystem
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 // MODE_OLDFILE also permits writes. The private access word
                 // describes sharing, not file/device write protection.
-#if COPPERSTART_NATIVE_SFS_WRITES
-                if (Smart(state))
+#if COPPERSTART_SMART_ONLY
+                result = WriteSmartFile(state, file, APTR.FromPointer(b), c, out error);
+                break;
+#else
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
                 {
                     result = WriteSmartFile(state, file, APTR.FromPointer(b), c, out error); break;
                 }
@@ -2061,11 +2082,14 @@ public static partial class NativeAmigaFileSystem
                 if (written != 0) APTR.WriteUInt32(file, 40, 1);
                 result = (int)written;
                 break;
+#endif
             case DosPacketAction.DeleteObject:
             case DosPacketAction.RenameObject:
             case DosPacketAction.CreateDirectory:
-#if COPPERSTART_NATIVE_SFS_WRITES
-                result = Smart(state) ? NativeSfsExtension.Packet(state, packet, action, out error) : Mutate(state, packet, action, out error);
+#if COPPERSTART_SMART_ONLY
+                result = NativeSfsExtension.Packet(state, packet, action, out error);
+#elif COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+                result = (SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.Packet(state, packet, action, out error) : Mutate(state, packet, action, out error);
 #else
                 result = Mutate(state, packet, action, out error);
 #endif
@@ -2073,16 +2097,18 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.SetProtection:
             case DosPacketAction.SetComment:
             case DosPacketAction.SetDate:
-#if COPPERSTART_NATIVE_SFS_WRITES
-                result = Smart(state) ? NativeSfsExtension.Packet(state, packet, action, out error) : SetMetadata(state, packet, action, out error);
+#if COPPERSTART_SMART_ONLY
+                result = NativeSfsExtension.Packet(state, packet, action, out error);
+#elif COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+                result = (SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.Packet(state, packet, action, out error) : SetMetadata(state, packet, action, out error);
 #else
                 result = SetMetadata(state, packet, action, out error);
 #endif
                 break;
             case DosPacketAction.SetFileSize:
-#if COPPERSTART_NATIVE_SFS_WRITES
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
                 result = -1;
-                if (!Smart(state)) { error = DOS.Error.DiskWriteProtected; break; }
+                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.DiskWriteProtected; break; }
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 if (NativeSfs2Bridge.IsSfs2(state))
                 {
@@ -2122,7 +2148,8 @@ public static partial class NativeAmigaFileSystem
                 error = DOS.Error.DiskWriteProtected;
                 break;
             default:
-                if ((int)action == AmigaSmartFileSystemTrimPacket.Action && !Smart(state))
+#if !COPPERSTART_SMART_ONLY
+                if ((int)action == AmigaSmartFileSystemTrimPacket.Action && !(SpecializeFormat ? FormatIsSmart : Smart(state)))
                 {
                     if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0) error = DOS.Error.NoDisk;
 #if COPPERSTART_NATIVE_SFS_WRITES
@@ -2132,10 +2159,11 @@ public static partial class NativeAmigaFileSystem
 #endif
                     break;
                 }
-#if COPPERSTART_NATIVE_SFS_WRITES
+#endif
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
                 // Keep the existing switch and all normal packet branches intact.
                 // Only an explicit unknown/custom action reaches maintenance.
-                if ((int)action == AmigaSmartFileSystemTrimPacket.Action && Smart(state))
+                if ((int)action == AmigaSmartFileSystemTrimPacket.Action && (SpecializeFormat ? FormatIsSmart : Smart(state)))
                     result = NativeSfsExtension.Packet(state, packet, action, out error);
                 else
 #endif
@@ -2143,7 +2171,7 @@ public static partial class NativeAmigaFileSystem
                 break;
         }
 #if COPPERSTART_NATIVE_SFS_WRITES
-        if (Smart(state) && error != DOS.Error.None && SmartMutation(action))
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)) && error != DOS.Error.None && SmartMutation(action))
         {
             InitializeSmartWriteWork(state, out var recovery);
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset, NativeSfsExtension.Recover(state, ref recovery) && p.Flush() ? 0u : 1u);

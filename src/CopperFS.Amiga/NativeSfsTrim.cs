@@ -32,14 +32,21 @@ internal static class NativeSfsTrim
         if (memory == 0) { error = DOS.Error.NoFreeStore; return 0; }
         bool success;
         AmigaSmartFileSystemWriteCore.TrimResult result;
+#if !COPPERSTART_SMART_ONLY
+#if !COPPERSTART_FFS_ONLY
         if (ffs)
+#endif
         {
             NativeAmigaFileSystem.InitializeWriteWork(state, out var ffsWork);
             success = AmigaFfsWriteCore.Trim(ref p, ref ffsWork, APTR.FromPointer(memory),
                 APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result);
             error = ffsWork.Error;
         }
+#if !COPPERSTART_FFS_ONLY
         else
+#endif
+#endif
+#if !COPPERSTART_FFS_ONLY
         {
             NativeAmigaFileSystem.InitializeSmartWriteWork(state, out var work);
 #if COPPERSTART_NATIVE_SFS2
@@ -57,6 +64,7 @@ internal static class NativeSfsTrim
             if (!success && error == DOS.Error.DiskNotValidated)
                 APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset, 1);
         }
+#endif
         global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.BlocksOffset, result.Blocks); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.RangesOffset, result.Ranges);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.MaximumBlocksOffset, result.Limits.MaximumBlocks);

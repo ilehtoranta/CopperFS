@@ -93,7 +93,31 @@ public static partial class NativeSfsExtension
         var scratch = Scratch(state);
         APTR.WriteUInt32(scratch, Operation, operation);
         APTR.WriteUInt32(scratch, Actual, 0);
-#if COPPERSTART_SFS_STANDALONE
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY
+        // The standalone FFS client only uses these operations. Keep the
+        // foreign SFS mount path, but do not retain the extension's complete
+        // mutation dispatcher just to perform startup and bookkeeping.
+        var platform = new NativeFileSystemPlatform(state);
+        bool success;
+        if (operation == RootOperation)
+        {
+            success = NativeSfs2Bridge.Root(ref platform, state);
+        }
+        else
+        {
+            NativeAmigaFileSystem.InitializeSmartWriteWork(state, out var work);
+            success = operation switch
+            {
+                MountOperation => AmigaSmartFileSystemCore.Mount(ref platform, NativeAmigaFileSystem.Metadata(state)),
+                CountUsedOperation => CountUsedCore(ref platform, state, scratch),
+                FlushOperation => AmigaSmartFileSystemWriteCore.Flush(ref platform, ref work),
+                _ => false,
+            };
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, work.JournalCursor);
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset, work.AllocationCursor);
+            APTR.WriteUInt32(scratch, Error, (uint)work.Error);
+        }
+#elif COPPERSTART_SFS_STANDALONE
         var success = Entry(state, scratch) != 0;
 #else
         var success = Call(APTR.FromPointer(entry), state, scratch) != 0;
@@ -108,7 +132,24 @@ public static partial class NativeSfsExtension
 #if COPPERSTART_SFS_TRST_BUFFERED
         if (TrstGroupPending(state)) { var p = new NativeFileSystemPlatform(state); return FlushNativeTrstGroup(state, ref p, ref work); }
 #endif
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY
+        // Startup can recover a foreign classic-SFS journal before the
+        // standalone FFS entry rejects that type. Keep its ordering while
+        // avoiding the shared mutation-operation dispatcher.
+        var scratch = Scratch(state);
+        APTR.WriteUInt32(scratch, Operation, RecoverOperation);
+        APTR.WriteUInt32(scratch, Actual, 0);
+        var platform = new NativeFileSystemPlatform(state);
+        NativeAmigaFileSystem.InitializeSmartWriteWork(state, out var recovery);
+        var recovered = AmigaSmartFileSystemWriteCore.Recover(ref platform, ref recovery);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, recovery.JournalCursor);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset, recovery.AllocationCursor);
+        APTR.WriteUInt32(scratch, Error, (uint)recovery.Error);
+        work.Error = recovery.Error;
+        return recovered;
+#else
         return InvokeSimple(state, RecoverOperation, out _, out work.Error);
+#endif
     }
     public static bool Flush(APTR state, ref AmigaSmartFileSystemWriteCore.Work work)
     {

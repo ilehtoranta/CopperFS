@@ -12,11 +12,19 @@
     <DefineConstants Condition="'$(CopperStartSfs2TrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartNativeSfs2)' == 'true'">$(DefineConstants);COPPERSTART_NATIVE_SFS2</DefineConstants>
     <DefineConstants Condition="'$(CopperFsNativeFfsReadAhead)' == 'true'">$(DefineConstants);COPPERFS_NATIVE_FFS_READAHEAD</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsFfsOnly)' == 'true'">$(DefineConstants);COPPERSTART_FFS_ONLY</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSmartOnly)' == 'true'">$(DefineConstants);COPPERSTART_SMART_ONLY</DefineConstants>
   </PropertyGroup>
   <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
           Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">
     <Error Condition="'$(CopperStartSfsTrstWrites)' != 'true' or '$(CopperStartSfsStrictWrites)' == 'true' or '$(CopperStartNativeSfs2)' == 'true'"
            Text="Buffered TRST requires a classic TRST handler without strict writes." />
+  </Target>
+  <Target Name="ValidateFfsOnlyProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsFfsOnly)' == 'true' and '$(CopperStartNativeSfs2)' == 'true'">
+    <Error Text="CopperFsFfsOnly cannot be combined with CopperStartNativeSfs2." />
+  </Target>
+  <Target Name="ValidateSmartOnlyProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSmartOnly)' == 'true' and '$(CopperFsFfsOnly)' == 'true'">
+    <Error Text="CopperFsSmartOnly cannot be combined with CopperFsFfsOnly." />
   </Target>
   <ItemGroup>
     <ProjectReference Include="../CopperSFS.Core/CopperSFS.Core.csproj" />

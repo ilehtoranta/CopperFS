@@ -59,10 +59,16 @@ Set `-CopperSharpRoot` when CopperSharp68k is not beside this checkout. Use `-Cp
 buffered TRST and legacy CSUN selections remain supported. CopperStart's optional
 build wrappers select its pinned CopperFS sources. Both entry points produce
 the existing CopperFFS, CopperSFS and CopperTrim names.
-Handler builds run CopperSharp's restricted CILica IL optimizer by default and
+Handler builds run CopperSharp's restricted CILica IL optimizer with inlining
+disabled and scalar replacement enabled by default, and
 retain its rewritten assembly and hash report under the artifact root's
 `cilica` directory. `-SkipCilica` is a diagnostic opt-out; optimizer failures
 stop the build. Original managed inputs remain under `inputs`.
+The qualified standalone FFS, classic-SFS and SFS2 TRST builds use specialized
+packet dispatch by default. SFS2 retains classic-SFS handling and CSUN
+recovery. `-NoSpecialization` selects the combined dispatch for comparison.
+Other write-policy combinations keep the combined dispatch unless an explicit
+specialization switch is supplied.
 See [integration and migration](docs/copperfs-integration.md) for boundaries,
 validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usage.
 

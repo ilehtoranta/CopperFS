@@ -23,6 +23,38 @@ public static class CorrectnessProbe
     public static int WriteSfs2() => Run(3, true);
     public static int ReadSfs2() => Run(3, false);
     public static int RecoverSfs2() => Run(3, false, mountOnly: true);
+    public static int ForeignFfs() => ForeignStartup(1);
+    public static int ForeignSfs() => ForeignStartup(2);
+    public static int ForeignSfs2() => ForeignStartup(3);
+    public static int FfsResize64Status() => ForeignStartup(1, true);
+
+    private static int ForeignStartup(uint kind, bool resize64 = false)
+    {
+        var library = global::Amiga.Exec.OpenLibrary("dos.library", 37);
+        if (!library.HasValue) { Report(250); return 10; }
+        DOS.DOSLibraryBase = library.Value;
+        var process = global::Amiga.Exec.FindTask(CString.FromPointer(0));
+        APTR.WriteUInt32(process, 184, uint.MaxValue);
+        var control = APTR.FromPointer(global::Amiga.Exec.AllocMem(1024,
+            global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
+        if (control.IsNull) { Report(250); return 11; }
+        Report(200); Report((int)(control.Raw >> 24)); Report((int)(control.Raw >> 16));
+        Report((int)(control.Raw >> 8)); Report((int)control.Raw);
+        var setup = Mount(control, kind);
+        if (setup != 0) return Failed(control, (uint)setup);
+        var port = DOS.DeviceProc("SEQ0:");
+        var error = DOS.IoErr();
+        var result = port.IsNull ? 0u : 1u;
+        if (resize64 && port.IsNotNull)
+        {
+            result = unchecked((uint)DOS.DoPkt(port, 26401, 0, 0, 0, 0, 0));
+            error = DOS.IoErr();
+        }
+        APTR.WriteUInt32(control, 20, result);
+        APTR.WriteUInt32(control, 24, unchecked((uint)error));
+        Report(210);
+        return 0;
+    }
 
     private static int Run(uint kind, bool write, bool mountOnly = false)
     {
