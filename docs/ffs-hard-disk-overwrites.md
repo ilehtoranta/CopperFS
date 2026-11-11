@@ -1,6 +1,6 @@
 # FFS hard-disk overwrites
 
-CopperFFS can replace scattered DOS1 data blocks during an aligned overwrite wholly inside the file. It keeps standard FFS pointers. Trackdisk, removable media and unrecognized drivers use the in-place writer. DOS0 uses a separate, narrower [OFS overwrite policy](ofs-hard-disk-overwrites.md). The native mount currently recognizes `scsi.device`, `copperhdf.device` and `uaehf.device` when a complete TD_GETGEOMETRY reply identifies fixed direct-access media. This identifies the device interface. An emulated hardfile or a flash-backed controller can report the same class as a mechanical disk. The portable writer's original entry point defaults to in-place overwrites.
+CopperFFS can replace scattered DOS1 data blocks during an aligned overwrite wholly inside the file. It keeps standard FFS pointers. DOS0 uses a separate, narrower [OFS overwrite policy](ofs-hard-disk-overwrites.md). The native mount permits relocation for any device whose successful, complete TD_GETGEOMETRY reply contains valid sector size and sector count and identifies fixed direct-access media. Device names and capacity cutoffs are not used. Trackdisk is excluded by its removable-media flag; removable, non-direct-access, invalid or unavailable geometry keeps the in-place writer. This identifies the device interface. An emulated hardfile or a flash-backed controller can report the same class as a mechanical disk. The portable writer's original entry point defaults to in-place overwrites.
 
 ## Placement
 
@@ -31,7 +31,9 @@ Each pair below shows in-place followed by the selected policy. These are single
 
 The nearby case shows why counting pointer runs alone can overstate mechanical savings. Native read-ahead already covered all eight runs in a single device command. The measured improvement there came with the same cold-read command count.
 
-The selected handler passed all 14 Kickstart cases across 52 boots. All four OFS/FFS and DD/HD floppy configurations retained their original pointers and passed fresh-boot readback after media export. An unrecognized fixed device also retained its pointers. The standalone MC68000 compatibility report recorded zero managed allocation sites, and six CopperStart overwrite instruction replays passed. The Release solution build passed with 1,255 host tests passing and three external SFS media cases skipped.
+The original name-restricted handler passed all 14 Kickstart cases across 52 boots. All four OFS/FFS and DD/HD floppy configurations retained their original pointers and passed fresh-boot readback after media export. An unrecognized fixed device also retained its pointers under that earlier policy. The standalone MC68000 compatibility report recorded zero managed allocation sites, and six CopperStart overwrite instruction replays passed. The Release solution build passed with 1,255 host tests passing and three external SFS media cases skipped.
+
+The geometry-only policy passed all 19 Kickstart cases across 80 boots on 2026-11-12. The unrecognized fixed device relocated qualifying OFS/FFS overwrites into one run and passed fresh-boot byte verification. All four trackdisk configurations retained their original pointers and passed fresh-boot readback after media export. The rebuilt standalone MC68000 handler recorded zero managed allocation sites, and all six CopperStart overwrite instruction replays passed. The Release solution build passed, with 1,339 host tests passing and three external SFS media cases skipped. Results are under `artifacts/geometry-relocation-20261112/`; these emulated-ROM checks do not establish physical-device timings or persistence.
 
 ## Reproducing the comparison
 

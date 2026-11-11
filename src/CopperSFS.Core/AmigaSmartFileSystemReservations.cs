@@ -61,7 +61,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaFileSystemPlatform
     {
         if (!HasOverwriteReservations(ref p, ref w)) return;
-        var bits = (p.Geometry.BlockBytes - 12) * 8;
+        var bits = (p.BlockBytes - 12) * 8;
         var mapStart = mapIndex * bits;
         for (var i = 0; i < ReservationSlots; i++)
         {
@@ -90,7 +90,7 @@ public static partial class AmigaSmartFileSystemWriteCore
     {
         reservation = APTR.Null;
         if (w.Reservations.IsNull || !p.IsMapped(w.Reservations, OverwriteReservationBytes)) return true;
-        var bytes = p.Geometry.BlockBytes;
+        var bytes = p.BlockBytes;
         APTR vacant = APTR.Null;
         uint held = 0;
         for (var i = 0; i < ReservationSlots; i++)
@@ -139,7 +139,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (slot.IsNull || p.ReadUInt32(slot, ReservationNode) != node ||
             p.ReadUInt32(slot, ReservationNext) != index || count > p.ReadUInt32(slot, ReservationLeft)) return true;
         var first = p.ReadUInt32(slot, ReservationFirst);
-        var bits = (p.Geometry.BlockBytes - 12) * 8;
+        var bits = (p.BlockBytes - 12) * 8;
         var loaded = uint.MaxValue;
         for (var i = 0u; i < count; i++)
         {

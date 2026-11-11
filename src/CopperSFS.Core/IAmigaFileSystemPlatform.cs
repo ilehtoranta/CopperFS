@@ -11,6 +11,8 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
     uint BlockCount => Geometry.BlockCount;
     uint BlockBytes => Geometry.BlockBytes;
     uint ReservedBlocks => Geometry.ReservedBlocks;
+    /// <summary>Stable allocation-placement hint, identical to Geometry.TrackBlocks.</summary>
+    uint TrackBlocks => Geometry.TrackBlocks;
     bool ReadBlock(uint block, APTR destination);
     /// <summary>Optionally supply a logically current FFS metadata image.
     /// True means the platform handled the read; view is null on I/O failure.

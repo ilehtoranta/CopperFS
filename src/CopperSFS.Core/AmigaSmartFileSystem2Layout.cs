@@ -9,7 +9,7 @@ internal static class Sfs2Layout
     internal const uint RootNode = 1;
     private const AmigaSmartFileSystemFormat Format = AmigaSmartFileSystemFormat.Sfs2;
     internal static bool Root<T>(ref T p, APTR buffer) where T : struct, IAmigaFileSystemPlatform =>
-        p.Geometry.BlockCount <= AmigaSmartFileSystem2WriteCore.MaxVolumeBlocks &&
+        p.BlockCount <= AmigaSmartFileSystem2WriteCore.MaxVolumeBlocks &&
         AmigaSmartFileSystemReadOnlyCore.Root(ref p, buffer, out var format) && format == Format;
     internal static bool Mount<T>(ref T p, APTR buffer) where T : struct, IAmigaFileSystemPlatform =>
         AmigaSmartFileSystemReadOnlyCore.Mount(ref p, buffer, out var format) && format == Format;

@@ -25,7 +25,13 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         p.Clear(fib, FileInfoBlock.SizeInBytes);
         var type = entry.Node == 1 ? 1u : entry.SoftLink ? 3u : entry.Directory ? 2u : 0xFFFFFFFD;
         var size = entry.Directory ? 0UL : entry.Size;
-        var count = entry.Directory ? (entry.Node == 1 ? 0UL : 1UL) : size / p.Geometry.BlockBytes + (size % p.Geometry.BlockBytes == 0 ? 0UL : 1UL);
+        ulong count;
+        if (entry.Directory) count = entry.Node == 1 ? 0UL : 1UL;
+        else
+        {
+            count = AmigaSfsGeometryMath.DivRem(size, p.BlockBytes, out var remainder);
+            if (remainder != 0) count++;
+        }
         p.WriteUInt32(fib, 0, entry.Node); p.WriteUInt32(fib, 4, type); p.WriteUInt32(fib, 120, type);
         p.WriteUInt8(fib, 8, (byte)entry.NameLength);
         for (uint i = 0; i < entry.NameLength; i++) p.WriteUInt8(fib, 9 + (int)i, p.ReadUInt8(entry.Name, (int)i));

@@ -4,8 +4,90 @@ using static CopperSFS.Tests.Sfs2WriteTests;
 
 namespace CopperSFS.Tests;
 
-public sealed class Sfs2TrimTests
+public sealed class Sfs2TrimTests(Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(8, 512)] [InlineData(32, 512)] [InlineData(128, 4096)]
+    public void CachedWindowValidationIsLinearAndWritesInvalidateIt(int mib, int bytes)
+    {
+        var image = Empty(bytes, capacity: mib * 1024 * 1024);
+        var disk = new StudyDisk(image, bytes);
+        var certificate = APTR.FromPointer((uint)disk.Ram.Length - 4);
+        disk.TrimCertificate = certificate;
+        var work = WorkFor(disk);
+        for (uint cursor = 0; cursor < disk.Geometry.BlockCount; cursor += 4096)
+            Assert.True(AmigaSmartFileSystem2WriteCore.TrimWindow(ref disk, ref work, APTR.Null,
+                0, out _, cursor, 4096, certificate));
+        var maps = (disk.BlockCount - 1) / ((uint)(bytes - 12) * 8) + 1;
+        var windows = (disk.BlockCount + 4095) / 4096;
+        output.WriteLine($"{mib} MiB cached windows: {disk.Counts}; maps={maps}");
+        // Full preflight once, bounded bitmap work per subsequent window.
+        Assert.True(disk.Counts.BlockReads < maps + windows * 20);
+        Assert.Equal(1, disk.Counts.Flushes);
+        Assert.Equal(1u, disk.ReadUInt32(certificate));
+        var before = disk.DiscardRequests.Count;
+        var lastMap = U32(image, 96) + maps - 1;
+        Assert.True(disk.ReadBlock(lastMap, work.Meta));
+        disk.WriteUInt32(work.Meta, 4, disk.ReadUInt32(work.Meta, 4) ^ 1);
+        Assert.True(disk.WriteBlock(lastMap, work.Meta));
+        Assert.Equal(0u, disk.ReadUInt32(certificate));
+        Assert.False(AmigaSmartFileSystem2WriteCore.TrimWindow(ref disk, ref work, APTR.Null,
+            0, out _, 0, 4096, certificate));
+        Assert.Equal(before, disk.DiscardRequests.Count);
+    }
+
+    [Fact]
+    public void DeferredWindowIoCostIsMeasuredAgainstOneManualPass()
+    {
+        var image = Empty(capacity: 8 * 1024 * 1024);
+        var manual = new StudyDisk(image.ToArray(), 512); var work = WorkFor(manual);
+        Assert.True(AmigaSmartFileSystem2WriteCore.Trim(ref manual, ref work, APTR.Null, 0, out _));
+        var delayed = new StudyDisk(image.ToArray(), 512); work = WorkFor(delayed);
+        for (uint cursor = 0; cursor < delayed.Geometry.BlockCount; cursor += 4096)
+            Assert.True(AmigaSmartFileSystem2WriteCore.TrimWindow(ref delayed, ref work, APTR.Null,
+                0, out _, cursor, 4096));
+        output.WriteLine($"Manual: {manual.Counts}; deferred windows: {delayed.Counts}");
+        Assert.Equal(manual.Discarded, delayed.Discarded);
+        // This is a measured qualification limitation: preflight repeats per window.
+        Assert.True(delayed.Counts.BlockReads > manual.Counts.BlockReads);
+        Assert.True(delayed.Counts.Flushes > manual.Counts.Flushes);
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void DeferredWindowsRevalidateReusedBlocksAndRecoverBeforeDiscard(bool redo)
+    {
+        var disk = new StudyDisk(Empty(), 512, crashModel: true);
+        var deleted = CreateFile(ref disk, "Deleted");
+        PutFile(ref disk, deleted, 0, StudyFixture.Pattern(8192, 22));
+        var work = WorkFor(disk);
+        if (redo)
+        {
+            var request = new AmigaSmartFileSystem2WriteCore.Request { Node = deleted };
+            Assert.True(AmigaSmartFileSystem2WriteCore.ExecuteTrst(ref disk, ref work, ref request,
+                AmigaSmartFileSystem2WriteCore.TrstOperation.Remove, disk.Payload, 192 * 1024, out _));
+        }
+        else Assert.True(AmigaSmartFileSystem2WriteCore.Remove(ref disk, ref work, deleted));
+        // An allocation happens after scheduling and before the delayed scan.
+        var keep = CreateFile(ref disk, "Reused");
+        PutFile(ref disk, keep, 0, StudyFixture.Pattern(16384, 23));
+        var expected = Manifest(disk.Snapshot());
+        const uint window = 67;
+        for (uint cursor = 0; cursor < disk.Geometry.BlockCount; cursor += window)
+        {
+            var requests = disk.DiscardRequests.Count;
+            Assert.True(AmigaSmartFileSystem2WriteCore.TrimWindow(ref disk, ref work, APTR.Null, 0,
+                out _, cursor, window), work.Error.ToString());
+            foreach (var (block, count) in disk.DiscardRequests.Skip(requests))
+            {
+                Assert.True(block >= cursor);
+                Assert.True(count <= window && block - cursor <= window - count);
+            }
+            Assert.Equal(expected, Manifest(disk.Snapshot()));
+        }
+        Inspect(disk.Snapshot());
+    }
+
     [Theory]
     [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)]
     public void EveryBitmapAndPermanentMetadataMustValidateBeforeAnyDiscard(int corruption)

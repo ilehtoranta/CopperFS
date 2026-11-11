@@ -7,11 +7,15 @@ namespace CopperStart.Dos;
 /// with a scanned range and its completed discard. No per-mount trim allocation.</summary>
 internal static class NativeSfsTrim
 {
-    public static int Execute(APTR state, APTR packet, out DOS.Error error, bool ffs = false)
+    public static int Execute(APTR state, APTR packet, out DOS.Error error, bool ffs = false) =>
+        ExecuteRecord(state, APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset)),
+            out error, 0, uint.MaxValue, ffs);
+
+    internal static int ExecuteRecord(APTR state, APTR record, out DOS.Error error,
+        uint startBlock, uint blockCount, bool ffs = false, APTR validation = default)
     {
         error = DOS.Error.BadNumber;
         var p = new NativeFileSystemPlatform(state);
-        var record = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
         if (record.IsNull || !p.IsMapped(record, AmigaSmartFileSystemTrimPacket.Size) ||
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.SizeOffset) < AmigaSmartFileSystemTrimPacket.Size ||
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.VersionOffset) != AmigaSmartFileSystemTrimPacket.Version ||
@@ -38,8 +42,8 @@ internal static class NativeSfsTrim
 #endif
         {
             NativeAmigaFileSystem.InitializeWriteWork(state, out var ffsWork);
-            success = AmigaFfsWriteCore.Trim(ref p, ref ffsWork, APTR.FromPointer(memory),
-                APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result);
+            success = AmigaFfsWriteCore.TrimWindow(ref p, ref ffsWork, APTR.FromPointer(memory),
+                APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result, startBlock, blockCount, validation);
             error = ffsWork.Error;
         }
 #if !COPPERSTART_FFS_ONLY
@@ -52,11 +56,11 @@ internal static class NativeSfsTrim
 #if COPPERSTART_NATIVE_SFS2
             if (NativeSfs2Bridge.IsSfs2(state))
                 success = NativeSfs2Bridge.Trim(state, ref p, ref work, APTR.FromPointer(memory),
-                    APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result);
+                    APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result, startBlock, blockCount, validation);
             else
 #endif
-            success = AmigaSmartFileSystemWriteCore.Trim(ref p, ref work, APTR.FromPointer(memory),
-                APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result);
+            success = AmigaSmartFileSystemWriteCore.TrimWindow(ref p, ref work, APTR.FromPointer(memory),
+                APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result, startBlock, blockCount, validation);
 
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, work.JournalCursor);
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset, work.AllocationCursor);
@@ -72,15 +76,19 @@ internal static class NativeSfsTrim
         return success ? -1 : 0;
     }
 
-#if !COPPERSTART_NATIVE_SFS_WRITES
+#if !COPPERSTART_NATIVE_SFS_WRITES || COPPERFS_FFS_HANDLER
     // Classic routes only FFS/OFS maintenance here. A direct entry keeps the
     // unrelated SFS journal writer out of that ROM's closed-world call graph.
     // Retain Execute for profiles/callers that explicitly request smart trim.
-    public static int ExecuteFfs(APTR state, APTR packet, out DOS.Error error)
+    public static int ExecuteFfs(APTR state, APTR packet, out DOS.Error error) =>
+        ExecuteFfsRecord(state, APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset)),
+            out error, 0, uint.MaxValue);
+
+    internal static int ExecuteFfsRecord(APTR state, APTR record, out DOS.Error error,
+        uint startBlock, uint blockCount, APTR validation = default)
     {
         error = DOS.Error.BadNumber;
         var p = new NativeFileSystemPlatform(state);
-        var record = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
         if (record.IsNull || !p.IsMapped(record, AmigaSmartFileSystemTrimPacket.Size) ||
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.SizeOffset) < AmigaSmartFileSystemTrimPacket.Size ||
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.VersionOffset) != AmigaSmartFileSystemTrimPacket.Version ||
@@ -100,8 +108,8 @@ internal static class NativeSfsTrim
         }
         if (memory == 0) { error = DOS.Error.NoFreeStore; return 0; }
         NativeAmigaFileSystem.InitializeWriteWork(state, out var work);
-        var success = AmigaFfsWriteCore.Trim(ref p, ref work, APTR.FromPointer(memory),
-            APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out var result);
+        var success = AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.FromPointer(memory),
+            APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out var result, startBlock, blockCount, validation);
         error = work.Error;
         global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.BlocksOffset, result.Blocks); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.RangesOffset, result.Ranges);

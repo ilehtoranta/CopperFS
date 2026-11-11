@@ -1,0 +1,56 @@
+Short:        OFS/FFS and SFS handlers with TRIM support
+Author:       Ilkka Lehtoranta
+Uploader:     Ilkka Lehtoranta (ilkleht@gmail.com)
+Type:         disk/misc
+Version:      1.0
+Architecture: m68k-amigaos >= 2.0
+
+CopperFS provides new replacement Amiga OFS/FFS and SFS filesystem
+implementations with TRIM support. They are written in C# using
+GPT 6.1 Sol and 6.0 Astra. The project is MIT licensed.
+
+CopperFFS supports reading and writing DOS0/OFS and DOS1/FFS volumes.
+CopperSFS supports SFS and SFS2 volumes. The SFS2 TRST handler also
+supports SFS volumes and can recover outstanding CSUN and TRST journals
+on writable media.
+
+CopperTrim provides an explicit manual discard command for supported
+writable formats and devices. Discard requires a device and driver that
+support the required SCSI UNMAP commands.
+
+The release candidate was tested with host and native replay tests and
+with original-handler comparisons under emulated Kickstart 3.1. Physical
+Amiga and storage testing has not been completed.
+
+Archive contents
+----------------
+
+The intended 1.0 archive contains the CopperFFS handler, the CopperSFS
+SFS2 TRST handler, the CopperTrim command, this README and the MIT license
+and applicable third-party notices. SFS2 TRST is the default CopperSFS
+handler and supports both SFS and SFS2 volumes.
+
+Installation
+------------
+
+Make a verified backup before changing a partition's filesystem handler.
+Complete journal recovery before switching SFS handlers.
+
+Copy handlers to L: on your boot volume. Use CopperFFS for an OFS or FFS
+partition, or CopperSFS SFS2 TRST for an SFS or SFS2 partition.
+Copy CopperTrim to C: if you want to use it. However, it is only useful
+if your underlying device driver supports it.
+
+For a partition configured in the RDB, update the filesystem entry with
+the selected handler and assign it to the partition's existing DOS type.
+Copying a handler to L: alone does not update an RDB filesystem entry.
+For a mountlist or DOSDrivers entry, set its FileSystem field to the handler
+in L: and retain the partition's existing device, geometry and DOS type.
+Check that the volume mounts and that its files are readable before relying
+on it.
+
+After an interrupted SFS write, use the appropriate handler to complete
+recovery on writable media before switching handlers. The SFS2 TRST
+handler can recover both CSUN and TRST journals.
+
+Source code is at https://github.com/ilehtoranta/CopperFS

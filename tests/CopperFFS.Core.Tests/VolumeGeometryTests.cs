@@ -18,6 +18,7 @@ public sealed partial class VolumeGeometryTests
         public bool BulkTransfers;
         public int FailFlushCall;
         public long LongReads, GeometryReads;
+        public APTR TrimCertificate;
     }
 
     private partial struct Memory(Storage storage, AmigaVolumeGeometry geometry) : IAmigaWritableFileSystemPlatform, IAmigaFileSystemDevicePlatform, IAmigaDiscardFileSystemPlatform
@@ -44,6 +45,7 @@ public sealed partial class VolumeGeometryTests
         {
             storage.Transfers.Add((command, offset, bytes));
             var write = command is 3 or 25;
+            if (write && storage.TrimCertificate.IsNotNull) WriteUInt32(storage.TrimCertificate, 0, 0);
             if (write && ++storage.WriteCalls == storage.FailWriteCall) return false;
             if (write && offset == storage.FailWrite) return false;
             for (var at = 0u; at < bytes; at += geometry.SectorBytes)

@@ -14,4 +14,17 @@ internal static class AmigaGeometryMath
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static uint Remainder(uint value, uint divisor)
     { if (divisor == 0) return 0; return value % divisor; }
+
+    // Keep both operations together so native arithmetic selection can retain
+    // both outputs of a single division, including the MC68000 software path.
+    // Byte-copy callers copy the out temporary to a scalar local; otherwise its
+    // address-taken home can cause a native memory load on every copied byte.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static uint DivRem(uint value, uint divisor, out uint remainder)
+    {
+        if (divisor == 0) { remainder = 0; return 0; }
+        var quotient = value / divisor;
+        remainder = value % divisor;
+        return quotient;
+    }
 }

@@ -26,6 +26,7 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     internal bool RelocateFragmented = true;
     public APTR RedoOverlay { get; set; }
     internal bool DiscardSupported = true;
+    internal APTR TrimCertificate;
     internal int Discarded, FailDiscardAt;
     internal AmigaFileSystemDiscardLimits DiscardLimits = new() { MaximumBlocks = 32, Granularity = 1 };
     internal List<(uint Block, uint Count)> DiscardRequests = new();
@@ -121,6 +122,7 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     }
     private bool WriteOne(uint block, APTR source)
     {
+        if (TrimCertificate.IsNotNull) WriteUInt32(TrimCertificate, 0, 0);
         if (RedoOverlay.IsNotNull) return AmigaSmartFileSystemRedoArena.Store(ref this, RedoOverlay, block, source);
         CheckBlock(block);
         if (block < Geometry.ReservedBlocks || block >= Geometry.BlockCount - 1)

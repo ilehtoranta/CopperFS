@@ -40,7 +40,7 @@ public static partial class AmigaFfsWriteCore
     }
     private static bool Prepare<T>(ref T p, ref Work w, uint needed, bool scan = true) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         w.Error = DOS.Error.None;
         var bitmapBits = geometry.BitmapBits;
         if (bitmapBits == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -80,16 +80,16 @@ public static partial class AmigaFfsWriteCore
         if (geometry.BlockCount - used < needed) return Fail(ref w, DOS.Error.DiskFull);
         return true;
     }
-    private static bool Begin<T>(ref T p, ref Work w, ref AmigaVolumeGeometry geometry, uint valid = 0) where T : struct, IAmigaWritableFileSystemPlatform
+    private static bool Begin<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint valid = 0) where T : struct, IAmigaWritableFileSystemPlatform
     {
 
         if (!Header(ref p, ref w, geometry.RootBlock)) return false;
         p.WriteUInt32(w.Meta, geometry.Tail + 312, valid);
         return Put(ref p, ref w, geometry.RootBlock, w.Meta, 20);
     }
-    private static bool Finish<T>(ref T p, ref Work w, ref AmigaVolumeGeometry geometry) where T : struct, IAmigaWritableFileSystemPlatform
+    private static bool Finish<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        return FlushBitmap(ref p, ref w) && Begin(ref p, ref w, ref geometry, uint.MaxValue);
+        return FlushBitmap(ref p, ref w) && Begin(ref p, ref w, in geometry, uint.MaxValue);
     }
     private static bool FlushBitmap<T>(ref T p, ref Work w) where T : struct, IAmigaWritableFileSystemPlatform
     {
@@ -144,7 +144,7 @@ public static partial class AmigaFfsWriteCore
     private static uint Allocate<T>(ref T p, ref Work w) where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (w.Error != DOS.Error.None) return 0;
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         var key = w.NextKey;
         var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
         while (key < geometry.BlockCount)
@@ -186,7 +186,7 @@ public static partial class AmigaFfsWriteCore
     // before the next pointer table, where metadata may consume free space.
     // Keep NextKey independent: its first-free scan must still find earlier
     // holes after data has been placed near a file's tail.
-    private static uint AllocateData<T>(ref T p, ref Work w, ref AmigaVolumeGeometry g,
+    private static uint AllocateData<T>(ref T p, ref Work w, in AmigaFfsGeometry g,
         uint preferred, uint wanted, ref uint runFirst, ref uint runCount)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
@@ -205,8 +205,9 @@ public static partial class AmigaFfsWriteCore
                 // Only inspect the rest of this track (or a table-sized window
                 // for unknown geometry), in the bitmap already loaded above.
                 // Never load another bitmap merely to find a longer run.
-                var window = g.TrackBlocks > 1
-                    ? g.TrackBlocks - AmigaGeometryMath.Remainder(preferred, g.TrackBlocks)
+                var trackBlocks = p.TrackBlocks;
+                var window = trackBlocks > 1
+                    ? trackBlocks - AmigaGeometryMath.Remainder(preferred, trackBlocks)
                     : g.TableEntries;
                 if (window > available) window = available;
                 uint first = 0, count = 0;
@@ -306,26 +307,24 @@ public static partial class AmigaFfsWriteCore
     }
     public static bool Create<T>(ref T p, ref Work w, ref Request r, bool directory) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         if (!Parent(ref p, ref w, ref r)) return false;
         var existing = AmigaDiskFileSystemCore.Resolve(ref p, r.Directory, r.Name, r.Length, 0x444F5301, w.Meta, out var error);
         if (existing != 0) return Fail(ref w, DOS.Error.ObjectExists);
         if (error != DOS.Error.ObjectNotFound) return Fail(ref w, error);
-        if (!Prepare(ref p, ref w, 1) || !Begin(ref p, ref w, ref geometry)) return false;
+        if (!Prepare(ref p, ref w, 1) || !Begin(ref p, ref w, in geometry)) return false;
         var key = Allocate(ref p, ref w); if (key == 0) return false;
         p.Clear(w.Meta, geometry.BlockBytes); p.WriteUInt32(w.Meta, 0, 2); p.WriteUInt32(w.Meta, 4, key);
         p.WriteUInt32(w.Meta, 12, directory || w.DosType == 0x444F5301 ? geometry.TableEntries : 0);
         p.WriteUInt32(w.Meta, geometry.Tail + 508, directory ? 2u : 0xFFFFFFFD);
         p.WriteUInt8(w.Meta, geometry.Tail + 432, (byte)r.Length);
         for (var i = 0u; i < r.Length; i++) p.WriteUInt8(w.Meta, geometry.Tail + 433 + (int)i, p.ReadUInt8(r.Name, (int)i));
-        if (!Put(ref p, ref w, key, w.Meta, 20) || !Link(ref p, ref w, key, r.Directory) || !Finish(ref p, ref w, ref geometry)) return false;
+        if (!Put(ref p, ref w, key, w.Meta, 20) || !Link(ref p, ref w, key, r.Directory) || !Finish(ref p, ref w, in geometry)) return false;
         r.Header = key; return true;
     }
-    private static bool Allocated<T>(ref T p, ref Work w, ref AmigaVolumeGeometry geometry, uint key) where T : struct, IAmigaWritableFileSystemPlatform
-        => Allocated(ref p, ref w, ref geometry, key, geometry.RootBlock);
-    private static bool Allocated<T>(ref T p, ref Work w, ref AmigaVolumeGeometry geometry, uint key, uint rootBlock) where T : struct, IAmigaWritableFileSystemPlatform
+    private static bool Allocated<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint key) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (key < geometry.ReservedBlocks || key >= geometry.BlockCount || key == rootBlock ||
+        if (key < geometry.ReservedBlocks || key >= geometry.BlockCount || key == geometry.RootBlock ||
             IsFree(ref p, ref w, key) || key == w.BitmapBlock || w.Error != DOS.Error.None)
             return Fail(ref w, DOS.Error.DiskNotValidated);
         return true;
@@ -340,13 +339,12 @@ public static partial class AmigaFfsWriteCore
     {
         lastData = 0;
         if (w.DosType == 0x444F5300) return OfsChain(ref p, ref w, header, release, out lastData);
-        var geometry = p.Geometry;
-        var rootBlock = geometry.RootBlock;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         var table = header;
         uint logical = 0, blocks = 0;
         for (var guard = 0u; table != 0 && guard < geometry.BlockCount; guard++)
         {
-            if (!Allocated(ref p, ref w, ref geometry, table, rootBlock) || !p.ReadBlock(table, w.Meta) || !AmigaDiskFileSystemCore.Checksum(ref p, w.Meta) ||
+            if (!Allocated(ref p, ref w, in geometry, table) || !p.ReadBlock(table, w.Meta) || !AmigaDiskFileSystemCore.Checksum(ref p, w.Meta) ||
                 p.ReadUInt32(w.Meta, 4) != table || p.ReadUInt32(w.Meta, 8) > geometry.TableEntries ||
                 p.ReadUInt32(w.Meta) != (table == header ? 2u : 16u) || p.ReadUInt32(w.Meta, geometry.Tail + 508) != 0xFFFFFFFD ||
                 (table != header && p.ReadUInt32(w.Meta, geometry.Tail + 500) != header)) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -361,7 +359,7 @@ public static partial class AmigaFfsWriteCore
             for (var i = first; i < count && i < limit; i++)
             {
                 var key = p.ReadUInt32(w.Meta, geometry.Tail + 308 - (int)i * 4);
-                if (!Allocated(ref p, ref w, ref geometry, key, rootBlock)) return false;
+                if (!Allocated(ref p, ref w, in geometry, key)) return false;
                 if (blocks != 0 && logical + i == blocks - 1) lastData = key;
                 if (release) Bit(ref p, ref w, key, true);
             }
@@ -378,7 +376,7 @@ public static partial class AmigaFfsWriteCore
     }
     public static bool Remove<T>(ref T p, ref Work w, uint key, bool truncate) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         if (key == geometry.RootBlock) return Fail(ref w, DOS.Error.ObjectInUse);
         if (!Prepare(ref p, ref w, 0) || !Header(ref p, ref w, key)) return false;
         var type = unchecked((int)p.ReadUInt32(w.Meta, geometry.Tail + 508));
@@ -389,7 +387,7 @@ public static partial class AmigaFfsWriteCore
             for (var at = 24; at < geometry.Tail + 312; at += 4) if (p.ReadUInt32(w.Meta, at) != 0) return Fail(ref w, DOS.Error.DirectoryNotEmpty);
         }
         else if (!Chain(ref p, ref w, key, false)) return false;
-        if (!Begin(ref p, ref w, ref geometry)) return false;
+        if (!Begin(ref p, ref w, in geometry)) return false;
         if (type < 0 && !Chain(ref p, ref w, key, true)) return false;
         if (truncate)
         {
@@ -399,11 +397,11 @@ public static partial class AmigaFfsWriteCore
             if (!Put(ref p, ref w, key, w.Meta, 20)) return false;
         }
         else { if (!Unlink(ref p, ref w, key)) return false; Bit(ref p, ref w, key, true); }
-        return Finish(ref p, ref w, ref geometry);
+        return Finish(ref p, ref w, in geometry);
     }
     public static bool Rename<T>(ref T p, ref Work w, ref Request r) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         if (r.Header == geometry.RootBlock) return Fail(ref w, DOS.Error.ObjectInUse);
         if (!Parent(ref p, ref w, ref r)) return false;
         var found = AmigaDiskFileSystemCore.Resolve(ref p, r.Directory, r.Name, r.Length, 0x444F5301, w.Meta, out var error);
@@ -420,16 +418,16 @@ public static partial class AmigaFfsWriteCore
             ancestor = p.ReadUInt32(w.Meta, geometry.Tail + 500);
             if (guard + 1 == geometry.BlockCount) return Fail(ref w, DOS.Error.DiskNotValidated);
         }
-        if (!Begin(ref p, ref w, ref geometry) || !Unlink(ref p, ref w, r.Header) || !Header(ref p, ref w, r.Header)) return false;
+        if (!Begin(ref p, ref w, in geometry) || !Unlink(ref p, ref w, r.Header) || !Header(ref p, ref w, r.Header)) return false;
         for (var at = geometry.Tail + 432; at < geometry.Tail + 464; at++) p.WriteUInt8(w.Meta, at, 0);
         p.WriteUInt8(w.Meta, geometry.Tail + 432, (byte)r.Length);
         for (var i = 0u; i < r.Length; i++) p.WriteUInt8(w.Meta, geometry.Tail + 433 + (int)i, p.ReadUInt8(r.Name, (int)i));
-        return Put(ref p, ref w, r.Header, w.Meta, 20) && Link(ref p, ref w, r.Header, r.Directory) && Finish(ref p, ref w, ref geometry);
+        return Put(ref p, ref w, r.Header, w.Meta, 20) && Link(ref p, ref w, r.Header, r.Directory) && Finish(ref p, ref w, in geometry);
     }
     public static bool SetMetadata<T>(ref T p, ref Work w, ref Request r,
         DosPacketAction action) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         if (action != DosPacketAction.SetProtection && action != DosPacketAction.SetComment && action != DosPacketAction.SetDate)
             return Fail(ref w, DOS.Error.ActionNotKnown);
         // The volume root has a different layout: these file-header fields
@@ -438,7 +436,7 @@ public static partial class AmigaFfsWriteCore
         if (action == DosPacketAction.SetComment && r.Length > 79)
             return Fail(ref w, DOS.Error.CommentTooBig);
         if (!Prepare(ref p, ref w, 0) || !Header(ref p, ref w, r.Header)) return false;
-        if (!Begin(ref p, ref w, ref geometry) || !Header(ref p, ref w, r.Header)) return false;
+        if (!Begin(ref p, ref w, in geometry) || !Header(ref p, ref w, r.Header)) return false;
         if (action == DosPacketAction.SetProtection)
             p.WriteUInt32(w.Meta, geometry.Tail + 320, r.Position);
         else if (action == DosPacketAction.SetDate)
@@ -451,7 +449,7 @@ public static partial class AmigaFfsWriteCore
             for (var index = 0u; index < r.Length; index++)
                 p.WriteUInt8(w.Meta, geometry.Tail + 329 + (int)index, p.ReadUInt8(r.Buffer, (int)index));
         }
-        return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, ref geometry);
+        return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, in geometry);
     }
 
     public static bool Write<T>(ref T p, ref Work w, ref Request r, out uint actual) where T : struct, IAmigaWritableFileSystemPlatform
@@ -460,7 +458,7 @@ public static partial class AmigaFfsWriteCore
     // Opt in only when the mount has positively identified a fixed hard disk.
     public static bool Write<T>(ref T p, ref Work w, ref Request r, out uint actual, bool fixedHardDisk) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var geometry = p.Geometry;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         actual = 0;
         var blockBytes = geometry.BlockBytes; var tableEntries = geometry.TableEntries;
         if (blockBytes == 0 || tableEntries == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -491,7 +489,7 @@ public static partial class AmigaFfsWriteCore
             var newExt = AmigaGeometryMath.Divide(newBlocks - 1, tableEntries);
             if (!Prepare(ref p, ref w, newBlocks - oldBlocks + newExt - oldExt)) return false;
         }
-        if (!Begin(ref p, ref w, ref geometry)) return false;
+        if (!Begin(ref p, ref w, in geometry)) return false;
         var table = r.Header; var tableIndex = 0u;
         uint runFirst = 0, runCount = 0;
         // A failed fit is final for this table. Never probe again per sector.
@@ -499,8 +497,9 @@ public static partial class AmigaFfsWriteCore
             ? first : uint.MaxValue;
         while (actual < r.Length)
         {
-            var position = r.Position + actual; var index = AmigaGeometryMath.Divide(position, blockBytes);
-            var targetTable = AmigaGeometryMath.Divide(index, tableEntries);
+            var position = r.Position + actual; var index = AmigaGeometryMath.DivRem(position, blockBytes, out var withinRemainder);
+            var targetTable = AmigaGeometryMath.DivRem(index, tableEntries, out var slotRemainder);
+            var slot = slotRemainder;
             // Walk/extend pointer tables sequentially, retaining only their key.
             while (tableIndex < targetTable)
             {
@@ -519,49 +518,52 @@ public static partial class AmigaFfsWriteCore
                 table = next; tableIndex++;
             }
             if (!p.ReadBlock(table, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
-            var slot = AmigaGeometryMath.Remainder(index, tableEntries);
             var at = geometry.Tail + 308 - (int)slot * 4; var key = p.ReadUInt32(w.Meta, at);
             if (index == probeAt)
             {
                 var countInTable = tableEntries - slot;
                 if (countInTable > limit - index) countInTable = limit - index;
                 probeAt += countInTable;
-                if (!RelocateOverwrite(ref p, ref w, ref geometry, ref r, table, slot, countInTable, ref actual, out var moved)) return false;
+                if (!RelocateOverwrite(ref p, ref w, in geometry, ref r, table, slot, countInTable, ref actual, out var moved)) return false;
                 if (moved)
                 {
-                    if (actual == r.Length) return Finish(ref p, ref w, ref geometry);
+                    if (actual == r.Length) return Finish(ref p, ref w, in geometry);
                     continue;
                 }
             }
             if (index >= oldBlocks)
             {
                 var wanted = newBlocks - index;
-                var slots = tableEntries - AmigaGeometryMath.Remainder(index, tableEntries);
+                var slots = tableEntries - slot;
                 if (wanted > slots) wanted = slots;
-                key = AllocateData(ref p, ref w, ref geometry, (lastData == 0 ? r.Header : lastData) + 1,
+                key = AllocateData(ref p, ref w, in geometry, (lastData == 0 ? r.Header : lastData) + 1,
                     wanted, ref runFirst, ref runCount);
                 if (key == 0) return false;
                 lastData = key;
-                p.WriteUInt32(w.Meta, at, key); p.WriteUInt32(w.Meta, 8, AmigaGeometryMath.Remainder(index, tableEntries) + 1);
+                p.WriteUInt32(w.Meta, at, key); p.WriteUInt32(w.Meta, 8, slot + 1);
                 if (index == 0) p.WriteUInt32(w.Meta, 16, key);
                 if (!Put(ref p, ref w, table, w.Meta, 20)) return false;
                 p.Clear(w.Data, geometry.BlockBytes);
             }
             else if (!p.ReadBlock(key, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
-            var within = AmigaGeometryMath.Remainder(position, blockBytes); var count = blockBytes - within;
+            var within = withinRemainder;
+            var count = blockBytes - within;
             if (count > r.Length - actual) count = r.Length - actual;
-            for (var i = 0u; i < count; i++) p.WriteUInt8(w.Data, (int)(within + i), p.ReadUInt8(r.Buffer, (int)(actual + i)));
+            // Keep geometry and request fields out of the per-byte live set.
+            var source = APTR.FromPointer(r.Buffer.Raw + actual);
+            var destination = APTR.FromPointer(w.Data.Raw + within);
+            for (var i = 0u; i < count; i++) p.WriteUInt8(destination, (int)i, p.ReadUInt8(source, (int)i));
             if (!Put(ref p, ref w, key, w.Data, -1)) return false;
             actual += count;
         }
         if (!Header(ref p, ref w, r.Header)) return false;
         p.WriteUInt32(w.Meta, geometry.Tail + 324, newSize);
-        return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, ref geometry);
+        return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, in geometry);
     }
 
     // Limit the first hard-disk policy to a single bitmap page per table
     // segment. Reservation and release then each cost just one bitmap write.
-    private static bool RelocateOverwrite<T>(ref T p, ref Work w, ref AmigaVolumeGeometry g,
+    private static bool RelocateOverwrite<T>(ref T p, ref Work w, in AmigaFfsGeometry g,
         ref Request r, uint table, uint slot, uint count, ref uint actual, out bool moved)
         where T : struct, IAmigaWritableFileSystemPlatform
     {

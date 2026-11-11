@@ -142,7 +142,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
 
     [OverwriteBenchmarkTheory]
     [InlineData(32, false)] [InlineData(64, true)]
-    public async System.Threading.Tasks.Task UnknownFixedDeviceOverwritesInPlace(int blocks, bool ofs)
+    public async System.Threading.Tasks.Task UnknownFixedDeviceRelocatesOverwrite(int blocks, bool ofs)
     {
         var root = Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_RESULTS")!, ofs ? "unknown-ofs" : "unknown");
         var handler = Environment.GetEnvironmentVariable("COPPERFS_FFS_HANDLER")!;
@@ -151,8 +151,13 @@ public sealed partial class OriginalHandlerCorrectnessTests
         ScatterPayload(disk, blocks, ofs ? 8 : 4, ofs);
         var suffix = ofs ? "UnknownOfs" : "Unknown";
         var written = await Run(root, "disk", "write", handler, disk.Bytes, true, "FfsOverwriteProbe::Write" + suffix);
-        for (var i = 0; i < blocks; i++) Assert.Equal(DiskWord(disk.Bytes, disk.PayloadHeader, 308 - i * 4),
-            DiskWord(written, disk.PayloadHeader, 308 - i * 4));
+        var first = DiskWord(written, disk.PayloadHeader, 308);
+        for (var i = 0; i < blocks; i++)
+        {
+            var key = DiskWord(written, disk.PayloadHeader, 308 - i * 4);
+            Assert.NotEqual(DiskWord(disk.Bytes, disk.PayloadHeader, 308 - i * 4), key);
+            Assert.Equal(first + (uint)i, key);
+        }
         await Run(root, "disk", "read", handler, written, false, "FfsOverwriteProbe::Read" + suffix);
     }
 

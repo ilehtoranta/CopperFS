@@ -201,7 +201,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         var ok = Open(ref p, metadata, out var volume); format = volume.Format; return ok;
     }
 
-    private static bool Strings<T>(ref T p, Volume v, APTR buffer, int at, out int next,
+    private static bool Strings<T>(ref T p, in Volume v, APTR buffer, int at, out int next,
         out uint nameLength, out uint commentLength) where T : struct, IAmigaFileSystemPlatform
     {
         var end = (int)p.BlockBytes - (p.ReadUInt32(buffer, 8) == v.Root ? 36 : 0);
@@ -232,7 +232,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         return next > at && next <= end;
     }
 
-    private static bool Scan<T>(ref T p, Volume v, APTR buffer, uint node, out int at, out int next)
+    private static bool Scan<T>(ref T p, in Volume v, APTR buffer, uint node, out int at, out int next)
         where T : struct, IAmigaFileSystemPlatform
     {
         at = 24; next = 0;
@@ -247,17 +247,17 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         return false;
     }
 
-    internal static bool Object<T>(ref T p, Volume v, uint node, APTR buffer, out int at)
+    internal static bool Object<T>(ref T p, in Volume v, uint node, APTR buffer, out int at)
         where T : struct, IAmigaFileSystemPlatform => Object(ref p, v, node, buffer, false, out _, out at);
 
-    private static bool Object<T>(ref T p, Volume v, uint node, APTR scratch, bool borrowRecord, out APTR record, out int at)
+    private static bool Object<T>(ref T p, in Volume v, uint node, APTR scratch, bool borrowRecord, out APTR record, out int at)
         where T : struct, IAmigaFileSystemPlatform
     {
         var container = ObjectContainer(ref p, v, node, scratch);
         return ReadObjectRecord(ref p, v, container, node, scratch, borrowRecord, out record, out at);
     }
 
-    private static uint ObjectContainer<T>(ref T p, Volume v, uint node, APTR scratch)
+    private static uint ObjectContainer<T>(ref T p, in Volume v, uint node, APTR scratch)
         where T : struct, IAmigaFileSystemPlatform
     {
         if (node == 0) return uint.MaxValue;
@@ -297,7 +297,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         return container >= p.ReservedBlocks && container < p.BlockCount - 1 ? container : uint.MaxValue;
     }
 
-    private static bool ReadObjectRecord<T>(ref T p, Volume v, uint container, uint node, APTR scratch,
+    private static bool ReadObjectRecord<T>(ref T p, in Volume v, uint container, uint node, APTR scratch,
         bool borrowRecord, out APTR record, out int at) where T : struct, IAmigaFileSystemPlatform
     {
         at = 0; record = scratch;
@@ -307,14 +307,14 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         return record.IsNotNull && Scan(ref p, v, record, node, out at, out _);
     }
 
-    private static bool Describe<T>(ref T p, Volume v, uint node, APTR metadata, out ReadEntry entry)
+    private static bool Describe<T>(ref T p, in Volume v, uint node, APTR metadata, out ReadEntry entry)
         where T : struct, IAmigaFileSystemPlatform
     {
         entry = default;
         return Object(ref p, v, node, metadata, out var at) && DescribeAt(ref p, v, node, metadata, at, out entry);
     }
 
-    private static bool DescribeAt<T>(ref T p, Volume v, uint node, APTR metadata, int at, out ReadEntry entry)
+    private static bool DescribeAt<T>(ref T p, in Volume v, uint node, APTR metadata, int at, out ReadEntry entry)
         where T : struct, IAmigaFileSystemPlatform
     {
         entry = default;
@@ -340,7 +340,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         return Open(ref p, metadata, out var v) && Describe(ref p, v, node, metadata, out entry);
     }
 
-    private static bool ObjectSize<T>(ref T p, Volume v, APTR metadata, int at, byte flags, out ulong size)
+    private static bool ObjectSize<T>(ref T p, in Volume v, APTR metadata, int at, byte flags, out ulong size)
         where T : struct, IAmigaFileSystemPlatform
     {
         size = 0;
@@ -416,7 +416,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         public uint Parent, FirstExtent;
     }
 
-    private static bool ReadInformation<T>(ref T p, Volume v, APTR record, int at, out ObjectInformation info)
+    private static bool ReadInformation<T>(ref T p, in Volume v, APTR record, int at, out ObjectInformation info)
         where T : struct, IAmigaFileSystemPlatform
     {
         info = default;
@@ -509,7 +509,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         error = DOS.Error.DiskNotValidated; return 0;
     }
 
-    private static bool ReadIndexedFirstRecord<T>(ref T p, Volume v, uint block, uint node, APTR image,
+    private static bool ReadIndexedFirstRecord<T>(ref T p, in Volume v, uint block, uint node, APTR image,
         APTR scratch, out ObjectInformation info) where T : struct, IAmigaFileSystemPlatform
     {
         // The node-tree read can evict this image. Capture only scalars, and
@@ -523,7 +523,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
             ReadInformation(ref p, v, record, at, out info);
     }
 
-    internal static bool Extent<T>(ref T p, Volume v, uint key, APTR scratch, out uint count, out uint next,
+    internal static bool Extent<T>(ref T p, in Volume v, uint key, APTR scratch, out uint count, out uint next,
         out uint previous, bool borrowImage = false)
         where T : struct, IAmigaFileSystemPlatform
     {
@@ -710,7 +710,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         ulong extentStart = 0; uint extentSize = 0, next = 0, copied = 0, previous = node | 0x80000000;
         while (copied < length)
         {
-            var fileBlock = position / bytes;
+            var fileBlock = AmigaSfsGeometryMath.DivRem(position, bytes, out var withinRemainder);
             while (extentSize == 0 || fileBlock >= extentStart + extentSize)
             {
                 if (extentSize != 0) { extentStart += extentSize; previous = extent; extent = next; }
@@ -720,7 +720,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
             }
             var physical = (ulong)extent + fileBlock - extentStart;
             if (physical >= p.BlockCount - 1 || !p.ReadBlock((uint)physical, data)) goto failed;
-            var within = (uint)(position % bytes); var take = bytes - within;
+            var within = withinRemainder; var take = bytes - within;
             if (take > length - copied) take = length - copied;
             for (var i = 0u; i < take; i++) p.WriteUInt8(destination, (int)(copied + i), p.ReadUInt8(data, (int)(within + i)));
             copied += take; position += take;

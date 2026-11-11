@@ -44,10 +44,10 @@ internal static class NativeSfs2Bridge
 
     internal static bool Trim(APTR state, ref NativeFileSystemPlatform p,
         ref AmigaSmartFileSystemWriteCore.Work classic, APTR control, uint flags,
-        out AmigaSmartFileSystemWriteCore.TrimResult result)
+        out AmigaSmartFileSystemWriteCore.TrimResult result, uint startBlock = 0, uint blockCount = uint.MaxValue, APTR validation = default)
     {
         var work = Work(state);
-        var ok = AmigaSmartFileSystem2WriteCore.Trim(ref p, ref work, control, flags, out var trimmed);
+        var ok = AmigaSmartFileSystem2WriteCore.TrimWindow(ref p, ref work, control, flags, out var trimmed, startBlock, blockCount, validation);
         result = new AmigaSmartFileSystemWriteCore.TrimResult
         { Limits = trimmed.Limits, Blocks = trimmed.Blocks, Ranges = trimmed.Ranges };
         classic.Error = work.Error; classic.JournalCursor = work.JournalCursor;

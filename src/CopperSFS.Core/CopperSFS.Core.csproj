@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CopperSFS.Core</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CopperFS.Kickstart.Tests" />
+  </ItemGroup>
   <ItemGroup Condition="Exists('$(CopperSharp68kRoot)\Sdk.Amiga\CopperSharp.Sdk.Amiga.csproj')">
     <ProjectReference Include="$(CopperSharp68kRoot)\Sdk.Amiga\CopperSharp.Sdk.Amiga.csproj" />
     <ProjectReference Include="$(CopperSharp68kRoot)\Sdk.Amiga.Support\CopperSharp.Sdk.Amiga.Support.csproj" />

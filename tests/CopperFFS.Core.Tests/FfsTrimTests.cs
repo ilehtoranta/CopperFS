@@ -44,6 +44,64 @@ public sealed partial class VolumeGeometryTests
         }
     }
 
+    [Fact]
+    public void AutomaticUnsupportedDiscoveryDoesNotReadOrEvictBootBlock()
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g);
+        storage.DiscardUnsupported = true; storage.Transfers.Clear();
+        var work = Work(); var certificate = APTR.FromPointer((uint)storage.Ram.Length - 4);
+        Assert.False(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out _, 0, 4096, certificate));
+        Assert.Empty(storage.Transfers);
+        Assert.Equal(0, storage.Flushes);
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void CachedFfsValidationRechecksAfterFailedWrite(bool ofs)
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g);
+        if (ofs) SetDosType(ref p, 0x444F5300);
+        var work = Work(); var certificate = APTR.FromPointer((uint)storage.Ram.Length - 4);
+        storage.TrimCertificate = certificate;
+        Assert.True(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out _, 64, 64, certificate));
+        Assert.Equal(1u, p.ReadUInt32(certificate));
+        var barriers = storage.Flushes;
+        Assert.True(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out _, 128, 64, certificate));
+        Assert.Equal(barriers, storage.Flushes);
+        Assert.True(p.ReadBlock(g.RootBlock, work.Meta));
+        storage.FailWriteCall = storage.WriteCalls + 1;
+        Assert.False(p.WriteBlock(g.RootBlock, work.Meta));
+        Assert.Equal(0u, p.ReadUInt32(certificate));
+        storage.FailWriteCall = 0;
+        Assert.True(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out _, 4096, 64, certificate));
+        Assert.Equal(1u, p.ReadUInt32(certificate));
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void DeferredTrimWindowsPreserveAllocatedDataAndBoundDiscard(bool ofs)
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g);
+        if (ofs) SetDosType(ref p, 0x444F5300);
+        var work = Work();
+        const uint first = 501, count = 67;
+        var allocated = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+        Assert.True(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out var result, first, count));
+        Assert.True(result.Blocks > 0);
+        foreach (var range in storage.Discards)
+            Assert.True(range.Block >= first && range.Count <= count && range.Block - first <= count - range.Count);
+        foreach (var sector in allocated) Assert.Equal(sector.Value, storage.Sectors[sector.Key]);
+        storage.Discards.Clear();
+        Assert.True(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out result, uint.MaxValue - 5, 16));
+        Assert.Empty(storage.Discards);
+        storage.FailFlush = true;
+        Assert.False(AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.Null, 0, out _, first, count));
+        Assert.Empty(storage.Discards);
+    }
+
     [Theory]
     [InlineData(512u)] [InlineData(1024u)] [InlineData(4096u)]
     public void FfsTrimQueryDryRunAndExecutionPreserveAllocatedBytesAtWideOffsets(uint bytes)

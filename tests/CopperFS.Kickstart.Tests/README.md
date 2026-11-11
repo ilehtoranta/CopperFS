@@ -255,3 +255,83 @@ payload and deletes a file. A fresh CopperSFS boot on the selected CPU checks
 the persisted bytes and metadata. Original SmartFilesystem independently
 reads the same changed image on a 68020. Each read-only verification boot must
 leave the complete partition byte-identical.
+
+## Size and performance comparisons
+
+`HandlerSizeChangesPreserveWorkloadCycles` compares frozen baseline and candidate
+handlers on the same synthetic media through real Kickstart DOS/Exec. Set
+`COPPERSHARP_KICKSTART31_ROM` and `COPPERFS_SIZE_MANIFEST`, then run:
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~HandlerSizeChangesPreserveWorkloadCycles
+```
+
+The JSON manifest has this shape; include all five named profiles (`ofs`, `ffs`,
+`sfs`, `sfs2-csun`, `sfs2-trst`) when running the complete theory:
+
+```json
+{
+  "Profiles": [
+    { "Name": "ffs", "Baseline": "C:/handlers/before/CopperFFS", "Candidate": "C:/handlers/after/CopperFFS" }
+  ],
+  "ClassicBase": "C:/fixtures/clean-classic-sfs.hdf",
+  "ClassicBaseSha256": "SHA256_OF_THE_CLASSIC_IMAGE"
+}
+```
+
+For a family-specialization comparison, build the baseline with
+`Build-Handler.ps1 -SharedDispatch` and the candidate without that switch.
+For active-code comparisons, keep the family selection fixed and freeze the
+two source revisions and compiler. Keep CPU and write policy fixed in both
+comparisons. Both OFS and FFS profiles use the same CopperFFS binary. The classic SFS
+image must be the independently formatted 16 MiB fixture used by the original
+handler comparisons. Select individual theory cases with a `DisplayName` filter
+when the manifest contains fewer profiles.
+
+Each case rotates baseline/candidate order over three trials and separately
+times mutations and verified reads/enumeration after mount. It checks identical
+read/write/flush command counts and independently inspects persisted metadata.
+Raw cycles and handler hashes are written beside the manifest. A mean cycle
+increase above 0.1% fails; the allowance covers timer/interrupt placement and
+does not establish performance for other workloads, CPUs or physical devices.
+
+`ActiveCodeChangesPreserveSmallPacketCycles` uses the same manifest and ROM.
+It creates and warms a small file before separately timing 512 seeks, 512
+seek/one-byte-read pairs and 512 zero-length reads. Three trials rotate the arm
+order; data, paired I/O counts and the same 0.1% cycle margin are checked.
+Samples are saved under `small-packets/<profile>/cycles.json` beside the manifest.
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~ActiveCodeChangesPreserveSmallPacketCycles
+```
+
+`LargeWritesPreserveCyclesAndDiskOperations` uses the same manifest for `ofs`,
+`ffs` and classic `sfs`. It first creates forty small files, then separately
+times growing a 96 KiB file around another allocation, overwriting it in twelve
+8 KiB packets, and reading and checking every byte. This covers multiple
+FFS/OFS pointer tables and a classic SFS extent tree containing many records.
+Three trials rotate arm order. The test requires identical paired device
+command counts, validates persisted allocation and metadata with independent
+walkers, and enforces the same 0.1% mean-cycle limit for each phase. Samples are
+saved under `large-writes/<profile>/cycles.json` beside the manifest.
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~LargeWritesPreserveCyclesAndDiskOperations
+```
+
+## Geometry arithmetic checks
+
+`GeometryMathInstructionTests` needs no ROM or external media. It source-links
+the internal arithmetic helpers, checks unsigned boundaries and zero-divisor
+policies, then compares native results with host oracles. MC68000 output runs
+on both 68000 and 68020 CPU models; explicit MC68020 output is also checked.
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~GeometryMathInstructionTests
+```
+
+Set `COPPERFS_DIVREM_ARTIFACT_ROOT` to save generated assembly and per-vector
+paired/separate cycle samples. These are synthetic arithmetic measurements;
+the full-ROM workload probes above qualify filesystem performance separately.
+See the [division optimization report](../../docs/divrem-optimization-2026-11-12.md)
+for the measured results and the explicit MC68020 fusion limitation.

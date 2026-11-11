@@ -56,7 +56,27 @@ public static class CorrectnessProbe
         return 0;
     }
 
-    private static int Run(uint kind, bool write, bool mountOnly = false)
+    public static int AutoOfs() => Run(0, true, true);
+    public static int AutoFfs() => Run(1, true, true);
+    public static int AutoSfs() => Run(2, true, true);
+    public static int AutoSfs2() => Run(3, true, true);
+
+    public static int AutoLifecycleOfs() => Run(0, true, true, true);
+    public static int AutoLifecycleFfs() => Run(1, true, true, true);
+    public static int AutoLifecycleSfs() => Run(2, true, true, true);
+    public static int AutoLifecycleSfs2() => Run(3, true, true, true);
+
+    public static int BenchmarkOfs() => Run(0, true, benchmark: true);
+    public static int BenchmarkFfs() => Run(1, true, benchmark: true);
+    public static int BenchmarkSfs() => Run(2, true, benchmark: true);
+    public static int BenchmarkSfs2() => Run(3, true, benchmark: true);
+
+    public static int CutOfs() => Run(0, true, true, cutSchedule: true);
+    public static int CutFfs() => Run(1, true, true, cutSchedule: true);
+    public static int CutSfs() => Run(2, true, true, cutSchedule: true);
+    public static int CutSfs2() => Run(3, true, true, cutSchedule: true);
+
+    private static int Run(uint kind, bool write, bool automatic = false, bool lifecycle = false, bool benchmark = false, bool cutSchedule = false, bool mountOnly = false)
     {
         var library = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!library.HasValue) { Report(250); return 10; }
@@ -69,9 +89,42 @@ public static class CorrectnessProbe
         Report(200); Report((int)(control.Raw >> 24)); Report((int)(control.Raw >> 16));
         Report((int)(control.Raw >> 8)); Report((int)control.Raw);
         var result = Mount(control, kind);
+        Report(220);
         if (result == 0 && write) result = Mutate(control, data, kind == 2, kind == 3);
+        if (result == 0 && cutSchedule)
+        {
+            // Long mutations may already service automatic timers. Schedule a
+            // fresh pass after the complete workload, then arm the host cut.
+            var directory = DOS.CreateDir("SEQ0:TrimSchedule");
+            if (!directory.HasValue) return Failed(control, 95);
+            DOS.UnLock(directory.Value);
+            if (DOS.DeleteFile("SEQ0:TrimSchedule") == 0) return Failed(control, 96);
+        }
+        if (result == 0 && benchmark)
+        {
+            // A filesystem checkpoint, not a DOS stream Flush(file). Use the
+            // standard packet so outstanding locks do not prevent the barrier.
+            var port = DOS.DeviceProc("SEQ0:");
+            if (port.IsNull || DOS.DoPkt(port, (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) == 0)
+                return Failed(control, 94);
+        }
+        Report(221);
+        if (result == 0 && automatic) DOS.Delay(650);
+        if (result == 0 && lifecycle)
+        {
+            Report(226);
+            if (DOS.Inhibit("SEQ0:", 1) == 0) return Failed(control, 91);
+            DOS.Delay(300); Report(227);
+            if (DOS.Inhibit("SEQ0:", 0) == 0) return Failed(control, 92);
+            var cycle = DOS.Open("SEQ0:Cycle", DOS.FileMode.NewFile);
+            if (!cycle.HasValue || DOS.Write(cycle.Value, data, 512) != 512 ||
+                DOS.Close(cycle.Value) == 0 || DOS.DeleteFile("SEQ0:Cycle") == 0) return Failed(control, 93);
+            Report(228); DOS.Delay(300); Report(229);
+        }
+        Report(222);
         if (result == 0 && !mountOnly) result = Verify(control, data);
         if (result == 0 && kind == 2) result = VerifyReplaced(control, data);
+        Report(223);
         if (result != 0) return Failed(control, (uint)result);
         if (DOS.Inhibit("SEQ0:", 1) == 0) return Failed(control, 90);
         Report(210); return 0;

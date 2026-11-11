@@ -9,7 +9,7 @@ public static class TrimCommand
     [M68kEntryPoint]
     public static int Main(int length, CONST_STRPTR text)
     {
-        var library = Exec.OpenLibraryRaw("dos.library", 37);
+        var library = Exec.OpenLibraryRaw("dos.library", 36);
         if (library.IsNull) return DOS.RETURN_FAIL;
         DOS.DOSLibraryBase = library;
         var memory = Exec.AllocMem(64, Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear);

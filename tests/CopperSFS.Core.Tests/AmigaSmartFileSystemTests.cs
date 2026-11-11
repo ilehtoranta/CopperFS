@@ -15,6 +15,7 @@ public sealed partial class AmigaSmartFileSystemTests
     private struct Disk(byte[] image) : IAmigaWritableFileSystemPlatform, IAmigaDiscardFileSystemPlatform
     {
         public readonly byte[] Ram = new byte[524288];
+        public APTR TrimCertificate;
         public int Writes, FailAtWrite, IoEvents, CutAfterIo, Flushes, FailAtFlush;
         public int GeometryReads;
         public uint SectorBytesOverride;
@@ -167,6 +168,7 @@ public sealed partial class AmigaSmartFileSystemTests
         }
         private bool RawWriteBlock(uint block, APTR source)
         {
+            if (TrimCertificate.IsNotNull) WriteUInt32(TrimCertificate, 0, 0);
             if (RequireAlignedBlockBuffers) Assert.Equal(0u, source.Raw & 3);
             Writes++;
             if (FailAtWrite != 0 && Writes >= FailAtWrite) return false;

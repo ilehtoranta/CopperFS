@@ -1,14 +1,16 @@
 # Manual TRIM (development source)
 
-Manual discard is explicitly requested. There is no mount-time probe, background
-trimmer, delete-time discard, new normal-write barrier or permanent trim queue.
+In default builds manual discard is explicitly requested. There is no mount-time
+probe, background trimmer, delete-time discard or permanent trim queue.
+An opt-in experimental deferred mode is described in [automatic TRIM](automatic-trim.md).
 This feature is **not present in preview.3**. Use a handler and command built from
 matching newer sources. No package release is implied by these source changes.
 
 ## Command
 
 Install the compiled 68000 HUNK `CopperTrim` in `C:` and the matching handler
-in `L:`. The command requires dos.library V37 or newer.
+in `L:`. CopperTrim and the matching handler startup now require dos.library V36
+or newer (AmigaOS 2.0+).
 `CopperSFSTrim` remains a compatibility alias for the same executable and packet.
 CopperTrim also serves CopperFFS for DOS0/OFS and DOS1/FFS. Both filesystem
 implementations are maintained in this CopperFS umbrella repository; the

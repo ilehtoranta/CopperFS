@@ -8,6 +8,63 @@ namespace CopperSFS.Tests;
 public sealed partial class AmigaSmartFileSystemTests
 {
     [Fact]
+    public void CachedSfsPreflightIsInvalidatedByFailedWritesAndRecovery()
+    {
+        var disk = new Disk(Image()) { Buffered = true };
+        var certificate = APTR.FromPointer((uint)disk.Ram.Length - 4);
+        disk.TrimCertificate = certificate;
+        var work = BatchWork(ref disk);
+        Assert.True(AmigaSmartFileSystemWriteCore.TrimWindow(ref disk, ref work, APTR.Null, 0,
+            out _, 32, 32, certificate));
+        Assert.Equal(1u, disk.ReadUInt32(certificate));
+        Assert.True(disk.ReadBlock(9, work.Meta));
+        disk.WriteUInt32(work.Meta, 4, disk.ReadUInt32(work.Meta, 4) ^ 1);
+        Assert.True(disk.WriteBlock(9, work.Meta));
+        Assert.Equal(0u, disk.ReadUInt32(certificate));
+        var before = disk.DiscardRequests.Count;
+        Assert.False(AmigaSmartFileSystemWriteCore.TrimWindow(ref disk, ref work, APTR.Null, 0,
+            out _, 64, 32, certificate));
+        Assert.Equal(before, disk.DiscardRequests.Count);
+    }
+
+    [Theory]
+    [InlineData(false, false)] [InlineData(true, false)]
+    [InlineData(false, true)] [InlineData(true, true)]
+    public void DeferredWindowCheckpointCutsNeverDiscardRecoverableData(bool buffered, bool cached)
+    {
+        var image = Image();
+        var disk = new Disk(image.ToArray()) { Buffered = true, DiscardPattern = 2 };
+        var certificate = cached ? APTR.FromPointer((uint)disk.Ram.Length - 4) : APTR.Null;
+        disk.TrimCertificate = certificate;
+        var work = TrimWork(ref disk, buffered, 128);
+        TrimMutation(ref disk, ref work, 2);
+        disk.IoEvents = 0;
+        Assert.True(AmigaSmartFileSystemWriteCore.TrimWindow(ref disk, ref work, APTR.Null, 0,
+            out _, 16, 37, certificate));
+        foreach (var (block, count) in disk.DiscardRequests)
+            Assert.True(block >= 16 && count <= 37 && block - 16 <= 37 - count);
+        var expected = AllocatedState(disk.Snapshot());
+        for (var cut = 1; cut <= disk.IoEvents; cut++)
+        {
+            var interrupted = new Disk(image.ToArray()) { Buffered = true, DiscardPattern = 2 };
+            interrupted.TrimCertificate = certificate;
+            var pending = TrimWork(ref interrupted, buffered, 128);
+            TrimMutation(ref interrupted, ref pending, 2);
+            interrupted.IoEvents = 0; interrupted.CutAfterIo = cut;
+            Assert.Throws<PowerCut>(() => AmigaSmartFileSystemWriteCore.TrimWindow(ref interrupted,
+                ref pending, APTR.Null, 0, out _, 16, 37));
+            foreach (var saved in interrupted.CrashImages())
+            {
+                var reopened = new Disk(saved) { TrimCertificate = certificate }; var recovery = BatchWork(ref reopened);
+                Assert.True(AmigaSmartFileSystemWriteCore.TrimWindow(ref reopened, ref recovery,
+                    APTR.Null, 0, out _, 16, 37));
+                var actual = AllocatedState(reopened.Snapshot());
+                Assert.True(actual.SequenceEqual(expected) || buffered && actual.SequenceEqual(AllocatedState(image)));
+            }
+        }
+    }
+
+    [Fact]
     public void ManualTrimReplaysOriginalTrstBeforeAuthorizingDiscard()
     {
         var image = Image(); var marker = Block(image, 4);

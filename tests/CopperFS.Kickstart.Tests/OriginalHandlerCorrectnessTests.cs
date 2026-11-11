@@ -101,7 +101,8 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
 
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
         string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null,
-        M68kCpuModel cpu = M68kCpuModel.M68020, Action<FileStream>? afterFlush = null, uint probeDelay = 0)
+        M68kCpuModel cpu = M68kCpuModel.M68020, Action<FileStream>? afterFlush = null, uint probeDelay = 0,
+        IAmigaHardfileIoHook? deviceHook = null)
     {
         var directory = Path.Combine(root, label);
         Directory.CreateDirectory(directory);
@@ -109,13 +110,14 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         File.WriteAllBytes(media, initial);
         var hook = storage ?? (afterFlush != null ? new WritableHook(afterFlush) : null);
         await BootMedia(directory, profile, label, handler, media, write, guestEntry, observe,
-            floppy ? initial : null, hook, Hash(initial), cpu, probeDelay);
+            floppy ? initial : null, hook, Hash(initial), cpu, probeDelay, deviceHook);
         return File.ReadAllBytes(media);
     }
 
     private async Task BootMedia(string directory, string profile, string label, string handler, string media,
         bool write, string? guestEntry, Action<byte, long, int, int, int>? observe = null,
-        byte[]? floppyImage = null, WritableHook? storage = null, string? initialHash = null, M68kCpuModel cpu = M68kCpuModel.M68020, uint probeDelay = 0)
+        byte[]? floppyImage = null, WritableHook? storage = null, string? initialHash = null, M68kCpuModel cpu = M68kCpuModel.M68020, uint probeDelay = 0,
+        IAmigaHardfileIoHook? deviceHook = null)
     {
         Directory.CreateDirectory(Path.Combine(directory, "boot", "S"));
         var floppy = floppyImage != null;
@@ -153,7 +155,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             SlowRamBytes = 0, FramebufferWidth = 908, FloppyDriveCount = floppy ? 2 : 1,
             FloppyDriveTypes = floppyImage?.Length == 3520 * 512
                 ? [LightweightFloppyDriveType.DoubleDensity, LightweightFloppyDriveType.HighDensity] : [],
-            Hardfiles = floppy ? [] : [new(0, media, readOnly: false) { ExposeBootNode = false, IoHook = hook }]
+            Hardfiles = floppy ? [] : [new(0, media, readOnly: false) { ExposeBootNode = false, IoHook = deviceHook ?? hook }]
         }))
         {
             machine.LoadKickstart(rom); machine.MountAdf(0, boot); machine.SetDriveWriteProtected(0, true);

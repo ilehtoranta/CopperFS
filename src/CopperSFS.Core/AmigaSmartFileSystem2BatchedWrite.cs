@@ -24,7 +24,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     {
         actual = 0;
         if (batchBuffer.IsNull && batchBytes == 0) return Write(ref p, ref w, ref r, out actual);
-        var bytes = p.Geometry.BlockBytes;
+        var bytes = p.BlockBytes;
         if (bytes < 512 || r.Length > int.MaxValue || !p.IsMapped(r.Buffer, r.Length))
             return Fail(ref w, DOS.Error.BadNumber);
         var limit = batchBytes < 65536 ? batchBytes : 65536;
@@ -46,8 +46,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (r.Position > MaxFileSize || r.Length > MaxFileSize - r.Position) return Fail(ref w, DOS.Error.ObjectTooLarge);
         if (r.Length == 0) return true;
         var end = r.Position + r.Length;
-        var oldBlocks = size / bytes + (size % bytes == 0 ? 0u : 1u);
-        var newBlocks = end / bytes + (end % bytes == 0 ? 0u : 1u);
+        var oldBlocks = AmigaSfsGeometryMath.DivRem(size, bytes, out var sizeRemainder);
+        if (sizeRemainder != 0) oldBlocks++;
+        var newBlocks = AmigaSfsGeometryMath.DivRem(end, bytes, out var endRemainder);
+        if (endRemainder != 0) newBlocks++;
         if (newBlocks > oldBlocks)
         {
             if (!Read(ref p, ref w, w.RootContainer, ObjectId, w.Meta)) return false;
@@ -58,8 +60,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
         while (written < r.Length)
         {
             var position = r.Position + written;
-            var index = position / bytes;
-            var within = (uint)(position % bytes);
+            var index = AmigaSfsGeometryMath.DivRem(position, bytes, out var withinRemainder);
+            var within = withinRemainder;
             var remaining = r.Length - written;
             var wanted = within != 0 || remaining < bytes ? 1 : remaining / bytes;
             if (wanted > capacity) wanted = capacity;
@@ -144,10 +146,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
     {
         block = available = last = lastSize = 0;
         uint key = first; ulong start = 0;
-        for (var guard = 0u; key != 0 && guard < p.Geometry.BlockCount; guard++)
+        for (var guard = 0u; key != 0 && guard < p.BlockCount; guard++)
         {
             if (!Sfs2Layout.Extent(ref p, w.ExtentRoot, key, w.Meta, out var count, out var next) ||
-                key < p.Geometry.ReservedBlocks || (ulong)key + count > p.Geometry.BlockCount - 1)
+                key < p.ReservedBlocks || (ulong)key + count > p.BlockCount - 1)
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             last = key; lastSize = count;
             if (index < start + count)
@@ -168,13 +170,13 @@ public static partial class AmigaSmartFileSystem2WriteCore
     {
         var map = w.BitmapBase + mapIndex;
         if (map < w.BitmapBase || !Read(ref p, ref w, map, BitmapId, w.Bitmap)) return false;
-        var bits = (p.Geometry.BlockBytes - 12) * 8;
+        var bits = (p.BlockBytes - 12) * 8;
         uint entry = w.JournalHead;
-        for (var guard = 0u; entry != 0 && guard < p.Geometry.BlockCount; guard++)
+        for (var guard = 0u; entry != 0 && guard < p.BlockCount; guard++)
         {
             if (!Read(ref p, ref w, entry, UndoId, w.Journal)) return false;
             var image = p.ReadUInt32(w.Journal, 20);
-            if (image >= p.Geometry.BlockCount) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (image >= p.BlockCount) return Fail(ref w, DOS.Error.DiskNotValidated);
             ClearSearchBit(ref p, w.Bitmap, mapIndex, bits, entry);
             ClearSearchBit(ref p, w.Bitmap, mapIndex, bits, image);
             if (p.ReadUInt32(w.Journal, 16) == map)
@@ -183,7 +185,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
                     return Fail(ref w, DOS.Error.DiskNotValidated);
                 // Intersect every saved version if a caller ever logs this map
                 // more than once; a block must have been free in all of them.
-                for (var at = 12; at < p.Geometry.BlockBytes; at += 4)
+                for (var at = 12; at < p.BlockBytes; at += 4)
                     p.WriteUInt32(w.Bitmap, at, p.ReadUInt32(w.Bitmap, at) & p.ReadUInt32(w.Meta, at));
             }
             entry = p.ReadUInt32(w.Journal, 12);
@@ -193,8 +195,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static void ClearSearchBit<T>(ref T p, APTR map, uint mapIndex, uint bits, uint block)
         where T : struct, IAmigaFileSystemPlatform
     {
-        if (block / bits != mapIndex) return;
-        var index = block % bits; var offset = 12 + (int)(index / 32) * 4;
+        var page = block / bits;
+        var index = block % bits;
+        if (page != mapIndex) return;
+        var offset = 12 + (int)(index / 32) * 4;
         p.WriteUInt32(map, offset, p.ReadUInt32(map, offset) & ~(1u << (int)(31 - index % 32)));
     }
     private static bool ScanFreeRun<T>(ref T p, ref Work w, uint start, uint minimum, uint maximum,
@@ -202,11 +206,12 @@ public static partial class AmigaSmartFileSystem2WriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         first = count = 0;
-        var bits = (p.Geometry.BlockBytes - 12) * 8;
+        var bits = (p.BlockBytes - 12) * 8;
         var loaded = uint.MaxValue;
-        for (var block = start; block < p.Geometry.BlockCount - 1; block++)
+        for (var block = start; block < p.BlockCount - 1; block++)
         {
             var map = block / bits;
+            var index = block % bits;
             if (map != loaded)
             {
                 if (oneMap && count != 0)
@@ -218,7 +223,6 @@ public static partial class AmigaSmartFileSystem2WriteCore
                 if (!FreeSearchMap(ref p, ref w, map)) return false;
                 loaded = map;
             }
-            var index = block % bits;
             var free = (p.ReadUInt32(w.Bitmap, 12 + (int)(index / 32) * 4) & (1u << (int)(31 - index % 32))) != 0;
             if (w.AdminReservation != 0 && block >= w.AdminReservation && block - w.AdminReservation < 32) free = false;
             if (block == w.RootContainer + 2) free = false;
@@ -241,19 +245,19 @@ public static partial class AmigaSmartFileSystem2WriteCore
         bool oneMap, out uint first, out uint count) where T : struct, IAmigaWritableFileSystemPlatform
     {
         first = count = 0;
-        if (preferred >= p.Geometry.ReservedBlocks && preferred < p.Geometry.BlockCount - 1)
+        if (preferred >= p.ReservedBlocks && preferred < p.BlockCount - 1)
         {
             if (!ScanFreeRun(ref p, ref w, preferred, minimum, maximum, oneMap, true, out first, out count)) return false;
             if (count != 0) return true;
         }
-        return ScanFreeRun(ref p, ref w, p.Geometry.ReservedBlocks, minimum, maximum, oneMap, false, out first, out count);
+        return ScanFreeRun(ref p, ref w, p.ReservedBlocks, minimum, maximum, oneMap, false, out first, out count);
     }
     private static bool MarkDataRun<T>(ref T p, ref Work w, uint first, uint count)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (!BitmapPosition(ref p, ref w, first, out var map, out _, out _) ||
             !Read(ref p, ref w, map, BitmapId, w.Bitmap)) return false;
-        var bits = (p.Geometry.BlockBytes - 12) * 8;
+        var bits = (p.BlockBytes - 12) * 8;
         if (count == 0 || count > bits - first % bits) return Fail(ref w, DOS.Error.DiskNotValidated);
         for (var i = 0u; i < count; i++)
         {
@@ -302,7 +306,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         var entries = images + count;
         if (!p.ReadBlocks(target, count, buffer) || !p.WriteBlocks(images, count, buffer))
             return Fail(ref w, DOS.Error.DiskNotValidated);
-        var bytes = p.Geometry.BlockBytes;
+        var bytes = p.BlockBytes;
         for (var i = 0u; i < count; i++)
         {
             var record = APTR.FromPointer(buffer.Raw + i * bytes);

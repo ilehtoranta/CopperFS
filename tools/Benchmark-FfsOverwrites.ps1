@@ -50,7 +50,7 @@ try {
         $previous[$key] = [Environment]::GetEnvironmentVariable($key)
         [Environment]::SetEnvironmentVariable($key, $settings[$key])
     }
-    $filter = 'FullyQualifiedName~FragmentedOverwriteThenFreshBootSequentialRead|FullyQualifiedName~OfsHardDiskPlacement|FullyQualifiedName~TrackdiskOverwritePreservesPointersAcrossFreshBoot|FullyQualifiedName~UnknownFixedDeviceOverwritesInPlace'
+    $filter = 'FullyQualifiedName~FragmentedOverwriteThenFreshBootSequentialRead|FullyQualifiedName~OfsHardDiskPlacement|FullyQualifiedName~TrackdiskOverwritePreservesPointersAcrossFreshBoot|FullyQualifiedName~UnknownFixedDeviceRelocatesOverwrite'
     dotnet test "$repository/tests/CopperFS.Kickstart.Tests" -c Release "-p:CopperSharp68kRoot=$compiler" --artifacts-path "$output/harness" --filter $filter
     if ($LASTEXITCODE) { throw 'Overwrite qualification failed.' }
 } finally {

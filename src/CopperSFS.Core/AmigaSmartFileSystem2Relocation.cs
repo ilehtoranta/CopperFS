@@ -40,7 +40,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (found == 0) return true;
         if (found != count) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (!MarkDataRun(ref p, ref w, replacement, count)) return false;
-        p.Copy(source, buffer, count * p.Geometry.BlockBytes);
+        p.Copy(source, buffer, count * p.BlockBytes);
         if (!p.WriteBlocks(replacement, count, buffer) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
 
         if (offset != 0 && !SplitExtent(ref p, ref w, start, offset, out start)) return false;
@@ -100,7 +100,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
             if (p.ReadUInt32(w.Meta, at) != key) continue;
             length = p.ReadUInt32(w.Meta, at + 12);
             next = p.ReadUInt32(w.Meta, at + 4); previous = p.ReadUInt32(w.Meta, at + 8);
-            return length != 0 && key >= p.Geometry.ReservedBlocks && (ulong)key + length <= p.Geometry.BlockCount - 1 ||
+            return length != 0 && key >= p.ReservedBlocks && (ulong)key + length <= p.BlockCount - 1 ||
                 Fail(ref w, DOS.Error.DiskNotValidated);
         }
         return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -109,7 +109,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool SetExtentRecord<T>(ref T p, ref Work w, uint key, uint length, uint next, uint previous)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (length == 0 || (ulong)key + length > p.Geometry.BlockCount - 1 || !ExtentLeaf(ref p, ref w, key, out var leaf))
+        if (length == 0 || (ulong)key + length > p.BlockCount - 1 || !ExtentLeaf(ref p, ref w, key, out var leaf))
             return FailUnlessSet(ref w);
         var entries = p.ReadUInt16(w.Meta, 12); var stride = p.ReadUInt8(w.Meta, 15);
         for (var i = 0; i < entries; i++)
@@ -141,7 +141,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool ReleaseDataRun<T>(ref T p, ref Work w, uint first, uint count)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var bits = (p.Geometry.BlockBytes - 12) * 8;
+        var bits = (p.BlockBytes - 12) * 8;
         while (count != 0)
         {
             if (!BitmapPosition(ref p, ref w, first, out var map, out _, out _) ||

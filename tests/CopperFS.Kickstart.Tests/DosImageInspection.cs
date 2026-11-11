@@ -10,7 +10,7 @@ internal static class DosImageInspection
     internal sealed record Entry(string Path, uint Header, uint Size, string Sha256);
     internal sealed record Report(uint Blocks, int UsedBlocks, List<Entry> Files, List<uint> OmittedForwardLinks, List<uint> RestartedSequences);
 
-    internal static Report Check(byte[] image, bool requireForwardLinks)
+    internal static Report Check(byte[] image, bool requireForwardLinks, bool checkSharedWorkload = true)
     {
         var blocks = (uint)image.Length / 512; var root = blocks / 2;
         uint Word(uint block, int offset) => BinaryPrimitives.ReadUInt32BigEndian(image.AsSpan(checked((int)block * 512 + offset), 4));
@@ -94,11 +94,14 @@ internal static class DosImageInspection
             if (bit + 2 < blocks) Assert.True(!owned.Contains(bit + 2) == free, $"Block {bit + 2}: free {free}, owned {owned.Contains(bit + 2)}");
             else Assert.False(free);
         }
-        Assert.Equal(90130u, files.Single(f => f.Path == "/AB/Renamed").Size);
-        var expected = Enumerable.Range(0, 90130).Select(i =>
-            i >= 35000 && i < 35777 ? (byte)((i - 35000) * 23 + 9) :
-            i >= 487 && i < 1264 ? (byte)((i - 487) * 23 + 9) : (byte)(i * 17 + (i >> 9) * 31 + 3)).ToArray();
-        Assert.Equal(Convert.ToHexString(SHA256.HashData(expected)), files.Single(f => f.Path == "/AB/Renamed").Sha256);
+        if (checkSharedWorkload)
+        {
+            Assert.Equal(90130u, files.Single(f => f.Path == "/AB/Renamed").Size);
+            var expected = Enumerable.Range(0, 90130).Select(i =>
+                i >= 35000 && i < 35777 ? (byte)((i - 35000) * 23 + 9) :
+                i >= 487 && i < 1264 ? (byte)((i - 487) * 23 + 9) : (byte)(i * 17 + (i >> 9) * 31 + 3)).ToArray();
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(expected)), files.Single(f => f.Path == "/AB/Renamed").Sha256);
+        }
         return new(blocks, owned.Count, files, omittedLinks, restartedSequences);
     }
 }

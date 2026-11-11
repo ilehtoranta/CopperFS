@@ -103,6 +103,18 @@ handler project compiles those same sources into CopperFS.Amiga, without importi
 CopperStart's OS implementation. Retained namespaces and compile-symbol names are
 compatibility names, not repository or assembly dependencies.
 
+Standalone FFS, default classic buffered TRST and both SFS2 builds select their
+family before native compilation so CopperFFS excludes the SFS writer and
+CopperSFS excludes the OFS/FFS writer. Other classic write policies retain shared
+dispatch pending performance qualification of specialization.
+The shared source consumer and ordinary managed build retain runtime dispatch.
+Use `Build-Handler.ps1 -SharedDispatch` only as a size/performance comparison
+control. See the [active-code measurements](docs/active-code-size-2026-11-11.md)
+and [initial size pass](docs/handler-size-optimization-2026-11-11.md) for the
+remaining gap to the original handlers and the validation scope.
+The [largest-function follow-up](docs/largest-functions-size-2026-11-12.md)
+records discarded reductions and the additional large-write performance gate.
+
 Published CopperSFS releases remain in the original repository and are immutable.
 This source migration does not publish a package, handler or ROM release. The
 [previous CopperSFS overview](docs/coppersfs-overview.md) records existing release

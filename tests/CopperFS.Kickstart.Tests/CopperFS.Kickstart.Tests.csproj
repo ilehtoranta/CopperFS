@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
     <IsPackable>false</IsPackable><IsTestProject>true</IsTestProject>
     <DefineConstants>$(DefineConstants);COPPERSTART_FILESYSTEM_SEMANTIC_TESTS</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsAutoTrim)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM</DefineConstants>
     <CopperScreenRoot Condition="'$(CopperScreenRoot)' == ''">$(MSBuildThisFileDirectory)../../../CopperScreen</CopperScreenRoot>
   </PropertyGroup>
   <ItemGroup>
