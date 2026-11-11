@@ -311,6 +311,36 @@ public sealed class SequentialReadHandlerTests
     }
 
     [SequentialHandlerTheory]
+    [InlineData(false)] [InlineData(true)]
+    public void FfsFastInputPreservesGeneralDecoderErrors(bool m68020)
+    {
+        const uint packet = 0x6000, handle = 0x6600, name = 0x6500;
+        foreach (var test in new[]
+        {
+            (Handle: handle >> 2, Lock: 0xDEADBEEFu, Name: name >> 2, Error: DOS.Error.InvalidLock),
+            (Handle: handle >> 2, Lock: 0u, Name: 0x40000000u, Error: DOS.Error.InvalidComponentName),
+            (Handle: 0x40000000u, Lock: 0u, Name: name >> 2, Error: DOS.Error.BadNumber)
+        })
+        {
+            (uint Result, uint Error, (uint Block, uint Count)[] Reads) Run(string method)
+            {
+                var f = new Fixture(false, m68020);
+                f.Bus.Memory[name] = 1; f.Bus.Memory[name + 1] = (byte)'F';
+                f.Bus.WriteLong(packet + 8, (uint)DosPacketAction.FindInput);
+                f.Bus.WriteLong(packet + 20, test.Handle); f.Bus.WriteLong(packet + 24, test.Lock);
+                f.Bus.WriteLong(packet + 28, test.Name);
+                f.Invoke(method, Fixture.State, packet);
+                return (f.Bus.ReadLong(packet + 12), f.Bus.ReadLong(packet + 16), f.Reads.ToArray());
+            }
+            var expected = Run("DispatchGeneralPacket");
+            var actual = Run("Dispatch");
+            Assert.Equal(0u, actual.Result); Assert.Equal((uint)test.Error, actual.Error);
+            Assert.Equal(expected.Result, actual.Result); Assert.Equal(expected.Error, actual.Error);
+            Assert.Equal(expected.Reads, actual.Reads);
+        }
+    }
+
+    [SequentialHandlerTheory]
     [InlineData(false, false)] [InlineData(false, true)]
     [InlineData(true, false)] [InlineData(true, true)]
     public void ScsiBypassRetainsReadAheadForConsecutiveSectorPackets(bool sfs2, bool m68020)

@@ -72,6 +72,10 @@ public static class SequentialReadProbe
                 if (measureMount) Report(211);
                 if (!prior.HasValue || DOS.Close(prior.Value) == 0) return Failed(control, 25);
             }
+            // Optional diagnostic offsets exercise different interrupt and
+            // scheduler phases before, not during, the measured session.
+            for (var delay = 0u; delay < APTR.ReadUInt32(control, 300); delay++)
+                APTR.WriteUInt32(control, 304, delay);
             Report(201); // Entire open/read/close session starts.
             var file = sfs2 ? DOS.Open("SEQ0:Payload", DOS.FileMode.OldFile)
                 : DOS.Open("SEQ0:Data/Payload", DOS.FileMode.OldFile);

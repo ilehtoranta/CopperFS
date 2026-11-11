@@ -153,9 +153,12 @@ public static partial class NativeAmigaFileSystem
     public static APTR CreateUnit(APTR deviceName, uint unit) => CreateMount(deviceName, unit, 0, APTR.Null);
 
     // The startup message uses BPTRs for its device BSTR and environment vector.
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_SMART_ONLY
+    public static APTR CreateStartup(APTR startup)
+#else
     public static APTR CreateStartup(APTR startup) => CreateStartup(startup, false);
-
     internal static APTR CreateStartup(APTR startup, bool ffsOnly)
+#endif
     {
         if (startup.IsNull) return APTR.Null;
         var name = APTR.FromPointer(APTR.ReadUInt32(startup, 4) << 2);
@@ -166,7 +169,11 @@ public static partial class NativeAmigaFileSystem
         for (var i = 0; i < length; i++) APTR.WriteUInt8(text, i, APTR.ReadUInt8(name, i + 1));
         APTR.WriteUInt8(text, length, 0);
         var state = CreateMount(text, APTR.ReadUInt32(startup, 0), APTR.ReadUInt32(startup, 12),
-            APTR.FromPointer(APTR.ReadUInt32(startup, 8) << 2), ffsOnly);
+            APTR.FromPointer(APTR.ReadUInt32(startup, 8) << 2)
+#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_SMART_ONLY
+            , ffsOnly
+#endif
+            );
         global::Amiga.Exec.FreeMem(text.Raw, (uint)length + 1);
         return state;
     }
@@ -231,10 +238,13 @@ public static partial class NativeAmigaFileSystem
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset, policy);
     }
 
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_SMART_ONLY
+    public static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment)
+#else
     public static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment) =>
         CreateMount(deviceName, unit, flags, environment, false);
-
     private static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment, bool ffsOnly)
+#endif
     {
         var state = global::Amiga.Exec.AllocMem(StateBytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
         var s = APTR.FromPointer(state);
@@ -301,9 +311,10 @@ public static partial class NativeAmigaFileSystem
         var type = 0u;
         if (!AmigaDiskFileSystemCore.Mount(ref p, Metadata(s), out type))
         {
-#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_FFS_ONLY
+#if !COPPERSTART_SFS_STANDALONE || (!COPPERSTART_FFS_ONLY && !COPPERSTART_SMART_ONLY)
             if (ffsOnly)
 #endif
+#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_SMART_ONLY
             {
                 // Standalone FFS never mounts or repairs foreign media. Return
                 // a non-FFS signature to the standalone entry
@@ -315,6 +326,7 @@ public static partial class NativeAmigaFileSystem
                 }
                 Destroy(s); return APTR.Null;
             }
+#endif
 #if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_FFS_ONLY
 #if COPPERSTART_FULL_FILESYSTEM_EXTENSION
             // A failed device read is not evidence of another filesystem.
@@ -1496,6 +1508,15 @@ public static partial class NativeAmigaFileSystem
         // lock lookup and root-key setup. Exceptional media/recovery states
         // continue through the original decoder and its ordering below.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+#if COPPERSTART_FFS_ONLY && !COPPERSTART_FULL_FILESYSTEM_EXTENSION
+        // FFS FindInput has no smart-media recovery gate; avoid the general
+        // decoder's unrelated file/lock lookups before the same object path.
+        if (action == DosPacketAction.FindInput)
+        {
+            DispatchObjectPacket(state, packet, action);
+            return;
+        }
+#endif
 #if COPPERSTART_NATIVE_SFS2
         // END remains legal during inhibition and recovery. FINDINPUT must pass
         // the general dispatcher's media and recovery checks in those states.
@@ -2576,6 +2597,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 
     public uint ReadDataBlocks(uint block, uint count, APTR destination, bool readAhead)
     {
+#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_FFS_ONLY
+        // The specialized standalone FFS entry never mounts a smart volume,
+        // so it cannot create smart-filesystem overlays or transaction buffers.
         if (RedoOverlay.IsNotNull) return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
 #if COPPERSTART_NATIVE_SFS_WRITES
         var batch = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTransactionBufferOffset));
@@ -2590,6 +2614,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         var queue = WriteQueue;
         if (queue.IsNotNull && AmigaFileSystemWriteCombiner.Intersects(ref this, queue, block, count))
             return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
+#endif
 #endif
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0)
             return AmigaFileSystemBlockIo.Read(ref this, block, count, destination);
@@ -2675,8 +2700,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
         // The completion below reloads packet arguments and position after the
         // copy. Aliases retain the original decoder and cursor writeback path.
-        if (!Separated(destination, length, packet, 64) ||
-            !Separated(destination, length, state, NativeAmigaFileSystem.StateBytes)) return false;
+        var targetAddress = destination.Raw;
+        if (!(targetAddress <= packet.Raw ? packet.Raw - targetAddress >= length : targetAddress - packet.Raw >= 64) ||
+            !(targetAddress <= state.Raw ? state.Raw - targetAddress >= length : targetAddress - state.Raw >= NativeAmigaFileSystem.StateBytes)) return false;
         if (adaptiveMode < 3 &&
             APTR.ReadUInt32(file, 104) != 0 && APTR.ReadUInt32(file, 100) != position)
         {
@@ -2724,7 +2750,10 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
         var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
         var cache = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset);
-        if (block >= total || count > total - block || first == uint.MaxValue || block < first ||
+#if !COPPERFS_NATIVE_FFS_READAHEAD
+        if (block >= total || count > total - block) return false;
+#endif
+        if (first == uint.MaxValue || block < first ||
             block - first >= capacity || count > capacity - (block - first) || cache == 0) return false;
         var p = new NativeFileSystemPlatform(state);
         if (p.FindCached(block).IsNotNull || !p.IsMapped(destination, length)) return false;

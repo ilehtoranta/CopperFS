@@ -27,7 +27,11 @@ public static class NativeSfsStandaloneHandler
         if (packet.IsNull)
         { global::Amiga.Exec.CloseLibrary(dosBase); return 20; }
         var startup = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset) << 2); // dp_Arg2, FileSysStartupMsg BPTR
+#if COPPERSTART_SMART_ONLY
+        var state = startup.IsNull ? APTR.Null : NativeAmigaFileSystem.CreateStartup(startup);
+#else
         var state = startup.IsNull ? APTR.Null : NativeAmigaFileSystem.CreateStartup(startup, ffs);
+#endif
         if (state.IsNull)
         { Reply(message, packet, port, 0, DOS.Error.DiskNotValidated); global::Amiga.Exec.CloseLibrary(dosBase); return 20; }
         if (ffs ? APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is not (0x444F5300 or 0x444F5301) :

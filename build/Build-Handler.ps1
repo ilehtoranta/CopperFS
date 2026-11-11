@@ -75,6 +75,9 @@ $entry = if ($Ffs) { 'CopperStart.Dos.NativeSfsStandaloneHandler::FfsEntry' } el
 # passes for this output. Keep the qualified selection explicit: optimize
 # transport and memory accesses without adding shared-return branches.
 $codeSizePasses = 'ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,ClusterInternalCalls,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis'
+# The FFS-only call clustering layout measurably slows the qualified read
+# workloads. Keep every other pass and the same no-inline CILica profile.
+if ($useFfsOnly) { $codeSizePasses = $codeSizePasses.Replace('ClusterInternalCalls,', '') }
 $arguments = @($compiler, $dos, '--entry', $entry,
     '--platform', 'amiga', '--cpu', $Cpu, '--clr', 'always', '--peephole', 'fixed-point',
     '--fpu', 'disabled', '--exceptions', 'yolo', '--code-size-optimizations', 'on',

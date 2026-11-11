@@ -391,3 +391,63 @@ do not establish read-performance parity or physical-hardware performance.
 The foreign-startup, original-handler and native tests described above were
 rerun for this HUNK. The read differences remain a release qualification
 limitation.
+
+### FFS read qualification follow-up
+
+The earlier 64 KiB profile attributed most of the open-time difference to
+Kickstart, and the two handlers loaded 512 bytes apart. A diagnostic candidate
+whose code hunk was padded to match the baseline's loaded address reduced the
+largest session difference; that padded binary was not used for qualification.
+The unpadded candidate subsequently combines partial-read and cached-packet
+alias checks without relaxing their bounds, routes FFS input opens to the existing object dispatcher
+without unrelated general-decoder lookups, and omits smart overlay checks from
+the specialized FFS data path. FFS cannot create those overlays because it
+rejects smart volumes before mount. Other profiles retain the overlay checks.
+The FFS-only build also disables the native compiler's call-clustering pass;
+the CILica report still records inlining disabled and scalar replacement enabled.
+
+The final 68000 HUNK is 91,820 bytes, SHA-256
+`63936F65ADF8E0556064FDDA81E1C7BFA98D12B92068D50E0A2E01654283B5B6`.
+A separate build through `Build-Handler.ps1` reproduced it byte for byte.
+Restricting the FFS startup parameter to builds that need it also restored
+the classic SFS and SFS2 TRST HUNKs byte for byte to their previously qualified
+hashes, `59FFB75DED4B7071F08BDD2F2ABD9AFDAA81DC07E6DFE47CD4DB521B44A49652`
+and `8AAE316CEA987C6B0B93EE51AB1609371F1B11550C4E5E20CC96C280B7D9A753`.
+Against the previous 92,472-byte specialized handler (SHA-256
+`2F8BD2A36B1352E640C7DE227D462E82A9495F1287DF1E51A265EB5DAED3CD90`),
+six guest scheduling offsets and three trials per arm produced 144 validated
+full-ROM sessions. Each comparison matched buffer addresses, payload and media
+hashes, probe/ROM hashes, device request counts and device bytes. The ranges
+below are the smallest and largest changes in median session bus cycles over
+the six offsets; negative means the candidate used fewer cycles.
+
+| Packet bytes | Change in median session cycles |
+| ---: | ---: |
+| 64 | -1.755% to -1.545% |
+| 512 | -2.507% to -2.076% |
+| 4,096 | -1.768% to -1.585% |
+| 65,536 | -1.502% to -0.624% |
+
+The 18 paired FFS write trials and 18 fresh-boot checks matched guest buffer
+addresses, final image hashes and device command counts. Median overwrite,
+append and bulk-append bus cycles changed by -0.035%, -7.148% and -2.900%.
+These measurements use synchronous CopperHDF and an emulated 68020 running
+Kickstart 3.1; they do not establish physical-device timing.
+
+To reproduce the read sweep, prepare a native benchmark manifest with one
+`ffs` pair pointing to the frozen baseline and candidate, then run the normal
+benchmark wrapper for each phase. The ROM and reference binaries are external.
+
+```powershell
+foreach ($delay in @(0, 100, 500, 1000, 2000, 4000)) {
+    ./tools/Benchmark-KickstartSequentialReads.ps1 -NativeArtifactRoot $nativeInput `
+        -ArtifactRoot "$output/phase-$delay" -PhaseDelay $delay -TestAssembly $kickstartTests
+}
+./tools/Summarize-FfsReadPhases.ps1 -ArtifactRoot $output
+```
+
+The summary tool rejects incomplete tests, mismatched binaries, media, probes,
+ROMs, buffers, returned data or device counts before reporting timings. Native
+FFS tests also compare the fast input path against the general decoder for
+invalid locks, names and handles. Physical Amiga/storage and optional external
+image tests remain unavailable.
