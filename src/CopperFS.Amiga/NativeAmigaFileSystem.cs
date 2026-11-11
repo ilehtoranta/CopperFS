@@ -119,8 +119,8 @@ public static partial class NativeAmigaFileSystem
     }
     private const uint ObjectBytes = 216, Magic = 0x41465331;
     internal const int SmartReadCursorOffset = 56;
-    // Only packet and post-acceptance paths use these constants. Startup can
-    // mount and recover a foreign format before its final type check.
+    // Packet and post-acceptance paths use these constants. Smart handlers
+    // retain their own startup and recovery behavior.
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY
     private const bool SpecializeFormat = true, FormatIsSmart = false;
 #elif COPPERSTART_SFS_STANDALONE && COPPERSTART_SMART_ONLY
@@ -153,7 +153,9 @@ public static partial class NativeAmigaFileSystem
     public static APTR CreateUnit(APTR deviceName, uint unit) => CreateMount(deviceName, unit, 0, APTR.Null);
 
     // The startup message uses BPTRs for its device BSTR and environment vector.
-    public static APTR CreateStartup(APTR startup)
+    public static APTR CreateStartup(APTR startup) => CreateStartup(startup, false);
+
+    internal static APTR CreateStartup(APTR startup, bool ffsOnly)
     {
         if (startup.IsNull) return APTR.Null;
         var name = APTR.FromPointer(APTR.ReadUInt32(startup, 4) << 2);
@@ -164,7 +166,7 @@ public static partial class NativeAmigaFileSystem
         for (var i = 0; i < length; i++) APTR.WriteUInt8(text, i, APTR.ReadUInt8(name, i + 1));
         APTR.WriteUInt8(text, length, 0);
         var state = CreateMount(text, APTR.ReadUInt32(startup, 0), APTR.ReadUInt32(startup, 12),
-            APTR.FromPointer(APTR.ReadUInt32(startup, 8) << 2));
+            APTR.FromPointer(APTR.ReadUInt32(startup, 8) << 2), ffsOnly);
         global::Amiga.Exec.FreeMem(text.Raw, (uint)length + 1);
         return state;
     }
@@ -229,7 +231,10 @@ public static partial class NativeAmigaFileSystem
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.PayloadCacheBypassOffset, policy);
     }
 
-    public static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment)
+    public static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment) =>
+        CreateMount(deviceName, unit, flags, environment, false);
+
+    private static APTR CreateMount(APTR deviceName, uint unit, uint flags, APTR environment, bool ffsOnly)
     {
         var state = global::Amiga.Exec.AllocMem(StateBytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
         var s = APTR.FromPointer(state);
@@ -296,6 +301,21 @@ public static partial class NativeAmigaFileSystem
         var type = 0u;
         if (!AmigaDiskFileSystemCore.Mount(ref p, Metadata(s), out type))
         {
+#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_FFS_ONLY
+            if (ffsOnly)
+#endif
+            {
+                // Standalone FFS never mounts or repairs foreign media. Return
+                // a non-FFS signature to the standalone entry
+                // so it can reply ObjectWrongType without mounting that volume.
+                if (type != 0 && type is not (0x444F5300 or 0x444F5301))
+                {
+                    APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
+                    return s;
+                }
+                Destroy(s); return APTR.Null;
+            }
+#if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_FFS_ONLY
 #if COPPERSTART_FULL_FILESYSTEM_EXTENSION
             // A failed device read is not evidence of another filesystem.
             // Declared SFS mounts still get their secondary-root recovery path.
@@ -315,6 +335,7 @@ public static partial class NativeAmigaFileSystem
                 Destroy(s); return APTR.Null;
             }
             type = APTR.ReadUInt32(s, NativeFileSystemStateCodec.DosTypeOffset);
+#endif
         }
         else
         {
@@ -1245,7 +1266,7 @@ public static partial class NativeAmigaFileSystem
         // Read and enumeration packets need no mutation work area. Keep recovery
         // and inhibited-media handling in the full dispatcher below.
         // The FFS-only standalone entry reaches packet dispatch only after it
-        // accepts an FFS/OFS mount; foreign recovery still occurs at startup.
+        // accepts an FFS/OFS mount.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
 #if COPPERFS_NATIVE_FFS_READAHEAD
         if (action == DosPacketAction.Read)

@@ -1,5 +1,9 @@
 # Handler size experiment, 2026-11-10
 
+This document records successive experiments. The FFS foreign-startup
+behavior described in the historical sections is superseded by the
+foreign-volume rejection follow-up at the end.
+
 The qualified release candidate at filesystem revision `3ff1de9` uses the
 pinned CopperSharp `e16a42f` pipeline with CILica inlining enabled. An isolated
 experiment used CopperSharp `b5802468c`, whose CILica integration independently
@@ -336,3 +340,54 @@ replays, original-handler/cross-recovery comparisons and all six interrupted
 mutation recovery cases. The expanded CopperStart source-consumer replay passed
 230 cases with SFS2 TRST enabled. An initial run of those extra SFS2 cases
 without the SFS2 integration flag failed and is not counted as a pass.
+
+## FFS foreign-volume rejection follow-up
+
+Standalone FFS now rejects a non-FFS/OFS signature before calling the smart
+mount or journal-recovery paths. This deliberately changes the former behavior:
+FFS must not repair a foreign SFS volume. Both the default specialized and
+the combined FFS builds passed ten Kickstart 3.1 foreign-startup cases each,
+including dirty classic-SFS and SFS2 images. The FFS cases returned
+ObjectWrongType, issued no writes or flushes, and left the image hash unchanged;
+the SFS and SFS2 controls retained their recovery behavior. Six original-FFS
+and OFS mutation and clean-handoff comparisons passed.
+
+The Release host suite passed 1,419 tests, with three optional external-image
+skips. The direct native handler suite passed 216 tests, with its optional
+benchmark skipped. The SFS2-enabled CopperStart source-consumer replay passed
+230 tests. The default FFS HUNK is 90,864 bytes, down from 92,472 bytes;
+its SHA-256 is B74FC79CE4A4C6F06FFAB15F63BFEE3056BC7BB9994001C627CD7CF7B5A640B9.
+
+Performance parity is not established. With aligned buffers, matching data
+hashes and device request counts, the 24 paired FFS read trials measured
+median session-cycle changes of +0.26%, -0.19%, +0.04% and +0.87% at 64,
+512, 4,096 and 65,536 bytes. The 18 paired write trials and fresh-boot checks
+passed, with overwrite, append and bulk append respectively +0.30%, +2.02%
+and +1.00% in emulated bus cycles. Six startup-phase offsets kept append
+between +2.02% and +2.05%, with identical image hashes and device counts.
+The exclusive instruction profile attributes most of the increase to the
+FFS bitmap-loading path; it does not establish the underlying cause or a
+physical-hardware effect. The correction is not performance-qualified for
+release until this difference is resolved or explicitly accepted.
+
+### FFS geometry follow-up
+
+The append profile showed repeated root-block geometry calculations while
+validating a file chain. The FFS chain validator now calculates the root once
+per pass; OFS retains its existing validation path. A new damaged-pointer
+case confirms that a data pointer to the root is rejected before any write.
+The resulting default FFS HUNK is 91,324 bytes, SHA-256
+FEDD80E84ED4E94F4042B174819C75AF14FCDBC54C431DF681457F37A645EF65.
+
+The revised paired write measurements show +0.003% overwrite, -7.35% append
+and -2.99% bulk append in emulated bus cycles, with matching buffer addresses,
+image hashes and device counts; all fresh-boot verifications passed. Two
+independent 24-trial read runs measured median session increases of
+0.27-0.29%, 0.06-0.07%, 0.13-0.15% and 0.78-0.87% at 64, 512, 4,096 and
+65,536 bytes respectively, with matching buffer addresses, data hashes and
+device request counts. For the 65,536-byte workload the read phase itself
+was faster in the first run, while open/session costs increased. These results
+do not establish read-performance parity or physical-hardware performance.
+The foreign-startup, original-handler and native tests described above were
+rerun for this HUNK. The read differences remain a release qualification
+limitation.

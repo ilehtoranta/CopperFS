@@ -30,21 +30,25 @@ public sealed class WriteProfileTheoryAttribute : TheoryAttribute
 public sealed partial class OriginalHandlerCorrectnessTests
 {
     [WriteQualificationTheory]
+    [InlineData("ffs")]
     [InlineData("sfs")]
     public async Task SweepWriteSchedulingPhase(string profile)
     {
         var root = Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_WRITE_RESULTS")!, profile, "phase-sweep");
+        var name = profile == "ffs" ? "CopperFFS" : "CopperSFS";
         var handlers = new[] {
-            Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_FOREIGN_BASELINE_ROOT")!, profile, "CopperSFS"),
-            Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_FOREIGN_CANDIDATE_ROOT")!, profile, "CopperSFS") };
-        var media = ReadMedia.Sfs(); var addresses = new List<uint>(); var rows = new List<object>();
+            Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_FOREIGN_BASELINE_ROOT")!, profile, name),
+            Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_FOREIGN_CANDIDATE_ROOT")!, profile, name) };
+        var media = profile == "ffs" ? ReadMedia.Ffs() : ReadMedia.Sfs();
+        var probe = profile == "ffs" ? "WriteQualificationProbe::FfsAppend" : "WriteQualificationProbe::SfsBulkAppend";
+        var addresses = new List<uint>(); var rows = new List<object>();
         foreach (var delay in new uint[] { 0, 200, 500, 1000, 2000, 4000 })
         for (var arm = 0; arm < handlers.Length; arm++)
         {
             var label = $"{delay}-{(arm == 0 ? "baseline" : "candidate")}";
             long start = -1, cycles = -1; int reads = 0, writes = 0, flushes = 0;
             var image = await Run(root, profile, label, handlers[arm], media, true,
-                "WriteQualificationProbe::SfsBulkAppend", (marker, cycle, r, w, f) =>
+                probe, (marker, cycle, r, w, f) =>
                 {
                     if (marker == 220) { start = cycle; reads = r; writes = w; flushes = f; }
                     if (marker == 221) { Assert.True(start >= 0); cycles = cycle - start; reads = r - reads; writes = w - writes; flushes = f - flushes; }
@@ -61,18 +65,18 @@ public sealed partial class OriginalHandlerCorrectnessTests
     }
 
     [WriteProfileTheory]
-    [InlineData("sfs")] [InlineData("sfs2-trst")]
+    [InlineData("ffs")] [InlineData("sfs")] [InlineData("sfs2-trst")]
     public async Task ProfileSmartBulkAppend(string profile)
     {
         var root = Path.Combine(Environment.GetEnvironmentVariable("COPPERFS_WRITE_RESULTS")!, "profile", profile);
-        var media = profile == "sfs" ? ReadMedia.Sfs() : ReadMedia.Sfs2();
+        var media = profile == "ffs" ? ReadMedia.Ffs() : profile == "sfs" ? ReadMedia.Sfs() : ReadMedia.Sfs2();
         foreach (var arm in new[] { "baseline", "candidate" })
         {
             var variable = arm == "baseline" ? "COPPERFS_FOREIGN_BASELINE_ROOT" : "COPPERFS_FOREIGN_CANDIDATE_ROOT";
-            var handler = Path.Combine(Environment.GetEnvironmentVariable(variable)!, profile, "CopperSFS");
+            var handler = Path.Combine(Environment.GetEnvironmentVariable(variable)!, profile, profile == "ffs" ? "CopperFFS" : "CopperSFS");
             Assert.True(File.Exists(handler)); Assert.True(File.Exists(handler + ".map"));
             await Run(root, profile, arm, handler, media, true,
-                profile == "sfs" ? "WriteQualificationProbe::SfsBulkAppend" : "WriteQualificationProbe::Sfs2BulkAppend");
+                profile == "ffs" ? "WriteQualificationProbe::FfsAppend" : profile == "sfs" ? "WriteQualificationProbe::SfsBulkAppend" : "WriteQualificationProbe::Sfs2BulkAppend");
             Assert.True(File.Exists(Path.Combine(root, arm, "write-profile.json")));
         }
     }

@@ -160,7 +160,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             if (floppy) { machine.MountAdf(1, floppyImage!); machine.SetDriveWriteProtected(1, !write); }
             machine.Reset();
             var writeProfiler = Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
-                (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend")
+                (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend")
                 ? new ReadCpuProfile(machine, handler, rom) : null;
             machine.ParallelDataWritten += (value, _, busCycle) =>
             {

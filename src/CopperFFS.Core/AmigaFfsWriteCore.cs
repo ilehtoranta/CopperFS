@@ -322,8 +322,10 @@ public static partial class AmigaFfsWriteCore
         r.Header = key; return true;
     }
     private static bool Allocated<T>(ref T p, ref Work w, ref AmigaVolumeGeometry geometry, uint key) where T : struct, IAmigaWritableFileSystemPlatform
+        => Allocated(ref p, ref w, ref geometry, key, geometry.RootBlock);
+    private static bool Allocated<T>(ref T p, ref Work w, ref AmigaVolumeGeometry geometry, uint key, uint rootBlock) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (key < geometry.ReservedBlocks || key >= geometry.BlockCount || key == geometry.RootBlock ||
+        if (key < geometry.ReservedBlocks || key >= geometry.BlockCount || key == rootBlock ||
             IsFree(ref p, ref w, key) || key == w.BitmapBlock || w.Error != DOS.Error.None)
             return Fail(ref w, DOS.Error.DiskNotValidated);
         return true;
@@ -339,11 +341,12 @@ public static partial class AmigaFfsWriteCore
         lastData = 0;
         if (w.DosType == 0x444F5300) return OfsChain(ref p, ref w, header, release, out lastData);
         var geometry = p.Geometry;
+        var rootBlock = geometry.RootBlock;
         var table = header;
         uint logical = 0, blocks = 0;
         for (var guard = 0u; table != 0 && guard < geometry.BlockCount; guard++)
         {
-            if (!Allocated(ref p, ref w, ref geometry, table) || !p.ReadBlock(table, w.Meta) || !AmigaDiskFileSystemCore.Checksum(ref p, w.Meta) ||
+            if (!Allocated(ref p, ref w, ref geometry, table, rootBlock) || !p.ReadBlock(table, w.Meta) || !AmigaDiskFileSystemCore.Checksum(ref p, w.Meta) ||
                 p.ReadUInt32(w.Meta, 4) != table || p.ReadUInt32(w.Meta, 8) > geometry.TableEntries ||
                 p.ReadUInt32(w.Meta) != (table == header ? 2u : 16u) || p.ReadUInt32(w.Meta, geometry.Tail + 508) != 0xFFFFFFFD ||
                 (table != header && p.ReadUInt32(w.Meta, geometry.Tail + 500) != header)) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -358,7 +361,7 @@ public static partial class AmigaFfsWriteCore
             for (var i = first; i < count && i < limit; i++)
             {
                 var key = p.ReadUInt32(w.Meta, geometry.Tail + 308 - (int)i * 4);
-                if (!Allocated(ref p, ref w, ref geometry, key)) return false;
+                if (!Allocated(ref p, ref w, ref geometry, key, rootBlock)) return false;
                 if (blocks != 0 && logical + i == blocks - 1) lastData = key;
                 if (release) Bit(ref p, ref w, key, true);
             }

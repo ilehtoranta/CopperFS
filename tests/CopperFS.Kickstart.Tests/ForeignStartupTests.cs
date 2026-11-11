@@ -221,13 +221,23 @@ public sealed partial class OriginalHandlerCorrectnessTests
         using var beforeResult = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "baseline", "result.json")));
         using var afterResult = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "candidate", "result.json")));
         Assert.Equal(beforeResult.RootElement.GetProperty("Stage").GetUInt32(), afterResult.RootElement.GetProperty("Stage").GetUInt32());
-        Assert.Equal(beforeResult.RootElement.GetProperty("IoErr").GetUInt32(), afterResult.RootElement.GetProperty("IoErr").GetUInt32());
         // The SFS2 handler also accepts classic SFS, so eliminating its
         // classic runtime engine would change an existing supported path.
         if (handlerProfile == "sfs2-trst" && mediaProfile == "sfs")
             Assert.Equal(1u, beforeResult.RootElement.GetProperty("Stage").GetUInt32());
-        Assert.Equal(beforeTrace.Operations, afterTrace.Operations);
-        Assert.Equal(Hash(before), Hash(after));
+        if (handlerProfile == "ffs")
+        {
+            Assert.Equal(0u, afterResult.RootElement.GetProperty("Stage").GetUInt32());
+            Assert.Equal((uint)Amiga.DOS.Error.ObjectWrongType, afterResult.RootElement.GetProperty("IoErr").GetUInt32());
+            Assert.DoesNotContain(afterTrace.Operations, op => op.StartsWith("W:") || op == "F");
+            Assert.Equal(Hash(media), Hash(after));
+        }
+        else
+        {
+            Assert.Equal(beforeResult.RootElement.GetProperty("IoErr").GetUInt32(), afterResult.RootElement.GetProperty("IoErr").GetUInt32());
+            Assert.Equal(beforeTrace.Operations, afterTrace.Operations);
+            Assert.Equal(Hash(before), Hash(after));
+        }
     }
     [ForeignStartupTheory]
     [InlineData("ffs")]
@@ -267,9 +277,19 @@ public sealed partial class OriginalHandlerCorrectnessTests
         using var oldResult = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "baseline", "result.json")));
         using var newResult = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "candidate", "result.json")));
         Assert.Equal(oldResult.RootElement.GetProperty("Stage").GetUInt32(), newResult.RootElement.GetProperty("Stage").GetUInt32());
-        Assert.Equal(oldResult.RootElement.GetProperty("IoErr").GetUInt32(), newResult.RootElement.GetProperty("IoErr").GetUInt32());
-        Assert.Equal(beforeTrace.Operations, afterTrace.Operations);
-        Assert.Equal(Hash(before), Hash(after));
+        if (handlerProfile == "ffs")
+        {
+            Assert.Equal(0u, newResult.RootElement.GetProperty("Stage").GetUInt32());
+            Assert.Equal((uint)Amiga.DOS.Error.ObjectWrongType, newResult.RootElement.GetProperty("IoErr").GetUInt32());
+            Assert.DoesNotContain(afterTrace.Operations, op => op.StartsWith("W:") || op == "F");
+            Assert.Equal(Hash(interrupted), Hash(after));
+        }
+        else
+        {
+            Assert.Equal(oldResult.RootElement.GetProperty("IoErr").GetUInt32(), newResult.RootElement.GetProperty("IoErr").GetUInt32());
+            Assert.Equal(beforeTrace.Operations, afterTrace.Operations);
+            Assert.Equal(Hash(before), Hash(after));
+        }
         if (handlerProfile == "sfs2-trst")
         {
             Assert.Contains(beforeTrace.Operations, op => op.StartsWith("W:"));
@@ -311,9 +331,19 @@ public sealed partial class OriginalHandlerCorrectnessTests
         using var oldResult = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "baseline", "result.json")));
         using var newResult = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "candidate", "result.json")));
         Assert.Equal(oldResult.RootElement.GetProperty("Stage").GetUInt32(), newResult.RootElement.GetProperty("Stage").GetUInt32());
-        Assert.Equal(oldResult.RootElement.GetProperty("IoErr").GetUInt32(), newResult.RootElement.GetProperty("IoErr").GetUInt32());
-        Assert.Equal(beforeTrace.Operations, afterTrace.Operations);
-        Assert.Equal(Hash(before), Hash(after));
+        if (handlerProfile == "ffs")
+        {
+            Assert.Equal(0u, newResult.RootElement.GetProperty("Stage").GetUInt32());
+            Assert.Equal((uint)Amiga.DOS.Error.ObjectWrongType, newResult.RootElement.GetProperty("IoErr").GetUInt32());
+            Assert.DoesNotContain(afterTrace.Operations, op => op.StartsWith("W:") || op == "F");
+            Assert.Equal(Hash(interrupted), Hash(after));
+        }
+        else
+        {
+            Assert.Equal(oldResult.RootElement.GetProperty("IoErr").GetUInt32(), newResult.RootElement.GetProperty("IoErr").GetUInt32());
+            Assert.Equal(beforeTrace.Operations, afterTrace.Operations);
+            Assert.Equal(Hash(before), Hash(after));
+        }
         Assert.Equal(handlerProfile == "ffs" ? 0u : 1u, oldResult.RootElement.GetProperty("Stage").GetUInt32());
         Assert.Contains(beforeTrace.Operations, op => op.StartsWith("W:"));
         Assert.Contains(beforeTrace.Operations, op => op == "F");

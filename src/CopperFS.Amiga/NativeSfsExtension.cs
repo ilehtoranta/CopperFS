@@ -94,9 +94,8 @@ public static partial class NativeSfsExtension
         APTR.WriteUInt32(scratch, Operation, operation);
         APTR.WriteUInt32(scratch, Actual, 0);
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY
-        // The standalone FFS client only uses these operations. Keep the
-        // foreign SFS mount path, but do not retain the extension's complete
-        // mutation dispatcher just to perform startup and bookkeeping.
+        // Keep the narrow standalone FFS bookkeeping path separate from the
+        // extension's complete mutation dispatcher.
         var platform = new NativeFileSystemPlatform(state);
         bool success;
         if (operation == RootOperation)
@@ -133,9 +132,7 @@ public static partial class NativeSfsExtension
         if (TrstGroupPending(state)) { var p = new NativeFileSystemPlatform(state); return FlushNativeTrstGroup(state, ref p, ref work); }
 #endif
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY
-        // Startup can recover a foreign classic-SFS journal before the
-        // standalone FFS entry rejects that type. Keep its ordering while
-        // avoiding the shared mutation-operation dispatcher.
+        // Keep recovery separate from the shared mutation-operation dispatcher.
         var scratch = Scratch(state);
         APTR.WriteUInt32(scratch, Operation, RecoverOperation);
         APTR.WriteUInt32(scratch, Actual, 0);
