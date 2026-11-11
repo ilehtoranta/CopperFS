@@ -19,8 +19,9 @@ public sealed class AutomaticTrimInstructionTests
         {
             AssemblyPath = typeof(AutomaticTrimInvalidationProbe).Assembly.Location,
             EntryPoint = typeof(AutomaticTrimInvalidationProbe).FullName + "::Entry",
-            ManagedAssemblyPaths = [typeof(NativeAmigaFileSystem).Assembly.Location,
-                typeof(APTR).Assembly.Location, typeof(AmigaTrimValidation).Assembly.Location],
+            ManagedAssemblyPaths = new[] { "CopperFS.Amiga.dll", "CopperSFS.Core.dll",
+                "CopperSharp.Sdk.Amiga.dll", "CopperSharp.Sdk.Amiga.Support.dll", "CopperSharp.Compiler.dll" }
+                .Select(name => Path.Combine(Path.GetDirectoryName(typeof(NativeAmigaFileSystem).Assembly.Location)!, name)).ToArray(),
             IncludedExportNames = [], Cpu = M68kCpuTarget.M68000,
             OutputFormat = M68kOutputFormat.Assembly, RuntimeProfile = M68kRuntimeProfile.Freestanding,
             MemoryManagement = M68kMemoryManagement.None, ExceptionMode = M68kExceptionMode.Yolo

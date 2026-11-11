@@ -103,10 +103,11 @@ handler project compiles those same sources into CopperFS.Amiga, without importi
 CopperStart's OS implementation. Retained namespaces and compile-symbol names are
 compatibility names, not repository or assembly dependencies.
 
-Standalone FFS, default classic buffered TRST and both SFS2 builds select their
+Standalone FFS, default classic buffered TRST and default SFS2 TRST select their
 family before native compilation so CopperFFS excludes the SFS writer and
-CopperSFS excludes the OFS/FFS writer. Other classic write policies retain shared
-dispatch pending performance qualification of specialization.
+CopperSFS excludes the OFS/FFS writer. SFS2 CSUN and strict/legacy classic write
+policies retain shared dispatch unless explicitly specialized. `-Sfs2` selects
+TRST; use `-Sfs2 -Sfs2CsunWrites` for CSUN.
 The shared source consumer and ordinary managed build retain runtime dispatch.
 Use `Build-Handler.ps1 -SharedDispatch` only as a size/performance comparison
 control. See the [active-code measurements](docs/active-code-size-2026-11-11.md)

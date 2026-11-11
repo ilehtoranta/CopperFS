@@ -23,6 +23,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($SharedDispatch) { $NoSpecialization = $true }
+if ($Ffs -and $Sfs2) { throw 'Choose the FFS or SFS2 handler, not both.' }
 if ($FfsOnly -and (!$Ffs -or $Sfs2)) { throw 'FfsOnly requires -Ffs and excludes -Sfs2.' }
 if ($SmartOnly -and ($Ffs -or $FfsOnly)) { throw 'SmartOnly requires an SFS or SFS2 entry.' }
 if ($NoSpecialization -and ($FfsOnly -or $SmartOnly)) { throw 'NoSpecialization cannot be combined with an explicit specialized profile.' }

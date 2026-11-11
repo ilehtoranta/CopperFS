@@ -2273,7 +2273,7 @@ public static partial class NativeAmigaFileSystem
                     error = DOS.Error.ActionNotKnown;
                 break;
         }
-#if COPPERSTART_NATIVE_SFS_WRITES
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
         if ((SpecializeFormat ? FormatIsSmart : Smart(state)) && error != DOS.Error.None && SmartMutation(action))
         {
             RecoverSmartWriteError(state);

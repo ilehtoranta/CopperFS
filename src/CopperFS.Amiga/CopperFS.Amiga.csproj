@@ -4,6 +4,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants Condition="'$(CopperFsAutoTrim)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM</DefineConstants>
     <!-- Empty keeps the shared source consumer and host tests multi-format. -->
+    <CopperFsFfsOnly Condition="'$(CopperFsHandler)' == 'Ffs'">true</CopperFsFfsOnly>
+    <CopperFsSmartOnly Condition="'$(CopperFsHandler)' == 'Sfs'">true</CopperFsSmartOnly>
     <DefineConstants Condition="'$(CopperFsHandler)' == 'Ffs'">$(DefineConstants);COPPERSTART_FFS_ONLY;COPPERFS_FFS_HANDLER</DefineConstants>
     <DefineConstants Condition="'$(CopperFsHandler)' == 'Sfs'">$(DefineConstants);COPPERSTART_SFS_ONLY;COPPERSTART_SMART_ONLY</DefineConstants>
     <CopperStartSfsTrstWrites Condition="'$(CopperStartSfsTrstWrites)' == ''">true</CopperStartSfsTrstWrites>
