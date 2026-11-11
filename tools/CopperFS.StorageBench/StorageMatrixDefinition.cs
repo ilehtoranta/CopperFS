@@ -5,6 +5,12 @@ using System.IO.Compression;
 // Shared by the host runner and ROM harness; no filesystem or emulator dependency.
 internal static class StorageMatrixDefinition
 {
+    internal static void ValidateBufferParity(IEnumerable<uint> addresses)
+    {
+        var values = addresses.Distinct().ToArray();
+        if (values.Length != 1 || values[0] == 0 || (values[0] & 0xFFFFu) != 0)
+            throw new InvalidDataException("Compared trials must use the same nonzero 64 KiB-aligned guest buffer.");
+    }
     internal static readonly string[] DefaultProfiles=["ffs","sfs2-csun","sfs2-trst"];
     internal static readonly string[] DefaultScenarios=["legacy-zero","stock-zero","stock-hdd","stock-cf","stock-ide-hdd","stock-ide-cf",
         "fast-zero","fast-hdd","fast-cf","fast-ide-hdd","fast-ide-cf"];

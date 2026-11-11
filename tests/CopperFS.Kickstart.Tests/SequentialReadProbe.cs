@@ -7,10 +7,11 @@ namespace CopperFS.Kickstart.Tests;
 // Kickstart Exec/DOS and the loaded filesystem handler, without service doubles.
 public static class SequentialReadProbe
 {
-    public static int RunFfs() => Run(false);
-    public static int RunSfs2() => Run(true);
+    public static int RunFfs() => Run(false, false);
+    public static int RunSfs2() => Run(true, false);
+    public static int RunSfs() => Run(true, true);
 
-    private static int Run(bool sfs2)
+    private static int Run(bool sfs2, bool classic)
     {
         var library = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!library.HasValue) return 10;
@@ -25,12 +26,16 @@ public static class SequentialReadProbe
         Report(200); Report((int)(control.Raw >> 24)); Report((int)(control.Raw >> 16));
         Report((int)(control.Raw >> 8)); Report((int)control.Raw);
         var memory = APTR.ReadUInt32(control, 32);
-        var data = APTR.FromPointer(global::Amiga.Exec.AllocMem(1048576,
+        // Give both handler arms the same 64 KiB-aligned address when their
+        // allocations fall in the same alignment window. The host verifies
+        // equality and rejects comparisons when alignment alone is insufficient.
+        var allocation = APTR.FromPointer(global::Amiga.Exec.AllocMem(1048576 + 65535,
             global::Amiga.Exec.MemoryFlags.Public | (memory == 2 ? global::Amiga.Exec.MemoryFlags.Chip : global::Amiga.Exec.MemoryFlags.Fast)));
-        if (data.IsNull) return Failed(control, 11);
+        if (allocation.IsNull) return Failed(control, 11);
+        var data = APTR.FromPointer((allocation.Raw + 65535u) & 0xFFFF0000u);
         // Capacity probing is a separate diagnostic, outside acceptance runs.
         if (APTR.ReadUInt32(control, 292) != 0 && !CaptureGeometry(control)) return Failed(control, 26);
-        var outcome = Mount(control, sfs2);
+        var outcome = Mount(control, sfs2, classic);
         if (outcome != 0) { APTR.WriteUInt32(control, 20, (uint)outcome); Report(250); return outcome; }
         var measureMount = APTR.ReadUInt32(control, 296) != 0;
         if (measureMount)
@@ -67,6 +72,10 @@ public static class SequentialReadProbe
                 if (measureMount) Report(211);
                 if (!prior.HasValue || DOS.Close(prior.Value) == 0) return Failed(control, 25);
             }
+            // Optional diagnostic offsets exercise different interrupt and
+            // scheduler phases before, not during, the measured session.
+            for (var delay = 0u; delay < APTR.ReadUInt32(control, 300); delay++)
+                APTR.WriteUInt32(control, 304, delay);
             Report(201); // Entire open/read/close session starts.
             var file = sfs2 ? DOS.Open("SEQ0:Payload", DOS.FileMode.OldFile)
                 : DOS.Open("SEQ0:Data/Payload", DOS.FileMode.OldFile);
@@ -83,7 +92,7 @@ public static class SequentialReadProbe
         return 0;
     }
 
-    private static int Mount(APTR control, bool sfs2)
+    internal static int Mount(APTR control, bool sfs2, bool classic)
     {
         var segment = DOS.LoadSeg("HANDLER");
         if (!segment.HasValue) return 12;
@@ -116,7 +125,7 @@ public static class SequentialReadProbe
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.MaximumTransfer, 65536);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.Mask, 0xFFFFFFFE);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.BootPriority, 0xFFFFFF7F);
-        APTR.WriteUInt32(environment, DosLayout.DosEnvec.DosType, sfs2 ? 0x53465302u : 0x444F5301u);
+        APTR.WriteUInt32(environment, DosLayout.DosEnvec.DosType, classic ? 0x53465300u : sfs2 ? 0x53465302u : 0x444F5301u);
         // The host selects an explicit handler policy before Mount runs. The
         // same probe image is used for cached/direct and original-handler arms.
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.Control, APTR.ReadUInt32(control, 28));

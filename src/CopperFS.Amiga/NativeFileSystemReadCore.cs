@@ -63,8 +63,7 @@ public static class NativeFileSystemReadCore
         var within=position & 511;
         if (length <= 512-within && (dosType & 1)!=0 && p.BlockBytes==512 && header!=0 &&
             p.ReadUInt32(file,56)==header && p.ReadUInt32(file,84)==dosType &&
-            Disjoint(destination,length,file,216) && Disjoint(destination,length,metadata,512) &&
-            Disjoint(destination,length,data,512) && p.IsMapped(destination,length))
+            DisjointFfsScratch(destination,length,file,metadata,data) && p.IsMapped(destination,length))
         {
             var index=position>>9; var start=p.ReadUInt32(file,72); var count=p.ReadUInt32(file,80);
             var size=p.ReadUInt32(file,60);
@@ -85,6 +84,16 @@ public static class NativeFileSystemReadCore
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static bool Disjoint(APTR a, uint length, APTR b, uint bytes) =>
         a.Raw <= b.Raw ? b.Raw - a.Raw >= length : a.Raw - b.Raw >= bytes;
+
+    // The partial-read fast path checks these three caller-owned ranges on
+    // every packet. Keep the same overflow-safe comparisons in one call.
+    private static bool DisjointFfsScratch(APTR destination, uint length, APTR file, APTR metadata, APTR data)
+    {
+        var address = destination.Raw;
+        return (address <= file.Raw ? file.Raw - address >= length : address - file.Raw >= 216) &&
+            (address <= metadata.Raw ? metadata.Raw - address >= length : address - metadata.Raw >= 512) &&
+            (address <= data.Raw ? data.Raw - address >= length : address - data.Raw >= 512);
+    }
 
     public static int ReadFfs<T>(ref T p, APTR file, uint header, uint dosType, uint position,
         APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)

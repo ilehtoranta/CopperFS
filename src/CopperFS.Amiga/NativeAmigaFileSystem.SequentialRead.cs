@@ -19,9 +19,9 @@ public static partial class NativeAmigaFileSystem
             var adaptive = 0u;
             if (length == 4096)
                 adaptive = NativeFfsSequentialRead.Begin(state, file, packet, target, length, position);
-            else if (APTR.ReadUInt32(file, 104) != 0 && !Smart(state)) NativeFfsSequentialRead.Reset(file);
+            else if (APTR.ReadUInt32(file, 104) != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state))) NativeFfsSequentialRead.Reset(file);
 #endif
-            if (Smart(state))
+            if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
                 result = NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, target, length, out error);
 #if !COPPERFS_NATIVE_FFS_READAHEAD
             else if (length > 512 && length <= 4096 && NativeFileSystemPlatform.TryReadFfsCached(state, file, (uint)position, target, length))

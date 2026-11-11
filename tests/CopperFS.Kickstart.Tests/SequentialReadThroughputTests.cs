@@ -28,7 +28,7 @@ public sealed class SequentialReadThroughputTests(ITestOutputHelper output)
 {
     private sealed record Pair(string Name, bool Sfs2, string Before, string After,
         uint BeforeControl = 0, uint AfterControl = 0);
-    private sealed record Manifest(Pair[] Pairs, bool PrimeOpen = false, bool MeasureMount = false);
+    private sealed record Manifest(Pair[] Pairs, bool PrimeOpen = false, bool MeasureMount = false, uint PhaseDelay = 0);
     private sealed record DeviceRead(long ByteOffset, int Length);
     private sealed record Phase(long BusCycles, int ReadRequests, long DeviceReadBytes, DeviceRead[] Reads);
     private sealed record MountOpen(Phase Mount, Phase FirstOpen)
@@ -44,6 +44,7 @@ public sealed class SequentialReadThroughputTests(ITestOutputHelper output)
 
     [KickstartReadTheory]
     [InlineData("ffs", "before")] [InlineData("ffs", "after")]
+    [InlineData("sfs-classic", "before")] [InlineData("sfs-classic", "after")]
     [InlineData("sfs2-csun", "before")] [InlineData("sfs2-csun", "after")]
     [InlineData("sfs2-trst", "before")] [InlineData("sfs2-trst", "after")]
     public async Task ReadThroughKickstartDosAndLoadedHandler(string profile, string variant)
@@ -58,13 +59,14 @@ public sealed class SequentialReadThroughputTests(ITestOutputHelper output)
         var mountControl = variant == "before" ? pair.BeforeControl : pair.AfterControl;
         var handlerHash = Hash(File.ReadAllBytes(handlerPath));
         var rom = File.ReadAllBytes(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")!);
-        var media = pair.Sfs2 ? ReadMedia.Sfs2() : ReadMedia.Ffs();
+        var classic = profile == "sfs-classic";
+        var media = classic ? ReadMedia.Sfs() : pair.Sfs2 ? ReadMedia.Sfs2() : ReadMedia.Ffs();
         var mediaHash = Hash(media); var mediaPath = Path.Combine(runRoot, "read.hdf");
         File.WriteAllBytes(mediaPath, media);
         var compiled = AmigaM68kCompiler.Compile(new M68kCompilationRequest
         {
             AssemblyPath = typeof(SequentialReadProbe).Assembly.Location,
-            EntryPoint = "CopperFS.Kickstart.Tests.SequentialReadProbe::" + (pair.Sfs2 ? "RunSfs2" : "RunFfs"),
+            EntryPoint = "CopperFS.Kickstart.Tests.SequentialReadProbe::" + (classic ? "RunSfs" : pair.Sfs2 ? "RunSfs2" : "RunFfs"),
             Cpu = M68kCpuTarget.M68000, OutputFormat = M68kOutputFormat.Hunk,
             RuntimeProfile = M68kRuntimeProfile.Application, ExceptionMode = M68kExceptionMode.Full,
             IncludedExportNames = []
@@ -120,6 +122,7 @@ public sealed class SequentialReadThroughputTests(ITestOutputHelper output)
                     WriteWord(machine, control + 28, mountControl);
                     WriteWord(machine, control + 52, manifest.PrimeOpen ? 1u : 0u);
                     WriteWord(machine, control + 296, manifest.MeasureMount ? 1u : 0u);
+                    WriteWord(machine, control + 300, manifest.PhaseDelay);
                 }
                 return;
             }

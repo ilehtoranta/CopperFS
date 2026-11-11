@@ -115,6 +115,18 @@ internal static class ReadMedia
         return result;
     }
 
+    internal static byte[] Sfs()
+    {
+        // Build the classic comparison image from the repository's synthetic
+        // empty fixture; both handler arms receive identical media bytes.
+        var disk = new StudyDisk(StudyFixture.Empty(512, 16 * 1024 * 1024), 512, batchedWrites: true);
+        var node = FsOps.Create(ref disk, "Payload");
+        FsOps.Write(ref disk, node, 0, Payload);
+        FsOps.Read(ref disk, node, 0, Payload.Length);
+        Assert.Equal(Payload, disk.Ram.AsSpan((int)disk.Payload.Raw, Payload.Length).ToArray());
+        return disk.Snapshot();
+    }
+
     private static AmigaSmartFileSystem2WriteCore.Work Work(StudyDisk d) => new()
     { Meta = d.Work.Meta, Data = d.Work.Data, Bitmap = d.Work.Bitmap, Journal = d.Work.Journal };
     private static uint U32(ReadOnlySpan<byte> b, int at) => BinaryPrimitives.ReadUInt32BigEndian(b[at..]);

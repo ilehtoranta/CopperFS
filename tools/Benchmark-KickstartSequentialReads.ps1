@@ -15,6 +15,7 @@ param(
     [string]$A1200Rom31=$env:COPPERSCREEN_UPGRADE_A1200_ROM31,
     [ValidateSet('All','Ffs','Sfs2','Sfs2CSUN','Sfs2TRST')][string]$FileSystemProfile='All',
     [string]$TimingProfiles='',
+    [uint32]$PhaseDelay = 0,
     [switch]$NoBuild,
     [string]$TestAssembly = ''
 )
@@ -22,6 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if($Matrix -or $StorageBackend -ne 'ZeroLatency' -or $MachineProfile -ne 'Legacy' -or $PayloadCachePolicy -eq 'Both' -or $A1200Kickstart -ne '3.0' -or $FileSystemProfile -ne 'All') {
+    if ($PhaseDelay -ne 0) { throw 'PhaseDelay is supported by the paired legacy benchmark, not the storage matrix.' }
     $matrixArguments=@{
         NativeArtifactRoot=$NativeArtifactRoot;ArtifactRoot=$ArtifactRoot;OriginalFfsHandler=$OriginalFfsHandler
         OriginalSfs2Handler=$OriginalSfs2Handler;A1200Rom=$A1200Rom;LegacyRom=$KickstartRom
@@ -72,6 +74,8 @@ $manifest = [ordered]@{
     NativeManifest = $nativeManifest
     BaselineCommit = $native.BaselineCommit
     Pairs = $native.Pairs
+    RequireBufferParity = $true
+    PhaseDelay = $PhaseDelay
     Trials = 3
     Workloads = @(
         @{ PacketBytes = 64; ReadBytes = 65536 },
@@ -108,10 +112,19 @@ try {
         $buildArguments += @('-c', 'Release')
         if ($NoBuild) { $buildArguments += '--no-build' }
     }
+    $filter = 'FullyQualifiedName~CopperFS.Kickstart.Tests.SequentialReadThroughputTests'
+    $supportedProfiles = @('ffs', 'sfs-classic', 'sfs2-csun', 'sfs2-trst')
+    if (@($native.Pairs).Count -eq 0 -or @($native.Pairs | Where-Object { $_.Name -notin $supportedProfiles }).Count -ne 0) {
+        throw 'The benchmark manifest must contain supported filesystem profiles.'
+    }
+    foreach ($profile in $supportedProfiles) {
+        if ($profile -notin @($native.Pairs.Name)) { $filter += "&DisplayName!~$profile" }
+    }
     dotnet test $testTarget @buildArguments `
-        --filter 'FullyQualifiedName~CopperFS.Kickstart.Tests.SequentialReadThroughputTests' `
+        --filter $filter `
         --logger 'trx;LogFileName=kickstart.trx' --results-directory $destination
     if ($LASTEXITCODE -ne 0) { throw "Kickstart benchmark failed ($LASTEXITCODE)." }
+    & (Join-Path $PSScriptRoot 'Test-SequentialBufferParity.ps1') -ManifestPath $manifestPath
     $assemblies = Get-ChildItem $testBin -Filter 'Copper*.dll' |
         ForEach-Object { @{ Name = $_.Name; Sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash } }
     @{ DotnetSdk = (dotnet --version); Assemblies = @($assemblies) } |

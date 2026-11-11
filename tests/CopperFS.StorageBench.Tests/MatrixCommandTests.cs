@@ -26,6 +26,7 @@ public sealed class MatrixCommandTests : IDisposable
         Assert.Equal(new[]{"original","cached","bypass"},manifest["Variants"]!.AsArray().Select(v=>v!.GetValue<string>()));
         Assert.Equal(1188,manifest["Scenarios"]!.AsArray().Count*3*3*4*manifest["Trials"]!.GetValue<int>());
         Assert.True(manifest["ColdStartEachTrial"]!.GetValue<bool>());
+        Assert.True(manifest["RequireBufferParity"]!.GetValue<bool>());
         Assert.Equal(StorageMatrixDefinition.DefaultProfiles,manifest["Profiles"]!.AsArray().Select(v=>v!.GetValue<string>()));
         Assert.EndsWith("a1200[!].rom",manifest["A1200Rom"]!.GetValue<string>());
         Assert.Equal("kickstart-storage-v2",manifest["Protocol"]!.GetValue<string>());

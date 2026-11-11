@@ -52,7 +52,7 @@ def main():
     left, right = ("Original (A)", "Copper (B)") if original else ("Before", "After")
     ratio = "B/A ratio" if original else "Speedup"
     cases = test_counts(root.glob("kickstart*.trx"), "CopperFS.Kickstart.Tests.SequentialReadThroughputTests.")
-    assert cases == {"passed": 6, "notExecuted": 0, "failed": 0}, ("Incomplete or failed Kickstart cases", cases)
+    assert cases == {"passed": 2 * len(manifest["Pairs"]), "notExecuted": 0, "failed": 0}, ("Incomplete or failed Kickstart cases", cases)
     payload = bytes((i * 17 + (i >> 9) * 31 + (i >> 17) * 7 + 3) & 255 for i in range(1048576))
     all_trials, rows, binaries = [], [], []
     rom_hashes = set()
@@ -64,7 +64,10 @@ def main():
             assert len(trials) == 12, (profile, variant, "Incomplete run", len(trials))
             handler = Path(pair[variant.capitalize()])
             if not original or variant == "after":
-                compatibility = read_json(handler.parent / "compatibility.json")
+                compatibility_path = handler.parent / "compatibility.json"
+                if not compatibility_path.exists():
+                    compatibility_path = handler.parent / "CopperSFS.compatibility.json"
+                compatibility = read_json(compatibility_path)
                 assert compatibility["IsCompatible"] and not compatibility["ManagedAllocationSites"]
             else:
                 reference, = [r for r in manifest["ReferenceHandlers"] if r["Path"] == str(handler)]
@@ -91,6 +94,9 @@ def main():
             variants[variant] = trials
             all_trials.extend(trials)
             binaries.append({"Profile": profile, "Variant": variant, "Bytes": handler.stat().st_size, **hashes})
+        if manifest.get("RequireBufferParity", False):
+            addresses = {trial["BufferAddress"] for trials in variants.values() for trial in trials}
+            assert len(addresses) == 1 and next(iter(addresses)) != 0 and next(iter(addresses)) % 65536 == 0, (profile, "Buffer placement differs", addresses)
         for field in ("MediaSha256", "ProbeSha256"):
             assert variants["before"][0][field] == variants["after"][0][field], (profile, field)
         for workload in manifest["Workloads"]:

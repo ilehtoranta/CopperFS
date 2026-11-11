@@ -3,7 +3,7 @@
   "repositories": {
     "CopperSharp68k": {
       "url": "https://github.com/ilehtoranta/CopperSharp68k.git",
-      "revision": "e16a42fbeff7a15376564fed63791081c7fe8fef"
+      "revision": "b5802468c6ebb68fceeb0403bad3c02eb09678b5"
     },
     "CopperStart": {
       "url": "https://github.com/ilehtoranta/CopperStart.git",

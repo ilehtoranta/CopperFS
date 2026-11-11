@@ -51,4 +51,13 @@ public sealed class StorageMatrixDefinitionTests
         Assert.Throws<ArgumentException>(()=>StorageMatrixDefinition.Profiles(["sfs2-csun","sfs2-csun"]));
         Assert.Throws<ArgumentException>(()=>StorageMatrixDefinition.Profiles(["other"]));
     }
+    [Fact]
+    public void ComparedBuffersMustMatchAndBeAligned()
+    {
+        StorageMatrixDefinition.ValidateBufferParity([0x220000, 0x220000]);
+        Assert.Throws<InvalidDataException>(() => StorageMatrixDefinition.ValidateBufferParity([]));
+        Assert.Throws<InvalidDataException>(() => StorageMatrixDefinition.ValidateBufferParity([0]));
+        Assert.Throws<InvalidDataException>(() => StorageMatrixDefinition.ValidateBufferParity([0x220001]));
+        Assert.Throws<InvalidDataException>(() => StorageMatrixDefinition.ValidateBufferParity([0x220000, 0x230000]));
+    }
 }

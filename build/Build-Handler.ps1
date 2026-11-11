@@ -9,6 +9,9 @@ param(
     [switch]$BufferedTrst,
     [switch]$LegacyCsUn,
     [switch]$Ffs,
+    [switch]$FfsOnly,
+    [switch]$SmartOnly,
+    [switch]$NoSpecialization,
     [switch]$Sfs2,
     [switch]$Sfs2TrstWrites,
     [switch]$SkipCompilerBuild,
@@ -17,6 +20,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($FfsOnly -and (!$Ffs -or $Sfs2)) { throw 'FfsOnly requires -Ffs and excludes -Sfs2.' }
+if ($SmartOnly -and ($Ffs -or $FfsOnly)) { throw 'SmartOnly requires an SFS or SFS2 entry.' }
+if ($NoSpecialization -and ($FfsOnly -or $SmartOnly)) { throw 'NoSpecialization cannot be combined with an explicit specialized profile.' }
 if ($TrstWrites -and $LegacyCsUn) { throw 'Choose TRST or legacy CSUN, not both.' }
 if ($BufferedTrst -and ($LegacyCsUn -or $Sfs2 -or $StrictWrites)) { throw 'BufferedTrst requires classic standalone TRST without StrictWrites.' }
 $useTrst = !$LegacyCsUn
@@ -31,6 +37,10 @@ $inputRoot = Join-Path $ArtifactRoot 'inputs'
 if (($Sfs2TrstWrites -or $Sfs2CsunWrites) -and !$Sfs2) { throw 'SFS2 write-policy switches require -Sfs2.' }
 if ($Sfs2TrstWrites -and $Sfs2CsunWrites) { throw 'Choose one SFS2 write policy.' }
 $useSfs2Trst = $Sfs2 -and !$Sfs2CsunWrites -and ($Sfs2TrstWrites -or !$PSBoundParameters.ContainsKey('Sfs2TrstWrites'))
+# Only the qualified default policies opt in automatically. Other write-policy
+# combinations retain their existing combined handler until qualified.
+$useFfsOnly = $FfsOnly -or ($Ffs -and !$Sfs2 -and !$NoSpecialization -and !$StrictWrites -and !$LegacyCsUn)
+$useSmartOnly = $SmartOnly -or (!$Ffs -and !$NoSpecialization -and !$Sfs2CsunWrites -and !$StrictWrites -and !$LegacyCsUn)
 New-Item -ItemType Directory -Force -Path $inputRoot | Out-Null
 $cliProject = Join-Path $CopperSharpRoot 'Compiler.Cli/CopperSharp.Compiler.Cli.csproj'
 $dosProject = Join-Path $repositoryRoot 'src/CopperFS.Amiga/CopperFS.Amiga.csproj'
@@ -38,7 +48,7 @@ if (!$SkipCompilerBuild) {
     dotnet build $cliProject -c $Configuration --verbosity quiet -m:1
     if ($LASTEXITCODE -ne 0) { throw 'CopperSharp compiler build failed.' }
 }
-dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($useSfs2Trst.ToString().ToLowerInvariant())" --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
+dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsOnly=$($useFfsOnly.ToString().ToLowerInvariant())" "-p:CopperFsSmartOnly=$($useSmartOnly.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($useSfs2Trst.ToString().ToLowerInvariant())" --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler input build failed.' }
 $compiler = Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"
 $dos = Join-Path $inputRoot 'CopperFS.Amiga.dll'
@@ -50,6 +60,13 @@ if (!$SkipCilica) {
     $activeSdkVersion = (& dotnet --version).Trim()
     & (Join-Path $CopperSharpRoot 'scripts/optimize-il.ps1') -InputAssembly $dos -OutputAssembly $optimizedDos -ResolverPaths $inputRoot -SdkVersion $activeSdkVersion
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$optimizedDos.cilica.json")) { throw 'Standalone handler CILica optimization failed.' }
+    # The pinned optimizer supports scalar replacement independently of inlining.
+    # Reprocess the original input with that profile, never the inlined output.
+    $optimizer = Join-Path $CopperSharpRoot '.artifacts/CilicaOptimizer/build/bin/CilicaOptimizer/release/CilicaOptimizer.dll'
+    dotnet $optimizer $dos $optimizedDos --resolver $inputRoot --inlining off
+    if ($LASTEXITCODE -ne 0) { throw 'Standalone no-inline CILica optimization failed.' }
+    $report = Get-Content -LiteralPath "$optimizedDos.cilica.json" -Raw | ConvertFrom-Json
+    if ($report.EnableInlining -ne $false -or $report.EnableScalarReplacement -ne $true) { throw 'Unexpected CILica optimization profile.' }
     $dos = $optimizedDos
 }
 $output = Join-Path $ArtifactRoot $(if ($Ffs) { 'CopperFFS' } else { 'CopperSFS' })
@@ -58,6 +75,9 @@ $entry = if ($Ffs) { 'CopperStart.Dos.NativeSfsStandaloneHandler::FfsEntry' } el
 # passes for this output. Keep the qualified selection explicit: optimize
 # transport and memory accesses without adding shared-return branches.
 $codeSizePasses = 'ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,ClusterInternalCalls,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis'
+# The FFS-only call clustering layout measurably slows the qualified read
+# workloads. Keep every other pass and the same no-inline CILica profile.
+if ($useFfsOnly) { $codeSizePasses = $codeSizePasses.Replace('ClusterInternalCalls,', '') }
 $arguments = @($compiler, $dos, '--entry', $entry,
     '--platform', 'amiga', '--cpu', $Cpu, '--clr', 'always', '--peephole', 'fixed-point',
     '--fpu', 'disabled', '--exceptions', 'yolo', '--code-size-optimizations', 'on',

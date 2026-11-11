@@ -78,10 +78,10 @@ internal static class MatrixCommand
             ["A1200Rom31"]=scenarios.Any(s=>StorageMatrixDefinition.Parse(s).Kickstart31) ? Existing(RequiredRom("A1200Rom31","COPPERSCREEN_UPGRADE_A1200_ROM31")) : "",
             ["LegacyRom"]=scenarios.Contains("legacy-zero") ? Existing(RequiredRom("LegacyRom","COPPERSHARP_KICKSTART31_ROM")) : "",
             ["Scenarios"]=JsonSerializer.SerializeToNode(scenarios),["Variants"]=JsonSerializer.SerializeToNode(variants),
-            ["Profiles"]=JsonSerializer.SerializeToNode(profiles),
+            ["Profiles"]=JsonSerializer.SerializeToNode(profiles),["RequireBufferParity"]=true,
             ["Protocol"]="kickstart-storage-v2",["IdeLayout"]=StorageIdePartition.Layout,["ColdStartEachTrial"]=true,["Trials"]=3,
             ["SourceRoots"]=JsonSerializer.SerializeToNode(new[]{Path.Combine(repository,"tests/CopperFS.Kickstart.Tests"),
-                Path.GetFullPath(Path.Combine(repository,"../CopperScreen/CopperMod.Amiga.Lightweight")),
+                Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("CopperScreenRoot") ?? Path.Combine(repository,"../CopperScreen"),"CopperMod.Amiga.Lightweight")),
                 Path.Combine(repository,"tools/CopperFS.StorageBench")})
         };
         string RequiredRom(string key,string environment)

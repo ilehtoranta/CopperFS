@@ -24,7 +24,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0;
-        var bytes = p.Geometry.BlockBytes;
+        var bytes = p.BlockBytes;
         w.Error = DOS.Error.None;
         // A native operation's compressed payload length is a UWORD. Bound the
         // worst case (one literal-run code per 64 longs) before doing any I/O.
@@ -108,7 +108,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         // Journal blocks must be free in BOTH the real and final bitmap, and
         // must not be staged targets, even when a target is subsequently freed.
         // Monotonic search also keeps journal blocks distinct without a heap list.
-        while (stream.Search < p.Geometry.BlockCount - 1)
+        while (stream.Search < p.BlockCount - 1)
         {
             var candidate = stream.Search++;
             if (candidate == w.RootContainer + 2 || staged.Find(candidate, out _)) continue;
@@ -127,7 +127,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static void TrstPage<T>(ref T p, ref Work w, ref RedoStream stream, uint block)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        p.Clear(w.Journal, p.Geometry.BlockBytes);
+        p.Clear(w.Journal, p.BlockBytes);
         p.WriteUInt32(w.Journal, 0, NativeRedoId); p.WriteUInt32(w.Journal, 8, block);
         stream.Block = block; stream.Offset = 16;
     }
@@ -135,7 +135,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool TrstByte<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
         ref RedoStream stream, byte value) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (stream.Offset == p.Geometry.BlockBytes)
+        if (stream.Offset == p.BlockBytes)
         {
             if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var next)) return false;
             p.WriteUInt32(w.Journal, 12, next); Seal(ref p, w.Journal);
@@ -153,7 +153,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         length = 0;
-        var words = p.Geometry.BlockBytes / 4;
+        var words = p.BlockBytes / 4;
         for (var at = 0u; at < words;)
         {
             var value = p.ReadUInt32(image, (int)(at * 4));
@@ -184,7 +184,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (staged.Count == 0) return true;
-        var stream = new RedoStream { Search = p.Geometry.ReservedBlocks };
+        var stream = new RedoStream { Search = p.ReservedBlocks };
         if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var first)) return false;
         stream.First = first; TrstPage(ref p, ref w, ref stream, first);
         for (var i = 0u; i < staged.Count; i++)
@@ -205,7 +205,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         // the zero-filled tail supplies the zero length (records are word aligned).
         Seal(ref p, w.Journal);
         if (!p.WriteBlock(stream.Block, w.Journal) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
-        p.Clear(w.Meta, p.Geometry.BlockBytes);
+        p.Clear(w.Meta, p.BlockBytes);
         var marker = w.RootContainer + 2;
         p.WriteUInt32(w.Meta, 0, TransactionFailed); p.WriteUInt32(w.Meta, 8, marker);
         p.WriteUInt32(w.Meta, 12, stream.First); Seal(ref p, w.Meta);

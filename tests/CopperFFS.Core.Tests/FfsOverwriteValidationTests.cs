@@ -77,6 +77,7 @@ public sealed partial class VolumeGeometryTests
     [InlineData(5)] // missing extension
     [InlineData(6)] // short preceding pointer table
     [InlineData(7)] // file header marked free
+    [InlineData(8)] // data pointer references the volume root
     public void OverwritePreflightRejectsDamageOnItsPathBeforeAnyWrite(int damage)
     {
         var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(12000, 512, 2, out var g));
@@ -94,11 +95,12 @@ public sealed partial class VolumeGeometryTests
         }
         else
         {
-            var table = damage >= 5 ? 10u : 11u;
+            var table = damage is 5 or 6 ? 10u : 11u;
             Assert.True(p.ReadBlock(table, Meta));
             if (damage == 0) p.WriteUInt32(Meta, 20, 1);
             if (damage == 1) p.WriteUInt32(Meta, 500, 123);
             if (damage == 2) p.WriteUInt32(Meta, 308, g.BlockCount);
+            if (damage == 8) p.WriteUInt32(Meta, 308, g.RootBlock);
             if (damage == 5) p.WriteUInt32(Meta, 504, 0);
             if (damage == 6) p.WriteUInt32(Meta, 8, 71);
             if (damage != 0) Checksum(ref p, Meta, g.BlockBytes, 20);

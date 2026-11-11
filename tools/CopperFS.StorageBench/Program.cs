@@ -158,6 +158,8 @@ foreach(var group in rows.GroupBy(r=>(r["Scenario"]!.GetValue<string>(),r["Profi
     foreach(var field in new[] {"RomSha256","ProbeSha256","MediaSha256","DataSha256","TimingSha256","MemoryClass","Device"})
         if(group.Select(r=>r[field]!.ToJsonString()).Distinct().Count()!=1)
             throw new InvalidDataException($"Cannot compare different {field} in {group.Key}");
+    if(manifest["RequireBufferParity"]?.GetValue<bool>() == true)
+        StorageMatrixDefinition.ValidateBufferParity(group.Select(r => r["BufferAddress"]!.GetValue<uint>()));
     if(ideLayout is not null)
         foreach(var field in new[]{"MediaLayout","PartitionFirstSector","PartitionSectors"})
             if(group.Select(r=>r[field]!.ToJsonString()).Distinct().Count()!=1)
