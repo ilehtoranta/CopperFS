@@ -210,7 +210,7 @@ public sealed partial class VolumeGeometryTests
         var r = OfsFile(ref p, storage, g, "Data"); OfsWrite(ref p, storage, ref r, 0, new byte[488]);
         if (failure == 0) storage.Protected = true;
         if (failure == 1) { p.Clear(Bitmap, 512); Assert.True(p.WriteBlock(g.RootBlock + 1, Bitmap)); }
-        if (failure == 2) SetDosType(ref p, 0x444F5302);
+        if (failure == 2) SetDosType(ref p, 0x444F5306);
         r.Position = 488; r.Buffer = Payload; r.Length = 1; var w = Work(); storage.Transfers.Clear();
         Assert.False(AmigaFfsWriteCore.Write(ref p, ref w, ref r, out var actual)); Assert.Equal(0u, actual);
         Assert.Equal(failure == 0 ? DOS.Error.DiskWriteProtected : failure == 1 ? DOS.Error.DiskFull : DOS.Error.ActionNotKnown, w.Error);
