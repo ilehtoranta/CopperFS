@@ -968,7 +968,7 @@ public static partial class AmigaFfsWriteCore
     private static bool ReadWriteTable<T>(ref T p, ref Work w, uint table) where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (w.GroupHeader != table || table == 0 || p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) != table)
-            return ReadWriteTable(ref p, ref w, table);
+            return p.ReadBlock(table, w.Meta);
         p.Copy(APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage)), w.Meta, p.BlockBytes);
         return true;
     }
