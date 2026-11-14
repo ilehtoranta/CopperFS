@@ -1,0 +1,46 @@
+# SFS overwrite continuation and relocation profiling
+
+The opt-in shared-pool handler now consumes the borrowed extent leaf immediately after file-block lookup, before any metadata access or device operation can replace it. An established pool continuation validates the tree image and source bitmap. When destination slot, revision and block all match the source, the same validation covers the destination. Different identities still take the full ownership check. The general relocation count stays at two.
+
+## Timing and memory
+
+Three alternating Kickstart 3.1 trials per arm used an emulated 68020, 16 MiB SFS media and 32 DOS buffers. The overwrite phase includes twelve 8 KiB writes and explicit flush.
+
+| Mean guest cycles | Original SFS 1.279 | Archived CopperSFS | Revised CopperSFS |
+|---|---:|---:|---:|
+| Fast overwrite and flush | 324,627 | 797,160 | 769,450 |
+| Chip overwrite and flush | 371,010 | 799,190 | 771,240 |
+| Fast growth, overwrite and verification | 5,769,670 | 6,403,017 | 6,375,670 |
+| Chip growth, overwrite and verification | 5,806,213 | 6,408,950 | 6,381,333 |
+| Fast warm mixed mutation | 16,984,187 | 17,787,693 | 17,781,433 |
+| Chip warm mixed mutation | 17,006,403 | 17,789,310 | 17,783,040 |
+
+Every CopperSFS overwrite issued 17 writes and four flushes. Original SFS issued 12 writes and one flush in all Fast trials. In two Chip trials it issued 15 writes and four flushes. Growth alone regressed about 12,000 cycles in both RAM classes. The independent mixed release gate exceeded original by 3.583% and 3.631% on Fast and Chip mutation and 2.949% and 3.166% on verification. The 0.1% gate fails.
+
+Measured retained memory was 126,008 bytes on mount and 138,888 after mixed mutation for both CopperSFS handlers. The native file grew from 168,024 to 168,564 bytes. CILica scalar replacement was enabled and inlining disabled.
+
+## Attribution
+
+The archived handler took 797,120 scalar cycles in the preceding profile. A fresh rebuild of the checkpoint took 797,110. The revised handler took 769,470. The table uses inclusive cycles, which overlap.
+
+| Method or region | Archived | Revised |
+|---|---:|---:|
+| Pool ownership checks, ten calls | 34,110 | 19,250 |
+| All continuation attempts, eleven calls | 172,023 | 168,869 |
+| Read already located extent, two calls | 5,268 | 1,058 |
+| General relocations, two calls | 169,879 | 174,673 |
+| WriteOperation, two calls | 238,848 | 234,778 |
+| Explicit flush | 112,770 | 92,577 |
+| Handler region, exclusive | 649,178 | 629,280 |
+
+General relocation's inclusive cost increased despite removing the duplicate leaf acquisition. Code placement and guest scheduling contribute to whole-phase timing. The first revision wins on total cycles including flush. A second prototype relinked an exhausted root-leaf extent to its successor and retained the terminal successor's location for a fresh allocation proof. Two dedicated host tests exercised this path, but the benchmark still took two general relocations. The prototype cost 774,447 Fast and 776,433 Chip overwrite cycles. The branch retains the faster revision.
+
+## Reproduction
+
+The three-arm ordinary measurements, Kickstart tests, scalar trace and native replay logs are under `artifacts/sfs-continued`. The isolated successor experiment and patch are under `artifacts/sfs-successor`. The archived control is `artifacts/sfs-overwrite-tail/final/candidate/CopperSFS`, SHA-256 `42C554CF2440ED2F6C6123B81F8FCEB490A9C574CA169F17B157ADD29C6BBB39`. The revised binary is `artifacts/sfs-continued/revised/CopperSFS`, SHA-256 `5AD0B085F0C07DA62462624B8F8331741ED34CD2347130DC90AAB511F5CD53DB`.
+
+## Qualification of the retained revision
+
+Release solution build succeeded with zero warnings and errors. Across six test projects, 1,915 tests passed and five conditional tests were skipped. The default and shared-pool M68000 standalone builds passed. CopperStart passed 186 cache, buffer, transfer and geometry replays and 77 link and size replays.
+
+Kickstart 3.1 passed 12 grouped recovery cases, including the 96 KiB workload cut at nine points and remounted by both handlers. All 43 candidate sector prefixes remounted by original SFS showed entirely old or new payloads, intact neighbors and correct free space. Partial journal and home writes, partial journal reads, handoff, close, timer, explicit flush, packet rejection, foreign startup, automatic TRIM and all five sequential-read matrix cases passed. The mixed performance gate failed on Fast and Chip RAM. Physical Amiga and storage-device coverage remains outstanding.
