@@ -20,6 +20,15 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (w.RedoStaging)
         {
             var arena = p.RedoOverlay;
+            if (SfsSharedImagePool.IsPool(ref p, arena))
+            {
+                if (block < w.ReservedBlocks || block >= w.BlockCount - 1 ||
+                    !AmigaSmartFileSystemRedoArena.Materialize(ref p, arena))
+                { Fail(ref w, DOS.Error.DiskNotValidated); return APTR.Null; }
+                var privateImage = SfsSharedImagePool.Edit(ref p, arena, block, id, scratch, out var full);
+                if (privateImage.IsNull) Fail(ref w, full ? DOS.Error.NoFreeStore : DOS.Error.DiskNotValidated);
+                return privateImage;
+            }
             var retained = AmigaSmartFileSystemRedoArena.MetadataView(ref p, arena, block, id, true, out var found);
             if (!found)
             {
@@ -86,6 +95,8 @@ public static partial class AmigaSmartFileSystemWriteCore
     /// <summary>Recover physical storage without discarding acknowledged buffered changes.</summary>
     public static bool Recover<T>(ref T p, ref Work w) where T : struct, IAmigaWritableFileSystemPlatform
     {
+        var mount = p.SfsMountStorage;
+        if (mount.IsNotNull) p.WriteUInt32(mount, 0, 0);
         if (w.Buffered.IsNotNull)
         { p.WriteUInt32(w.Buffered, BufferHeader.Hidden, 1); p.WriteUInt32(w.Buffered, BufferHeader.GeometryValid, 0); p.WriteUInt32(w.Buffered, BufferHeader.CachedNode, 0); }
         var success = RecoverDisk(ref p, ref w);

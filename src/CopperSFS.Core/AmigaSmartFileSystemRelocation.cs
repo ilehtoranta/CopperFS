@@ -100,7 +100,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                 // An in-leaf key edit is safe only while lookup still selects
                 // this leaf. Check the whole tail so retained hints are safe
                 // for later Writes too; otherwise use split/remove/insert.
-                if (!ExtentLeaf(ref p, ref w, start + sourceLength - 1, out var endLeaf)) return false;
+                if (ExtentLeafView(ref p, ref w, start + sourceLength - 1, out var endLeaf).IsNull) return false;
                 advanceTail = endLeaf == sourceLeaf;
             }
         }
@@ -234,11 +234,39 @@ public static partial class AmigaSmartFileSystemWriteCore
         // Successive full-block writes can extend an earlier relocated run.
         // Retain the unmodified tail's record, moving its key forward inside
         // its own physical extent, without crossing a tree separator.
-        if (advanceTail && sourceLeaf == w.ExtentRoot && preferred != replacement)
+        if (advanceTail && preferred != replacement && (sourceLeaf == w.ExtentRoot || w.TrstContinuation.IsNotNull))
         {
-            if (!InstallTrstRootPrefix(ref p, ref w, ref first, node, start, count,
-                replacement, sourceAt, out var installedRoot)) return false;
-            if (installedRoot) { moved = true; return true; }
+            if (!InstallTrstLeafPrefix(ref p, ref w, ref first, node, start, count,
+                replacement, sourceLeaf, sourceAt, out var installedPrefix)) return false;
+            if (installedPrefix) { moved = true; return true; }
+        }
+        if (w.TrstContinuation.IsNotNull && offset == 0 && count == sourceLength &&
+            preferred == replacement && beforeLeaf == sourceLeaf && beforeNext == start &&
+            beforeLength + count <= ushort.MaxValue)
+        {
+            // Consume the entire old extent. The predecessor stays at its key,
+            // so deleting this record cannot empty the leaf or alter routing.
+            // A successor on another leaf retains the ordinary unlink path.
+            var afterAt = 0; var afterLeaf = sourceLeaf;
+            if (sourceNext != 0 && !LocateExtentRecord(ref p, ref w, sourceNext,
+                out _, out _, out _, out afterLeaf, out afterAt)) return false;
+            if (afterLeaf == sourceLeaf)
+            {
+                var record = Edit(ref p, ref w, sourceLeaf, TreeId, w.Meta);
+                if (record.IsNull) return false;
+                TrstLeafLayout(ref p, record, out var stride, out var records);
+                if (sourceAt == beforeAt || (sourceNext != 0 && (afterAt == sourceAt || afterAt == beforeAt ||
+                    p.ReadUInt32(record, afterAt + 8) != start))) return Fail(ref w, DOS.Error.DiskNotValidated);
+                p.WriteUInt16(record, beforeAt + 12, (ushort)(beforeLength + count));
+                p.WriteUInt32(record, beforeAt + 4, sourceNext);
+                if (sourceNext != 0) p.WriteUInt32(record, afterAt + 8, previous);
+                RemoveLeafRecord(ref p, record, sourceAt, (int)records, (int)stride);
+                if (!Put(ref p, ref w, sourceLeaf, record) || !ReleaseDataRun(ref p, ref w, start, count))
+                    return false;
+                if (sourceNext != 0 && !RememberTrstRelocation(ref p, ref w, node, previous, sourceNext))
+                    return false;
+                moved = true; return true;
+            }
         }
         if (advanceTail && preferred == replacement && beforeLeaf != 0 &&
             beforeNext == start && beforeLength + count <= ushort.MaxValue)
@@ -403,12 +431,9 @@ public static partial class AmigaSmartFileSystemWriteCore
         }
         if (block != w.ExtentRoot)
         {
-            if (!ExtentLeaf(ref p, ref w, tail + tailLength - 1, out var endLeaf)) return false;
-            if (endLeaf != block) return true;
-            // The search expires the borrowed image, but not its scalar
-            // locations. Reacquire it before validating the retained hint.
-            leaf = View(ref p, ref w, block, TreeId, w.Meta);
+            leaf = ExtentLeafView(ref p, ref w, tail + tailLength - 1, out var endLeaf);
             if (leaf.IsNull) return false;
+            if (endLeaf != block) return true;
         }
         var hint = w.TrstContinuation;
         p.WriteUInt32(hint, 0, node); p.WriteUInt32(hint, 4, 0);
@@ -520,6 +545,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             // OriginallyFree/FreeSearchMap exclude these retired blocks until
             // commit, even though the transaction's current bitmap frees them.
             if (!PutSealed(ref p, ref w, map, bitmap)) return false;
+            p.ObserveFreedRange(first, take);
             w.FreeDelta += (int)take; first += take; count -= take;
         }
         return true;

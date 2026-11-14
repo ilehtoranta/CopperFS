@@ -15,7 +15,10 @@ public sealed partial class AmigaSmartFileSystemTests
     private struct Disk(byte[] image) : IAmigaWritableFileSystemPlatform, IAmigaDiscardFileSystemPlatform
     {
         public readonly byte[] Ram = new byte[524288];
-        public APTR TrimCertificate;
+        public APTR TrimCertificate, FreedQueue;
+        public APTR SfsMountStorage { get; set; }
+        public bool TracksFreedRanges => FreedQueue.IsNotNull;
+        public void ObserveFreedRange(uint first, uint count) => AmigaFreedRangeQueue.Add(ref this, FreedQueue, first, count);
         public int Writes, FailAtWrite, IoEvents, CutAfterIo, Flushes, FailAtFlush;
         public int GeometryReads;
         public uint SectorBytesOverride;
@@ -29,8 +32,11 @@ public sealed partial class AmigaSmartFileSystemTests
         public bool Buffered;
         public bool ReadOnly;
         public bool RequireAlignedBlockBuffers;
+        public bool SupportsUnalignedDataReads { get; set; }
+        public List<(uint Source, uint Destination, uint Length)>? Copies;
         public bool CheckReadOnlyViews;
-        public bool ReturnScratchMetadataViews;
+        public bool ReturnScratchMetadataViews, BorrowRedoImages;
+        public bool Sfs2MetadataViews;
         private APTR readOnlyViewAddress;
         private byte[]? readOnlyView;
         public uint FailReadBlock = uint.MaxValue;
@@ -80,6 +86,11 @@ public sealed partial class AmigaSmartFileSystemTests
         // every lookup, exercising the platform's minimum lifetime contract.
         public APTR ReadMetadataView(uint block, uint id, APTR scratch)
         {
+            if (BorrowRedoImages && RedoOverlay.IsNotNull)
+            {
+                var owned = AmigaSmartFileSystemRedoArena.MetadataView(ref this, RedoOverlay, block, id, false, out var found);
+                if (found) return owned;
+            }
             var view = ReturnScratchMetadataViews ? scratch : APTR.FromPointer(125000);
             if (!ReadMetadataBlock(block, id, view)) return APTR.Null;
             if (CheckReadOnlyViews)
@@ -90,6 +101,16 @@ public sealed partial class AmigaSmartFileSystemTests
         {
             if (readOnlyView is not null) Assert.Equal(readOnlyView, Ram.AsSpan((int)readOnlyViewAddress.Raw, Bytes).ToArray());
             readOnlyView = null;
+        }
+        public bool TryReadSfs2MetadataView(uint block, uint id, APTR scratch, out APTR view)
+        {
+            view = APTR.Null;
+            if (!Sfs2MetadataViews) return false;
+            var slot = APTR.FromPointer(125000);
+            if (!ReadBlock(block, slot) || ReadUInt32(slot) != id || ReadUInt32(slot, 8) != block ||
+                !AmigaFileSystemBlockIo.ValidSfs2Sum(ref this, slot, Bytes)) return true;
+            view = slot; readOnlyViewAddress = slot; readOnlyView = Ram.AsSpan((int)slot.Raw, Bytes).ToArray();
+            return true;
         }
         public bool HasAcknowledgedCheckpoint(uint rootContainer) =>
             AmigaSmartFileSystemWriteBuffer.HasAcknowledgedCheckpoint(ref this, WriteBack, rootContainer) ||
@@ -188,7 +209,11 @@ public sealed partial class AmigaSmartFileSystemTests
         public void WriteUInt32(APTR address, int offset, uint value) => BinaryPrimitives.WriteUInt32BigEndian(Ram.AsSpan((int)address.Raw + offset), value);
         public bool IsMapped(APTR address, uint length) => address.Raw <= Ram.Length && length <= Ram.Length - address.Raw;
         public void Clear(APTR address, uint length) => Ram.AsSpan((int)address.Raw, (int)length).Clear();
-        public void Copy(APTR source, APTR destination, uint length) => Ram.AsSpan((int)source.Raw, (int)length).CopyTo(Ram.AsSpan((int)destination.Raw));
+        public void Copy(APTR source, APTR destination, uint length)
+        {
+            Copies?.Add((source.Raw, destination.Raw, length));
+            Ram.AsSpan((int)source.Raw, (int)length).CopyTo(Ram.AsSpan((int)destination.Raw));
+        }
         public APTR Name(string value) { Encoding.Latin1.GetBytes(value).CopyTo(Ram, 3000); return APTR.FromPointer(3000); }
         public byte[] Snapshot() => image.ToArray();
         public IEnumerable<byte[]> CrashImages()

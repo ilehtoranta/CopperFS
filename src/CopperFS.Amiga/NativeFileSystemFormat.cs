@@ -41,7 +41,7 @@ public static partial class NativeAmigaFileSystem
             length = APTR.ReadUInt8(name, 0); name = APTR.FromPointer(name.Raw + 1);
         }
         if (!AmigaSmartFileSystemFormatCore.ValidName(ref p, name, length)) return false;
-        if (type is not (0x444F5300 or 0x444F5301 or 0x53465300 or 0x53465302))
+        if (type is not (>= 0x444F5300 and <= 0x444F5305 or 0x53465300 or 0x53465302))
         { error = DOS.Error.BadNumber; return false; }
         if (!(type is 0x53465300 or 0x53465302
             ? AmigaSmartFileSystemFormatCore.CanFormat(p.Geometry, type)
@@ -114,6 +114,9 @@ public static partial class NativeAmigaFileSystem
 
     private static void InvalidateFormatCache(APTR state)
     {
+#if COPPERFS_FFS_HANDLER
+        new NativeFileSystemPlatform(state).ForgetFfsIndex();
+#endif
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
         var cached = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
         while (cached.IsNotNull)

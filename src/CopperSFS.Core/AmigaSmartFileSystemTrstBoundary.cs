@@ -28,13 +28,21 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (oldBitmap.IsNotNull && newBitmap.IsNotNull) return true;
 
         var next = APTR.FromPointer(p.ReadUInt32(group, 20));
-        if (!AmigaSmartFileSystemRedoArena.Clone(ref p, active, next, p.ReadUInt32(group, 12)))
+        var pooled = SfsSharedImagePool.IsPool(ref p, active);
+        if (pooled) SfsSharedImagePool.Begin(ref p, active, next, true);
+        else if (!AmigaSmartFileSystemRedoArena.Clone(ref p, active, next, p.ReadUInt32(group, 12)))
             return Fail(ref w, DOS.Error.NoFreeStore);
         p.RedoOverlay = next;
         if (p.RedoOverlay != next)
         { p.RedoOverlay = active; return Fail(ref w, DOS.Error.ActionNotKnown); }
-        var success = oldBitmap.IsNotNull || OwnTrstBitmap(ref p, ref w, next, oldMap);
-        if (success && oldMap != newMap && newBitmap.IsNull) success = OwnTrstBitmap(ref p, ref w, next, newMap);
+        // A trial pool still shares accepted images. Obtain private versions of
+        // every image the no-fail continuation will edit before any data I/O.
+        var success = pooled
+            ? OwnTrstImage(ref p, ref w, next, p.ReadUInt32(hint, 28), TreeId) &&
+              OwnTrstBitmap(ref p, ref w, next, oldMap) &&
+              (oldMap == newMap || OwnTrstBitmap(ref p, ref w, next, newMap))
+            : oldBitmap.IsNotNull || OwnTrstBitmap(ref p, ref w, next, oldMap);
+        if (!pooled && success && oldMap != newMap && newBitmap.IsNull) success = OwnTrstBitmap(ref p, ref w, next, newMap);
         if (success)
         {
             p.WriteUInt32(hint, 44, next.Raw);
@@ -44,6 +52,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         }
         if (handled)
         {
+            if (pooled) SfsSharedImagePool.Finish(ref p, next);
             // No fallible operation remains after the unpublished payload and
             // bounded owned-image edits. The whole new view becomes accepted.
             p.WriteUInt32(group, 16, next.Raw); p.WriteUInt32(group, 20, active.Raw);
@@ -55,6 +64,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         }
         else
         {
+            if (pooled) SfsSharedImagePool.Finish(ref p, active);
             p.RedoOverlay = active;
             p.WriteUInt32(hint, 44, active.Raw);
             p.WriteUInt32(group, TrstGroupProof, 0);
@@ -66,8 +76,12 @@ public static partial class AmigaSmartFileSystemWriteCore
 
     private static bool OwnTrstBitmap<T>(ref T p, ref Work w, APTR arena, uint block)
         where T : struct, IAmigaWritableFileSystemPlatform
+        => OwnTrstImage(ref p, ref w, arena, block, BitmapId);
+
+    private static bool OwnTrstImage<T>(ref T p, ref Work w, APTR arena, uint block, uint id)
+        where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var image = View(ref p, ref w, block, BitmapId, w.Bitmap);
+        var image = View(ref p, ref w, block, id, w.Bitmap);
         if (image.IsNull) return false;
         // The borrowed image is unchanged and verified. Copy it before the
         // next platform block access; only the owned copy survives that access.

@@ -5,6 +5,14 @@ namespace CopperSFS;
 /// <summary>Caller-owned block I/O and guest memory for the SFS core.</summary>
 public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
 {
+    /// <summary>Optional 20-byte, initially cleared SFS mount record. The sole
+    /// owner invalidates it and its file cursors before external access or a
+    /// media/geometry change. Root block addresses are fixed on this format.</summary>
+    APTR SfsMountStorage => APTR.Null;
+    /// <summary>Optional single-owner SFS2 mount context. Null retains checked stateless APIs.
+    /// An attached provider invalidates the owned cache before queuing physical writes,
+    /// and suspends this context before geometry/media changes or external access.</summary>
+    APTR Sfs2Context { get => APTR.Null; set { } }
     AmigaVolumeGeometry Geometry { get; }
     /// <summary>Stable mounted geometry scalars, identical to Geometry's fields.
     /// Native platforms can return them without constructing the device descriptor.</summary>
@@ -13,7 +21,12 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
     uint ReservedBlocks => Geometry.ReservedBlocks;
     /// <summary>Stable allocation-placement hint, identical to Geometry.TrackBlocks.</summary>
     uint TrackBlocks => Geometry.TrackBlocks;
+    ulong StartByte => Geometry.StartByte;
     bool ReadBlock(uint block, APTR destination);
+    /// <summary>Physical metadata fill after the owned store resolved transaction
+    /// images. Must observe pending physical writes; never consult legacy undo
+    /// or mutation overlays. Default is for checked portable adapters.</summary>
+    bool ReadSfs2PhysicalMetadata(uint block, APTR destination) => ReadBlock(block, destination);
     /// <summary>Optionally supply a logically current FFS metadata image.
     /// True means the platform handled the read; view is null on I/O failure.
     /// A borrowed view expires at the next cache or block access. The default
@@ -54,6 +67,8 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
     /// return scratch or a cache image. The view expires at the next block I/O;
     /// callers must never modify it or retain it across another block access.</summary>
     APTR ReadMetadataView(uint block, uint id, APTR scratch);
+    /// <summary>The bulk reader accepts arbitrary byte-aligned caller buffers, including on overlay and DMA bounce paths.</summary>
+    bool SupportsUnalignedDataReads => false;
     /// <summary>Read consecutive file-data blocks, returning the completed prefix.
     /// Reads must observe staged writes. Metadata uses the verified metadata methods.</summary>
     uint ReadDataBlocks(uint block, uint count, APTR destination);
@@ -67,6 +82,15 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
 
 public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
 {
+    /// <summary>Sampled once per mutation, so disabled maintenance adds no
+    /// per-block callbacks or range bookkeeping.</summary>
+    bool TracksFreedRanges => false;
+    /// <summary>Optional maintenance hint emitted when allocation metadata frees
+    /// a range. Must be memory-only, non-failing and allocation-free. Deferred
+    /// TRST can emit the hint on acceptance before materializing its bitmap.
+    /// It is NOT a commit notification. The owner must recover, commit,
+    /// flush and recheck current allocation before discarding. Losing hints is safe.</summary>
+    void ObserveFreedRange(uint first, uint count) { }
     /// <summary>Optional caller-owned TRST overlay. Platforms supporting ExecuteTrst
     /// route all block reads/writes through AmigaSmartFileSystemRedoArena while set.</summary>
     APTR RedoOverlay { get => APTR.Null; set { } }
@@ -92,6 +116,12 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     bool WriteDataBlocks(uint block, uint count, APTR source);
     /// <summary>Whether this platform implements direct unpublished-data writes.</summary>
     bool SupportsUnpublishedDataWrites => false;
+    /// <summary>On a TRST encoding cache miss, optionally read the current
+    /// original into private scratch. The following count-1 sectors are also
+    /// journal targets. Success requires a complete read into count contiguous
+    /// scratch blocks. The caller retries a failed prefetch one sector at a time.
+    /// Decline when an overlay or queued write prevents physical access.</summary>
+    bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success) { success = false; return false; }
 
     /// <summary>The direct unpublished transfer enforces device write protection
     /// before reporting success. A failed transfer may change only unpublished
@@ -109,7 +139,17 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     /// ordered first, and Flush remains the durability barrier. The caller must
     /// publish its journal before writing any reachable home image.</summary>
     bool SupportsRetainedBlockWrites => false;
+    /// <summary>Optional exclusive workspace for consecutive unpublished SFS journal
+    /// pages. Its contents survive reads and writes until release. Capacity is in
+    /// filesystem blocks. Return null to use the caller's single-page scratch.</summary>
+    APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity) { capacity = 0; return APTR.Null; }
+    void ReleaseSfsJournalPages(APTR pages) { }
     bool WriteRetainedBlock(uint block, APTR source) => false;
+    /// <summary>Maximum adjacent TRST home images the platform can gather using
+    /// existing storage. Each entry in slots points at a redo slot, with its
+    /// image at SlotHeaderBytes. Only called after durable journal publication.</summary>
+    uint RetainedRunCapacity => 1;
+    bool WriteRetainedRun(uint first, uint count, APTR slots) => false;
     /// <summary>Drain all accepted physical writes, then flush the device.
     /// Return false if either step fails; retain queued images on a failed drain.</summary>
     bool Flush();

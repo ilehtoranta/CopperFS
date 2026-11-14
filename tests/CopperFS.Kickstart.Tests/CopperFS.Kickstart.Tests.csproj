@@ -4,10 +4,13 @@
     <IsPackable>false</IsPackable><IsTestProject>true</IsTestProject>
     <DefineConstants>$(DefineConstants);COPPERSTART_FILESYSTEM_SEMANTIC_TESTS</DefineConstants>
     <DefineConstants Condition="'$(CopperFsAutoTrim)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfs2Owned)' == 'true'">$(DefineConstants);COPPERFS_SFS2_OWNED</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfsGrouped)' == 'true'">$(DefineConstants);COPPERFS_SFS_GROUPED</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfsPool)' == 'true'">$(DefineConstants);COPPERFS_SFS_POOL</DefineConstants>
     <CopperScreenRoot Condition="'$(CopperScreenRoot)' == ''">$(MSBuildThisFileDirectory)../../../CopperScreen</CopperScreenRoot>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Native arithmetic probes compile these helpers into the guest assembly. -->
+    <!-- Exercise the exact internal arithmetic sources without widening their APIs. -->
     <Compile Include="../../src/CopperFFS.Core/AmigaGeometryMath.cs" Link="Arithmetic/AmigaGeometryMath.cs" />
     <Compile Include="../../src/CopperSFS.Core/AmigaSfsGeometryMath.cs" Link="Arithmetic/AmigaSfsGeometryMath.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

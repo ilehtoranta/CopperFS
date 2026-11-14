@@ -79,7 +79,15 @@ public sealed partial class OriginalHandlerCorrectnessTests
         Assert.Equal(0u, before.RootElement.GetProperty("IoErr").GetUInt32());
         foreach (var field in new[] { "Stage", "IoErr", "ProbeData" })
             Assert.Equal(before.RootElement.GetProperty(field).GetRawText(), after.RootElement.GetProperty(field).GetRawText());
-        Assert.Equal(traceA.Operations, traceB.Operations);
+        if (Environment.GetEnvironmentVariable("COPPERFS_SFS2_OWNED") == "1" &&
+            handlerProfile == "sfs2-trst" && mediaProfile == "sfs2-trst")
+        {
+            // Owned validated images intentionally remove redundant reads.
+            // Preserve exact write contents, durability and discard ordering.
+            Assert.Equal(traceA.Operations.Where(op => !op.StartsWith("R:")),
+                traceB.Operations.Where(op => !op.StartsWith("R:")));
+        }
+        else Assert.Equal(traceA.Operations, traceB.Operations);
         Assert.Equal(Hash(a), Hash(b));
         if (flags == 0) Assert.True(traceA.DiscardCount > 0); else Assert.Equal(0, traceA.DiscardCount);
     }
@@ -345,9 +353,17 @@ public sealed partial class OriginalHandlerCorrectnessTests
             Assert.Equal(Hash(before), Hash(after));
         }
         Assert.Equal(handlerProfile == "ffs" ? 0u : 1u, oldResult.RootElement.GetProperty("Stage").GetUInt32());
-        Assert.Contains(beforeTrace.Operations, op => op.StartsWith("W:"));
-        Assert.Contains(beforeTrace.Operations, op => op == "F");
-        Assert.NotEqual(Hash(interrupted), Hash(before));
-        Assert.Equal(0x54524F4Bu, BinaryPrimitives.ReadUInt32BigEndian(before.AsSpan((int)markerOffset)));
+        if (handlerProfile == "ffs")
+        {
+            Assert.DoesNotContain(beforeTrace.Operations, op => op.StartsWith("W:") || op == "F");
+            Assert.Equal(Hash(interrupted), Hash(before));
+        }
+        else
+        {
+            Assert.Contains(beforeTrace.Operations, op => op.StartsWith("W:"));
+            Assert.Contains(beforeTrace.Operations, op => op == "F");
+            Assert.NotEqual(Hash(interrupted), Hash(before));
+            Assert.Equal(0x54524F4Bu, BinaryPrimitives.ReadUInt32BigEndian(before.AsSpan((int)markerOffset)));
+        }
     }
 }

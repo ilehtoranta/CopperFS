@@ -32,14 +32,44 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3], volumeName: "Correctness").Bytes;
         if (profile == "sfs") Assert.Equal(manifest.ClassicBaseSha256, Hash(image));
         var hook = new AutomaticDiscardHook(fail);
+        var afterReset = -1;
+        long setupStarted = 0, setupCycles = 0, deleteStarted = 0, deleteCycles = 0;
         var entry = profile == "ofs" ? "AutoOfs" : profile == "ffs" ? "AutoFfs"
             : profile == "sfs" ? "AutoSfs" : "AutoSfs2";
         var result = await Run(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile), profile,
             fail ? "partial-failure" : "poison", pair.Candidate, image, true,
-            "CorrectnessProbe::" + entry, deviceHook: hook);
+            "CorrectnessProbe::" + entry,
+            observe: (marker, cycle, _, _, _) =>
+            {
+                if (marker == 225) { afterReset = hook.Discards; setupStarted = cycle; }
+                if (marker == 232) deleteStarted = cycle;
+                if (marker == 221 && deleteStarted != 0) deleteCycles = cycle - deleteStarted;
+                if (marker == 221 && setupStarted != 0) setupCycles = cycle - setupStarted;
+            },
+            deviceHook: hook);
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile,
+            fail ? "failure-foreground.json" : "foreground.json"), JsonSerializer.Serialize(new
+        { Profile = profile, CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), ForegroundDeleteCycles = deleteCycles,
+            CreateCloseAndDeleteCycles = setupCycles }, Json));
         Assert.True(hook.Discards > 0, "The timer must issue actual UNMAP without CopperTrim.");
-        if (fail) Assert.Equal(1, hook.Discards);
-        else Assert.True(hook.MaximumEnd > 4096L * 512, "A second deferred window must execute.");
+        Assert.True(afterReset >= 0);
+        if (Environment.GetEnvironmentVariable("COPPERFS_TRIM_PROFILE") == "1" && !fail)
+        {
+            var profiles = Directory.GetFiles(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile, "poison"),
+                "deferred-*-service-profile.json");
+            Assert.NotEmpty(profiles);
+            Assert.Contains(profiles, file =>
+            {
+                using var sample = JsonDocument.Parse(File.ReadAllText(file));
+                var root = sample.RootElement;
+                return root.GetProperty("ScopeEnd").GetProperty("Discards").GetInt32() >
+                    root.GetProperty("ScopeStart").GetProperty("Discards").GetInt32();
+            });
+        }
+        // A long workload may fail maintenance before the explicit remount. Each
+        // mount must suspend after its first failure, and remount permits a retry.
+        if (fail) Assert.Equal(1, hook.Discards - afterReset);
+        else Assert.True(hook.DiscardBytes < 1024 * 1024, "Only unallocated ranges should be trimmed, not the whole free volume.");
         if (profile.StartsWith("sfs"))
             SfsImageChecker.Check(new MemoryStream(result), reservedBlocks: profile == "sfs" ? 2u : 1u);
         else DosImageInspection.Check(result, true);
@@ -83,10 +113,12 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var root = Path.Combine(Path.GetDirectoryName(path)!, "automatic-cuts", profile, cut.ToString());
         var entry = profile == "ofs" ? "CutOfs" : profile == "ffs" ? "CutFfs" : profile == "sfs" ? "CutSfs" : "CutSfs2";
         var hook = new AutomaticDiscardHook(false, cut);
-        await Assert.ThrowsAsync<AutomaticPowerCutException>(() => Run(root, profile, "cut", pair.Candidate,
+        var exception = await Record.ExceptionAsync(() => Run(root, profile, "cut", pair.Candidate,
             AutomaticImage(manifest, profile), true, "CorrectnessProbe::" + entry,
             observe: (marker, _, _, _, _) => { if (marker == 221) hook.CutArmed = true; },
             deviceHook: hook));
+        Assert.True(exception is AutomaticPowerCutException,
+            $"Expected cut {cut}; got {exception}; armed={hook.CutArmed}, requests={hook.Discards}, sectors={hook.DiscardSectors}.");
         var saved = File.ReadAllBytes(Path.Combine(root, "cut", "disk.hdf"));
         await Run(root, profile, "candidate-restart", pair.Candidate, saved, false);
         await Run(root, profile, "original-restart", pair.Original, saved, false);
@@ -101,21 +133,29 @@ public sealed partial class OriginalHandlerCorrectnessTests
 
     private sealed class AutomaticDiscardHook(bool fail, int cutAt = 0) : IAmigaHardfileDiscardIoHook
     {
-        public int Discards, DiscardSectors;
+        public int Discards, DiscardSectors, Writes;
+        public int ScsiCommands, ReadCommands, WriteCommands, Flushes;
         public bool CutArmed;
-        public long MaximumEnd;
+        public long MaximumEnd, DiscardBytes, ReadBytes, WriteBytes;
         public bool SupportsDiscard => true;
         public uint MaximumDiscardSectors => 4096;
         public bool FlushOnDispose => false;
         public void ObserveOpen(int unit) { }
+        public void ObserveCommand(ushort command)
+        {
+            if (command == 28) ScsiCommands++;
+            if (command is 2 or 24) ReadCommands++;
+            if (command is 3 or 25) WriteCommands++;
+        }
         public void Read(FileStream file, long offset, Span<byte> bytes)
-        { file.Position = offset; file.ReadExactly(bytes); }
+        { ReadBytes += bytes.Length; file.Position = offset; file.ReadExactly(bytes); }
         public void Write(FileStream file, long offset, ReadOnlySpan<byte> bytes)
-        { file.Position = offset; file.Write(bytes); }
-        public void Flush(FileStream file) => file.Flush(true);
+        { Writes++; WriteBytes += bytes.Length; file.Position = offset; file.Write(bytes); }
+        public void Flush(FileStream file) { Flushes++; file.Flush(true); }
         public void Discard(FileStream file, long offset, int bytes)
         {
             Discards++;
+            DiscardBytes += fail ? 512 : bytes;
             MaximumEnd = Math.Max(MaximumEnd, offset + bytes);
             if (cutAt != 0 && CutArmed)
             {

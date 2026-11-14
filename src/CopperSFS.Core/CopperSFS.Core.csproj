@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="CopperFS.Kickstart.Tests" />
+    <InternalsVisibleTo Include="CopperSFS.Core.Tests" />
   </ItemGroup>
   <ItemGroup Condition="Exists('$(CopperSharp68kRoot)\Sdk.Amiga\CopperSharp.Sdk.Amiga.csproj')">
     <ProjectReference Include="$(CopperSharp68kRoot)\Sdk.Amiga\CopperSharp.Sdk.Amiga.csproj" />

@@ -77,6 +77,44 @@ public sealed partial class AmigaSmartFileSystemTests
     }
 
     [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void SharedPoolRelocationConsumesWholeExtentsInOneNonRootLeaf(bool scratch)
+    {
+        var seed = PrefixSeed(2);
+        // Put the file's two extents in one child and its neighbour in the
+        // other. The destination sorts before the source, the successor after.
+        var root = Block(seed.Image, 5);
+        U32(root, 24, 1000); Sum(root);
+        var left = Block(seed.Image, 64); var right = Block(seed.Image, 65);
+        right.Slice(16, 14).CopyTo(right.Slice(30, 14));
+        left.Slice(30, 14).CopyTo(right.Slice(16, 14));
+        left.Slice(30, 14).Clear(); U16(left, 12, 1); U16(right, 12, 2);
+        Sum(left); Sum(right);
+        var disk = new Disk(seed.Image.ToArray()) { Buffered = true,
+            ReturnScratchMetadataViews = scratch, CheckReadOnlyViews = true };
+        var neighbor = GroupRead(ref disk, 4);
+        Assert.True(AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref disk, GroupAddress, 9756));
+        var expected = seed.Bytes.ToArray();
+        for (var at = 0; at < expected.Length; at += 8192)
+        {
+            var payload = Enumerable.Repeat((byte)(0xD0 + at / 8192), 8192).ToArray();
+            Assert.True(GroupWrite(ref disk, 3, (uint)at, payload));
+            payload.CopyTo(expected, at);
+        }
+        var cold = new Disk(disk.Snapshot());
+        Assert.Equal(seed.Bytes, GroupRead(ref cold, 3));
+        Assert.Equal(expected, GroupRead(ref disk, 3));
+        var work = TrstWork();
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        var image = disk.Snapshot(); var reopened = new Disk(image);
+        Assert.Equal(expected, GroupRead(ref reopened, 3));
+        Assert.Equal(neighbor, GroupRead(ref reopened, 4));
+        var records = PrefixRecords(image);
+        Assert.Equal(2, records.Count);
+        Assert.Contains((0u, 0x80000003u, 128), records.Values);
+    }
+
+    [Theory]
     [InlineData(0, false)] [InlineData(0, true)]
     [InlineData(1, false)] [InlineData(1, true)]
     [InlineData(2, false)] [InlineData(2, true)]

@@ -158,6 +158,37 @@ public sealed partial class AmigaSmartFileSystemTests
         Assert.True(found); // invalid queued metadata must not fall back to old media
     }
 
+    [Fact]
+    public void Sfs2QueueVerificationDistinguishesFormatsAndExpiresOnReplacement()
+    {
+        var disk = new Disk(Image()); Combine(ref disk, 4);
+        var input = APTR.FromPointer(4000);
+        Block(Image(), 5).CopyTo(disk.Ram.AsSpan(4000, Bytes));
+        Assert.True(AmigaFileSystemWriteCombiner.TryStore(ref disk, disk.WriteQueue, 5, 1, input));
+        Assert.True(AmigaFileSystemWriteCombiner.ReadMetadataView(ref disk, disk.WriteQueue, 5, Tree, out _).IsNotNull);
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNull);
+        Sfs2WriteTests.Seal(disk.Ram.AsSpan(4000, Bytes));
+        Assert.True(AmigaFileSystemWriteCombiner.TryStore(ref disk, disk.WriteQueue, 5, 1, input));
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNotNull);
+        Assert.True(AmigaFileSystemWriteCombiner.ReadMetadataView(ref disk, disk.WriteQueue, 5, Tree, out _).IsNull);
+        disk.WriteUInt32(input, 8, 3); Sfs2WriteTests.Seal(disk.Ram.AsSpan(4000, Bytes));
+        Assert.True(AmigaFileSystemWriteCombiner.TryStore(ref disk, disk.WriteQueue, 3, 1, input));
+        AmigaFileSystemWriteCombiner.Sort(ref disk, disk.WriteQueue);
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNotNull);
+        // Wrong own-block, wrong ID and a bad checksum each revoke access.
+        Assert.True(AmigaFileSystemWriteCombiner.TryStore(ref disk, disk.WriteQueue, 5, 1, input));
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNull);
+        disk.WriteUInt32(input, 8, 5); Sfs2WriteTests.Seal(disk.Ram.AsSpan(4000, Bytes));
+        Assert.True(AmigaFileSystemWriteCombiner.TryStore(ref disk, disk.WriteQueue, 5, 1, input));
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Nodes).IsNull);
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNotNull);
+        disk.Ram[4004] ^= 1;
+        Assert.True(AmigaFileSystemWriteCombiner.TryStore(ref disk, disk.WriteQueue, 5, 1, input));
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNull);
+        AmigaFileSystemWriteCombiner.Discard(ref disk, disk.WriteQueue);
+        Assert.True(AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref disk, disk.WriteQueue, 5, Tree).IsNull);
+    }
+
     [Theory]
     [InlineData(2u, false)]
     [InlineData(64u, false)]

@@ -82,9 +82,9 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
     }
     internal static bool Mutate(ref StudyDisk disk, uint node, string scenario, bool redo = false)
     {
-        var w = WorkFor(disk); var data = StudyFixture.Pattern(7, 900);
+        var w = WorkFor(disk); var data = StudyFixture.Pattern(scenario == "appendrun" ? (int)disk.BlockBytes * 4 + 5 : 7, 900);
         data.CopyTo(disk.Ram, (int)disk.Payload.Raw); Encoding.ASCII.GetBytes("Changed").CopyTo(disk.Ram, (int)disk.NameBuffer.Raw);
-        var r = new Request { Node = node, Directory = 1, Name = disk.NameBuffer, Length = 7, Buffer = disk.Payload };
+        var r = new Request { Node = node, Directory = 1, Name = disk.NameBuffer, Length = (uint)data.Length, Buffer = disk.Payload };
         var op = scenario switch
         {
             "create" => TrstOperation.CreateFile, "mkdir" => TrstOperation.CreateDirectory,
@@ -93,7 +93,7 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
             "protect" => TrstOperation.SetProtection, "comment" => TrstOperation.SetComment,
             "date" => TrstOperation.SetDate, _ => TrstOperation.Write
         };
-        if (scenario == "append") r.Position = 1027;
+        if (scenario is "append" or "appendrun") r.Position = 1027;
         if (scenario == "overwrite") r.Position = 510;
         if (scenario == "grow") r.Position = 1601;
         if (scenario == "shrink") r.Position = 517;
@@ -101,7 +101,9 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
         if (scenario == "comment") Encoding.ASCII.GetBytes("comment").CopyTo(disk.Ram, (int)disk.Payload.Raw);
         if (scenario == "date") { disk.WriteUInt32(disk.Payload, 0, 1234); disk.WriteUInt32(disk.Payload, 4, 5); disk.WriteUInt32(disk.Payload, 8, 100); }
         bool ok;
-        if (redo) ok = ExecuteTrst(ref disk, ref w, ref r, op, disk.BatchBuffer, 65536, out _);
+        if (disk.Sfs2Context.IsNotNull)
+            ok = ExecuteTrstGroup(ref disk, ref w, ref r, op, disk.BatchBuffer, out _) && FlushTrstGroup(ref disk, ref w, disk.BatchBuffer);
+        else if (redo) ok = ExecuteTrst(ref disk, ref w, ref r, op, disk.BatchBuffer, 65536, out _);
         else ok = op switch
         {
             TrstOperation.CreateFile => Create(ref disk, ref w, ref r, false),
@@ -125,12 +127,52 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
     public void BothJournalPoliciesProduceTheSameIndependentManifest(int bytes)
     {
         var (image, node) = Seed(bytes);
-        foreach (var scenario in new[] { "create", "mkdir", "overwrite", "append", "grow", "shrink", "truncate", "rename", "remove", "comment", "protect", "date" })
+        foreach (var scenario in new[] { "create", "mkdir", "overwrite", "append", "appendrun", "grow", "shrink", "truncate", "rename", "remove", "comment", "protect", "date" })
         {
             var scalar = new StudyDisk(image, bytes); Assert.True(Mutate(ref scalar, node, scenario));
             var redo = new StudyDisk(image, bytes); Assert.True(Mutate(ref redo, node, scenario, true));
             Assert.Equal(Manifest(scalar.Snapshot(), bytes), Manifest(redo.Snapshot(), bytes));
         }
+    }
+
+    [Fact]
+    public void IdenticalTrstMetadataDoesNotPublishAJournalOrRewriteHomeBlocks()
+    {
+        var (image, node) = Seed(); var disk = new StudyDisk(image, 512);
+        Assert.True(Mutate(ref disk, node, "protect", true));
+        var saved = disk.Snapshot(); var counts = disk.Counts;
+        Assert.True(Mutate(ref disk, node, "protect", true));
+        Assert.Equal(saved, disk.Snapshot());
+        Assert.Equal(counts.BlockWrites, disk.Counts.BlockWrites);
+        Assert.Equal(counts.Flushes, disk.Counts.Flushes);
+        Inspect(disk.Snapshot());
+    }
+
+    [Theory]
+    [InlineData(4000 - 1)] [InlineData(4000 + 33)]
+    public void TrstJournalSearchSkipsOccupiedWordsAcrossBitmapPages(int occupiedBlocks)
+    {
+        var disk = new StudyDisk(Empty(capacity: 4 * 1024 * 1024), 512);
+        var node = CreateFile(ref disk, "Keep");
+        var payload = StudyFixture.Pattern(65536, 197);
+        for (var at = 0; at < occupiedBlocks * 512; at += payload.Length)
+            PutFile(ref disk, node, (uint)at, payload[..Math.Min(payload.Length, occupiedBlocks * 512 - at)], true);
+        var before = disk.Snapshot(); Inspect(before);
+        var scalar = new StudyDisk(before, 512);
+        Assert.True(Mutate(ref scalar, node, "comment"));
+        Assert.True(Mutate(ref disk, node, "comment", true));
+        Assert.Equal(Manifest(scalar.Snapshot()), Manifest(disk.Snapshot()));
+        // Every emitted TRST page must lie outside the live data allocation.
+        var after = disk.Snapshot(); var mapBase = U32(before, 96);
+        var journals = 0;
+        for (var key = 1u; key < after.Length / 512 - 1; key++)
+        {
+            if (U32(after.AsSpan((int)key * 512), 0) != 0x54525354) continue;
+            journals++;
+            var bitmap = before.AsSpan((int)(mapBase + key / 4000) * 512, 512);
+            Assert.NotEqual(0u, U32(bitmap, 12 + (int)(key % 4000 / 32) * 4) & (1u << (int)(31 - key % 32)));
+        }
+        Assert.True(journals > 0);
     }
 
     [Theory]
@@ -177,6 +219,8 @@ public sealed class Sfs2WriteTests(ITestOutputHelper output)
     [InlineData("overwrite", true)]
     [InlineData("append", false)]
     [InlineData("append", true)]
+    [InlineData("appendrun", false)]
+    [InlineData("appendrun", true)]
     [InlineData("grow", false)]
     [InlineData("grow", true)]
     [InlineData("shrink", false)]

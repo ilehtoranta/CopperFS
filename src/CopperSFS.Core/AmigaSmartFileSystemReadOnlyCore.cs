@@ -68,20 +68,30 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     }
 
     internal static bool Header<T>(ref T p, uint number, uint id, APTR buffer, AmigaSmartFileSystemFormat format)
-        where T : struct, IAmigaFileSystemPlatform =>
-        number < p.BlockCount && (format == AmigaSmartFileSystemFormat.Sfs2 && p.TryReadVerifiedSfs2Block(number, id, buffer) ||
-        ReadHeader(ref p, number, id, buffer, format));
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        if (format == AmigaSmartFileSystemFormat.Sfs2 && p.Sfs2Context.IsNotNull)
+        {
+            var view = Sfs2MetadataStore.ReadView(ref p, number, id, buffer);
+            if (view.IsNull) return false;
+            if (view != buffer) p.Copy(view, buffer, p.BlockBytes);
+            return true;
+        }
+        return number < p.BlockCount && (format == AmigaSmartFileSystemFormat.Sfs2 && p.TryReadVerifiedSfs2Block(number, id, buffer) ||
+            ReadHeader(ref p, number, id, buffer, format));
+    }
 
     private static bool ReadHeader<T>(ref T p, uint number, uint id, APTR buffer, AmigaSmartFileSystemFormat format)
         where T : struct, IAmigaFileSystemPlatform =>
         p.ReadBlock(number, buffer) && p.ReadUInt32(buffer) == id && p.ReadUInt32(buffer, 8) == number && Checksum(ref p, buffer, format);
 
-    private static APTR HeaderView<T>(ref T p, uint number, uint id, APTR scratch, AmigaSmartFileSystemFormat format)
+    internal static APTR HeaderView<T>(ref T p, uint number, uint id, APTR scratch, AmigaSmartFileSystemFormat format)
         where T : struct, IAmigaFileSystemPlatform
     {
         if (number >= p.BlockCount) return APTR.Null;
         if (format == AmigaSmartFileSystemFormat.Sfs2)
         {
+            if (p.Sfs2Context.IsNotNull) return Sfs2MetadataStore.ReadView(ref p, number, id, scratch);
             if (p.TryReadSfs2MetadataView(number, id, scratch, out var image)) return image;
             image = p.BorrowVerifiedSfs2Block(number, id, scratch);
             if (image.IsNotNull) return image;
@@ -136,6 +146,12 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     public static bool Root<T>(ref T p, APTR metadata, out AmigaSmartFileSystemFormat format)
         where T : struct, IAmigaFileSystemPlatform
     {
+        if (p.Sfs2Context.IsNotNull)
+        {
+            format = AmigaSmartFileSystemFormat.Sfs2;
+            if (!Sfs2MountContext.Ready(ref p, p.Sfs2Context)) return false;
+            p.Copy(Sfs2MountContext.RootImage(p.Sfs2Context), metadata, p.BlockBytes); return true;
+        }
         var valid = SelectRoot(ref p, metadata, true, out var volume);
         format = volume.Format;
         return valid;
@@ -152,6 +168,12 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     private static bool SelectRoot<T>(ref T p, APTR metadata, bool returnImage, out Volume volume)
         where T : struct, IAmigaFileSystemPlatform
     {
+        if (p.Sfs2Context.IsNotNull)
+        {
+            if (!Sfs2MountContext.Volume(ref p, p.Sfs2Context, out volume)) return false;
+            if (returnImage) p.Copy(Sfs2MountContext.RootImage(p.Sfs2Context), metadata, p.BlockBytes);
+            return true;
+        }
         volume = default;
         var g = p.Geometry;
         if (g.BlockCount < 4 || g.ReservedBlocks == 0 || g.ReservedBlocks >= g.BlockCount - 1 ||
@@ -177,16 +199,22 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     }
 
     private static bool Open<T>(ref T p, APTR metadata, out Volume volume)
-        where T : struct, IAmigaFileSystemPlatform => Open(ref p, metadata, false, out volume, out _, out _);
+        where T : struct, IAmigaFileSystemPlatform => p.Sfs2Context.IsNotNull ?
+            Sfs2MountContext.Volume(ref p, p.Sfs2Context, out volume) : Open(ref p, metadata, false, out volume, out _, out _);
 
     private static bool Open<T>(ref T p, APTR metadata, bool borrowRoot, out Volume volume, out APTR root, out int rootAt)
         where T : struct, IAmigaFileSystemPlatform
     {
         rootAt = 0; root = metadata;
-        if (!SelectRoot(ref p, metadata, false, out volume)) return false;
+        if (p.Sfs2Context.IsNotNull)
+        { if (!Sfs2MountContext.Volume(ref p, p.Sfs2Context, out volume)) return false; }
+        else if (!SelectRoot(ref p, metadata, false, out volume)) return false;
         if (volume.Root < p.ReservedBlocks || volume.Root >= p.BlockCount - 3) return false;
-        var clean = HeaderView(ref p, volume.Root + 2, Clean, metadata, volume.Format);
-        if (clean.IsNull || p.ReadUInt32(clean, 12) != 0) return false;
+        if (p.Sfs2Context.IsNull)
+        {
+            var clean = HeaderView(ref p, volume.Root + 2, Clean, metadata, volume.Format);
+            if (clean.IsNull || p.ReadUInt32(clean, 12) != 0) return false;
+        }
         if (borrowRoot) root = HeaderView(ref p, volume.Root, Objects, metadata, volume.Format);
         else if (!Header(ref p, volume.Root, Objects, metadata, volume.Format)) return false;
         return root.IsNotNull && p.ReadUInt32(root, 12) == 0 &&
@@ -198,7 +226,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     public static bool Mount<T>(ref T p, APTR metadata, out AmigaSmartFileSystemFormat format)
         where T : struct, IAmigaFileSystemPlatform
     {
-        var ok = Open(ref p, metadata, out var volume); format = volume.Format; return ok;
+        var ok = Open(ref p, metadata, false, out var volume, out _, out _); format = volume.Format; return ok;
     }
 
     private static bool Strings<T>(ref T p, in Volume v, APTR buffer, int at, out int next,
@@ -249,6 +277,21 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
 
     internal static bool Object<T>(ref T p, in Volume v, uint node, APTR buffer, out int at)
         where T : struct, IAmigaFileSystemPlatform => Object(ref p, v, node, buffer, false, out _, out at);
+
+    internal static bool OwnedObject<T>(ref T p, uint node, APTR scratch, bool edit,
+        out Sfs2MetadataStore.Handle handle, out int at) where T : struct, IAmigaFileSystemPlatform
+    {
+        handle = default; at = 0;
+        if (!Sfs2MountContext.Volume(ref p, p.Sfs2Context, out var volume)) return false;
+        var block = ObjectContainer(ref p, volume, node, scratch);
+        if (block == uint.MaxValue) return false;
+        var acquired = edit ? Sfs2MetadataStore.Edit(ref p, block, Objects, scratch, out handle) :
+            Sfs2MetadataStore.Acquire(ref p, block, Objects, scratch, out handle);
+        if (!acquired) return false;
+        if (Scan(ref p, volume, handle.Image, node, out at, out _)) return true;
+        if (edit) Sfs2MetadataStore.ReleaseEdit(ref p, ref handle); else Sfs2MetadataStore.Release(ref p, ref handle);
+        return false;
+    }
 
     private static bool Object<T>(ref T p, in Volume v, uint node, APTR scratch, bool borrowRecord, out APTR record, out int at)
         where T : struct, IAmigaFileSystemPlatform
@@ -431,6 +474,8 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         out ObjectInformation info, out DOS.Error error) where T : struct, IAmigaFileSystemPlatform
     {
         Volume v; var record = APTR.Null; var at = 0; info = default; error = DOS.Error.None;
+        if (p.Sfs2Context.IsNotNull && !Sfs2MountContext.Ready(ref p, p.Sfs2Context))
+        { error = DOS.Error.DiskNotValidated; return 0; }
         if (length > 255 || !p.IsMapped(name, length)) { error = DOS.Error.InvalidComponentName; return 0; }
         if (lookup.RootBlock != 0)
         {
@@ -599,6 +644,8 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         APTR destination, uint length, APTR metadata, APTR data, ReadStart start, out DOS.Error error)
         where T : struct, IAmigaFileSystemPlatform
     {
+        if (p.Sfs2Context.IsNotNull && !Sfs2MountContext.Ready(ref p, p.Sfs2Context))
+        { cursor.Node = 0; error = DOS.Error.DiskNotValidated; return -1; }
         var bytes = p.BlockBytes;
         if (ReadOverlaps(destination, length, metadata, bytes) || ReadOverlaps(destination, length, data, bytes))
         {
@@ -733,31 +780,38 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     /// <summary>Initialize cursor to the directory node. Hidden entries are skipped. ReadEntry strings use metadata.</summary>
     public static DOS.Error ExamineNext<T>(ref T p, uint directory, ref uint cursor, APTR metadata, out ReadEntry entry)
         where T : struct, IAmigaFileSystemPlatform
+        => ExamineNextCore(ref p, directory, ref cursor, metadata, false, out entry);
+
+    private static DOS.Error ExamineNextCore<T>(ref T p, uint directory, ref uint cursor, APTR metadata, bool borrow, out ReadEntry entry)
+        where T : struct, IAmigaFileSystemPlatform
     {
         entry = default;
         if (!Open(ref p, metadata, out var v)) return DOS.Error.DiskNotValidated;
-        if (!Describe(ref p, v, directory, metadata, out var parent)) return DOS.Error.InvalidLock;
+        if (!Object(ref p, v, directory, metadata, borrow, out var parentImage, out var at) ||
+            !DescribeAt(ref p, v, directory, parentImage, at, out var parent)) return DOS.Error.InvalidLock;
         if (!parent.Directory) return DOS.Error.ObjectWrongType;
-        if (!Object(ref p, v, directory, metadata, out var at)) return DOS.Error.DiskNotValidated;
-        var block = p.ReadUInt32(metadata, at + 16); uint previous = 0;
+        var block = p.ReadUInt32(parentImage, at + 16); uint previous = 0;
         var seen = cursor == directory;
         for (var visited = 0u; block != 0 && visited < p.BlockCount; visited++)
         {
-            if (!Header(ref p, block, Objects, metadata, v.Format) || p.ReadUInt32(metadata, 12) != directory ||
-                p.ReadUInt32(metadata, 20) != previous) return DOS.Error.DiskNotValidated;
-            for (var pos = 24; pos + 27 + v.Extra <= p.BlockBytes && p.ReadUInt8(metadata, pos + 25 + v.Extra) != 0;)
+            var image = metadata;
+            if (borrow) image = HeaderView(ref p, block, Objects, metadata, v.Format);
+            else if (!Header(ref p, block, Objects, metadata, v.Format)) return DOS.Error.DiskNotValidated;
+            if (image.IsNull || p.ReadUInt32(image, 12) != directory || p.ReadUInt32(image, 20) != previous) return DOS.Error.DiskNotValidated;
+            for (var pos = 24; pos + 27 + v.Extra <= p.BlockBytes && p.ReadUInt8(image, pos + 25 + v.Extra) != 0;)
             {
-                if (!Strings(ref p, v, metadata, pos, out var following, out _, out _)) return DOS.Error.DiskNotValidated;
-                var node = p.ReadUInt32(metadata, pos + 4); var flags = p.ReadUInt8(metadata, pos + 24 + v.Extra);
+                if (!Strings(ref p, v, image, pos, out var following, out _, out _)) return DOS.Error.DiskNotValidated;
+                var node = p.ReadUInt32(image, pos + 4); var flags = p.ReadUInt8(image, pos + 24 + v.Extra);
                 if (seen && (flags & 1) == 0)
                 {
-                    if (!Describe(ref p, v, node, metadata, out entry) || entry.Parent != directory) return DOS.Error.DiskNotValidated;
+                    if (!Object(ref p, v, node, metadata, borrow, out var record, out var recordAt) ||
+                        !DescribeAt(ref p, v, node, record, recordAt, out entry) || entry.Parent != directory) return DOS.Error.DiskNotValidated;
                     cursor = node; return DOS.Error.None;
                 }
                 if (node == cursor) seen = true;
                 pos = following;
             }
-            previous = block; block = p.ReadUInt32(metadata, 16);
+            previous = block; block = p.ReadUInt32(image, 16);
         }
         return block == 0 && seen ? DOS.Error.NoMoreEntries : DOS.Error.DiskNotValidated;
     }
@@ -766,8 +820,15 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
         where T : struct, IAmigaFileSystemPlatform
     {
         used = 0;
-        if (!Open(ref p, metadata, out _)) return false;
-        var free = p.ReadUInt32(metadata, (int)p.BlockBytes - 28);
+        if (!Open(ref p, metadata, out var volume)) return false;
+        uint free;
+        if (p.Sfs2Context.IsNotNull)
+        {
+            var root = HeaderView(ref p, volume.Root, Objects, metadata, volume.Format);
+            if (root.IsNull) return false;
+            free = p.ReadUInt32(root, (int)p.BlockBytes - 28);
+        }
+        else free = p.ReadUInt32(metadata, (int)p.BlockBytes - 28);
         var available = p.BlockCount - p.ReservedBlocks - 1;
         if (free > available) return false;
         used = available - free; return true;

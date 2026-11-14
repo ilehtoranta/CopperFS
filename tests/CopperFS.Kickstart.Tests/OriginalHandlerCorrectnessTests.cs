@@ -102,7 +102,8 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     private async Task<byte[]> Run(string root, string profile, string label, string handler, byte[] initial, bool write,
         string? guestEntry = null, Action<byte, long, int, int, int>? observe = null, bool floppy = false, WritableHook? storage = null,
         M68kCpuModel cpu = M68kCpuModel.M68020, Action<FileStream>? afterFlush = null, uint probeDelay = 0,
-        IAmigaHardfileIoHook? deviceHook = null)
+        IAmigaHardfileIoHook? deviceHook = null, uint probeBuffers = 0, uint probeCylinders = 0, bool probeExistingPayload = false,
+        uint extraBuffers = 0)
     {
         var directory = Path.Combine(root, label);
         Directory.CreateDirectory(directory);
@@ -110,14 +111,15 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         File.WriteAllBytes(media, initial);
         var hook = storage ?? (afterFlush != null ? new WritableHook(afterFlush) : null);
         await BootMedia(directory, profile, label, handler, media, write, guestEntry, observe,
-            floppy ? initial : null, hook, Hash(initial), cpu, probeDelay, deviceHook);
+            floppy ? initial : null, hook, Hash(initial), cpu, probeDelay, deviceHook, probeBuffers, probeCylinders, probeExistingPayload, extraBuffers);
         return File.ReadAllBytes(media);
     }
 
     private async Task BootMedia(string directory, string profile, string label, string handler, string media,
         bool write, string? guestEntry, Action<byte, long, int, int, int>? observe = null,
         byte[]? floppyImage = null, WritableHook? storage = null, string? initialHash = null, M68kCpuModel cpu = M68kCpuModel.M68020, uint probeDelay = 0,
-        IAmigaHardfileIoHook? deviceHook = null)
+        IAmigaHardfileIoHook? deviceHook = null, uint probeBuffers = 0, uint probeCylinders = 0, bool probeExistingPayload = false,
+        uint extraBuffers = 0)
     {
         Directory.CreateDirectory(Path.Combine(directory, "boot", "S"));
         var floppy = floppyImage != null;
@@ -144,6 +146,15 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         var boot = await FileSystemAdf.CreateAsync(Path.Combine(directory, "boot"), "Correctness");
         var rom = File.ReadAllBytes(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")!);
         var hook = storage ?? new WritableHook();
+        var timing = Environment.GetEnvironmentVariable("COPPERFS_FFS_TIMING_DEVICE");
+        var timingDevice = profile is "ffs" or "ofs" && timing is "cold" or "warm" && deviceHook == null &&
+            (entry.StartsWith("CorrectnessProbe::Benchmark") || entry.StartsWith("CorrectnessProbe::OwnedBenchmark") ||
+             entry.StartsWith("LargeWriteProbe::")) ? new AutomaticDiscardHook(false) : null;
+        if (timingDevice != null) deviceHook = timingDevice;
+        var warmupDiscards = 0;
+        var trimProfile = Environment.GetEnvironmentVariable("COPPERFS_TRIM_PROFILE") == "1" &&
+            entry.StartsWith("CorrectnessProbe::Auto", StringComparison.Ordinal);
+        var trimIo = trimProfile ? new TrimProfileIoHook(deviceHook ?? hook) : null;
         uint control = 0, pointer = 0; var octets = 0; var done = false; var failed = false;
         uint stage = 0, error = 0;
         uint[]? probeData = null;
@@ -155,15 +166,20 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             SlowRamBytes = 0, FramebufferWidth = 908, FloppyDriveCount = floppy ? 2 : 1,
             FloppyDriveTypes = floppyImage?.Length == 3520 * 512
                 ? [LightweightFloppyDriveType.DoubleDensity, LightweightFloppyDriveType.HighDensity] : [],
-            Hardfiles = floppy ? [] : [new(0, media, readOnly: false) { ExposeBootNode = false, IoHook = deviceHook ?? hook }]
+            Hardfiles = floppy ? [] : [new(0, media, readOnly: false) { ExposeBootNode = false, IoHook = trimIo ?? deviceHook ?? hook }]
         }))
         {
             machine.LoadKickstart(rom); machine.MountAdf(0, boot); machine.SetDriveWriteProtected(0, true);
             if (floppy) { machine.MountAdf(1, floppyImage!); machine.SetDriveWriteProtected(1, !write); }
             machine.Reset();
-            var writeProfiler = Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
+            var benchmarkProfile = Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1" &&
+                (entry.StartsWith("CorrectnessProbe::Benchmark", StringComparison.Ordinal) ||
+                 entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal));
+            var overwriteProfile = entry == "LargeWriteProbe::Sfs" && Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
+            var writeProfiler = trimProfile || benchmarkProfile || overwriteProfile || Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
                 (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend")
                 ? new ReadCpuProfile(machine, handler, rom) : null;
+            if (writeProfiler != null) hook.CommandObserved = writeProfiler.ObserveRead;
             machine.ParallelDataWritten += (value, _, busCycle) =>
             {
                 if (octets != 0)
@@ -172,6 +188,21 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                     if (--octets == 0)
                     {
                         control = pointer;
+                        if (timingDevice != null && timing == "warm")
+                        {
+                            var memory = control < machine.ChipRam.Length ? machine.ChipRam : machine.FastRam;
+                            var offset = control < machine.ChipRam.Length ? control : control - machine.FastRamBase!.Value;
+                            BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(memory).Span.Slice((int)offset + 948, 4), 1);
+                        }
+                        if (probeBuffers != 0 || probeCylinders != 0 || probeExistingPayload || extraBuffers != 0)
+                        {
+                            var memory = control < machine.ChipRam.Length ? machine.ChipRam : machine.FastRam;
+                            var offset = control < machine.ChipRam.Length ? control : control - machine.FastRamBase!.Value;
+                            BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(memory).Span.Slice((int)offset + 404, 4), probeBuffers);
+                            BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(memory).Span.Slice((int)offset + 408, 4), probeCylinders);
+                            BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(memory).Span.Slice((int)offset + 940, 4), probeExistingPayload ? 1u : 0u);
+                            BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(memory).Span.Slice((int)offset + 944, 4), extraBuffers);
+                        }
                         if (probeDelay != 0)
                         {
                             var ram = control < machine.ChipRam.Length ? machine.ChipRam : machine.FastRam;
@@ -184,12 +215,36 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 if (value == 200) { octets = 4; pointer = 0; }
                 if (value == 210) done = true;
                 if (value == 250) failed = true;
-                if (value == 220) writeProfiler?.Begin("write", busCycle);
-                if (value == 221) writeProfiler?.End(directory, busCycle);
-                observe?.Invoke(value, busCycle, hook.ReadCommands, hook.WriteCommands, hook.Flushes);
+                if (trimProfile)
+                {
+                    if (value == 224) { writeProfiler!.ArmTrimCalls(directory, trimIo!.Snapshot); writeProfiler.SetCallStage("cold"); }
+                    if (value == 225) writeProfiler!.SetCallStage("setup");
+                    if (Environment.GetEnvironmentVariable("COPPERFS_TRIM_DELETE_PROFILE") == "1")
+                    {
+                        if (value == 232) writeProfiler!.Begin("delete", busCycle);
+                        if (value == 221) writeProfiler!.End(directory, busCycle);
+                    }
+                    if (value == 221) writeProfiler!.SetCallStage("deferred");
+                    if (value == 230) writeProfiler!.SetCallStage("warm-setup");
+                    if (value == 231) writeProfiler!.SetCallStage("warm");
+                    if (value == 222) writeProfiler!.StopTrimCalls();
+                }
+                if (overwriteProfile && value == 222) writeProfiler!.Begin("overwrite", busCycle);
+                if (overwriteProfile && value == 223) writeProfiler!.End(directory, busCycle);
+                if (!trimProfile && !overwriteProfile && value == 220) writeProfiler?.Begin(benchmarkProfile ? "mutate" : "write", busCycle);
+                if (!trimProfile && !overwriteProfile && value == 221) writeProfiler?.End(directory, busCycle);
+                if (benchmarkProfile && value == 222) writeProfiler?.Begin("verify", busCycle);
+                if (benchmarkProfile && value == 223) writeProfiler?.End(directory, busCycle);
+                if (value == 221 && profile == "sfs2-trst") OwnedMountMemory.Capture(machine, directory);
+                if (timingDevice != null && value == 220) warmupDiscards = timingDevice.Discards;
+                observe?.Invoke(value, busCycle, timingDevice?.ReadCommands ?? hook.ReadCommands,
+                    timingDevice?.WriteCommands ?? hook.WriteCommands, timingDevice?.Flushes ?? hook.Flushes);
             };
             for (var frame = 0; frame < 100000 && watch.Elapsed < TimeSpan.FromMinutes(10) && !done && !failed; frame++)
+            {
                 if (writeProfiler == null) machine.ExecuteFrame(); else writeProfiler.ExecuteFrame();
+                if (hook.CutAfterFrame) throw new PowerCut();
+            }
             frames = machine.CompletedFrames; pc = machine.Cpu.ProgramCounter;
             if (floppy) File.WriteAllBytes(media, machine.ExportAdf(1));
             if (control != 0)
@@ -198,39 +253,53 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 var at = control < machine.ChipRam.Length ? control : control - machine.FastRamBase!.Value;
                 stage = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + 20, 4));
                 error = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + 24, 4));
-                if (entry.StartsWith("TrimQualificationProbe::", StringComparison.Ordinal))
+                var measuresMount = entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal) ||
+                    entry.StartsWith("CorrectnessProbe::ReadPlacement", StringComparison.Ordinal);
+                if (entry.StartsWith("TrimQualificationProbe::", StringComparison.Ordinal) || measuresMount)
                 {
                     probeData = new uint[8];
+                    var measurementOffset = measuresMount ? 900 : 512;
                     for (var i = 0; i < probeData.Length; i++)
-                        probeData[i] = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + 512 + i * 4, 4));
+                        probeData[i] = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + measurementOffset + i * 4, 4));
                 }
             }
         }
         var result = new { Profile = profile, Cpu = cpu.ToString(), Label = label, Passed = done && !failed, Stage = stage, IoErr = error, ProbeData = probeData,
             PC = pc.ToString("X8"), Frames = frames, HostSeconds = watch.Elapsed.TotalSeconds,
             HandlerSha256 = Hash(File.ReadAllBytes(handler)), ProbeSha256 = Hash(probe), KickstartSha256 = Hash(rom),
-            InitialSha256 = initialHash, ResultSha256 = initialHash == null ? null : Hash(File.ReadAllBytes(media)), hook.Writes, hook.Flushes };
+            InitialSha256 = initialHash, ResultSha256 = initialHash == null ? null : Hash(File.ReadAllBytes(media)),
+            TimingDevice = timingDevice == null ? null : timing, WarmupDiscards = warmupDiscards,
+            UNMAPs = timingDevice?.Discards, ReclaimedBytes = timingDevice?.DiscardBytes,
+            Writes = timingDevice?.Writes ?? hook.Writes, Flushes = timingDevice?.Flushes ?? hook.Flushes,
+            ReadBytes = timingDevice?.ReadBytes ?? hook.ReadBytes, WriteBytes = timingDevice?.WriteBytes ?? hook.WriteBytes };
         File.WriteAllText(Path.Combine(directory, "result.json"), JsonSerializer.Serialize(result, Json));
         output.WriteLine(JsonSerializer.Serialize(result));
         Assert.True(result.Passed, $"{profile}/{label}: stage {stage}, IoErr {error}, PC {pc:X8}, {frames} frames");
+        if (timing == "cold" && timingDevice != null) Assert.Equal(0, warmupDiscards);
+        if (timing == "warm" && timingDevice != null && label.EndsWith("-candidate", StringComparison.Ordinal))
+            Assert.True(warmupDiscards > 0, $"{profile}/{label}: no completed warm-up UNMAP before the timed workload");
         if (!write && initialHash != null) Assert.Equal(result.InitialSha256, result.ResultSha256);
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     private class WritableHook(Action<FileStream>? afterFlush = null) : IAmigaHardfileIoHook
     {
+        public virtual bool CutAfterFrame => false;
         public int ReadCommands, WriteCommands, Writes, Flushes;
+        public long ReadBytes, WriteBytes;
+        public Action<ushort>? CommandObserved;
         public bool FlushOnDispose => false;
         public void ObserveOpen(int unit) { }
         public void ObserveCommand(ushort command)
         {
+            CommandObserved?.Invoke(command);
             if (command is 2 or 24) ReadCommands++;
             if (command is 3 or 25) WriteCommands++;
         }
         public virtual void Read(FileStream backing, long offset, Span<byte> destination)
-        { backing.Position = offset; backing.ReadExactly(destination); }
+        { ReadBytes += destination.Length; backing.Position = offset; backing.ReadExactly(destination); }
         public virtual void Write(FileStream backing, long offset, ReadOnlySpan<byte> source)
-        { Writes++; backing.Position = offset; backing.Write(source); }
+        { Writes++; WriteBytes += source.Length; backing.Position = offset; backing.Write(source); }
         public virtual void Flush(FileStream backing) { Flushes++; backing.Flush(true); afterFlush?.Invoke(backing); }
     }
 }

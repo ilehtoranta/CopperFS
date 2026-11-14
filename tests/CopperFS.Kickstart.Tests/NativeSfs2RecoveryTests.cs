@@ -21,7 +21,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
     // previous durable image until flush publishes the entire pending set.
     private sealed class PowerCut : Exception;
 
-    private sealed class DurableTrace(byte[] initial, int cutAt = 0) : WritableHook
+    private class DurableTrace(byte[] initial, int cutAt = 0) : WritableHook
     {
         private readonly Dictionary<long, byte[]> pending = new();
         private readonly HashSet<string> seen = [];
@@ -139,6 +139,13 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 case "Delete": Assert.Null(payload); break;
                 case "Create": Assert.Contains(report.Entries, e => e.Path == "/Created" && !e.Directory && e.Size == 0); break;
                 case "Comment": Assert.Equal("recovery", payload!.Comment); break;
+                case "Group":
+                    Assert.Null(payload);
+                    Assert.Equal("grouped", report.Entries.Single(e => e.Path == "/Renamed").Comment);
+                    break;
+                case "CrossClose":
+                    AssertCrossClose(report);
+                    break;
             }
             var after = JsonSerializer.Serialize(report);
             Assert.NotEqual(before, after);
@@ -155,7 +162,13 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 var prefix = File.ReadAllBytes(Path.Combine(directory, "cut", "disk.hdf"));
                 Assert.Equal(expected, Hash(prefix));
                 string expectedManifest;
-                if (Marker(prefix) == dirty)
+                if (!undo && Marker(prefix) == 0x54525354)
+                {
+                    Assert.Equal(0u, BinaryPrimitives.ReadUInt32BigEndian(prefix.AsSpan(marker + 12)));
+                    publishedJournals++;
+                    expectedManifest = after;
+                }
+                else if (Marker(prefix) == dirty)
                 {
                     var head = BinaryPrimitives.ReadUInt32BigEndian(prefix.AsSpan(marker + 12));
                     // CSUN publishes an empty dirty marker before logging its first target.

@@ -95,12 +95,27 @@ public static partial class AmigaSmartFileSystemCore
 
     public static bool Mount<T>(ref T p, APTR metadata) where T : struct, IAmigaFileSystemPlatform
     {
+        var mount = p.SfsMountStorage;
+        if (mount.IsNotNull) p.WriteUInt32(mount, 0, 0);
         if (!Root(ref p, metadata)) return false;
         var rootContainer = p.ReadUInt32(metadata, 104);
+        var writableRoots = mount.IsNotNull && p.ReadUInt32(metadata, 96) != 0 &&
+            p.ReadUInt32(metadata, 100) != 0 && p.ReadUInt32(metadata, 108) != 0 &&
+            p.ReadUInt32(metadata, 112) != 0;
+        if (writableRoots)
+        {
+            p.WriteUInt32(mount, 4, p.ReadUInt32(metadata, 112));
+            p.WriteUInt32(mount, 8, p.ReadUInt32(metadata, 108));
+            p.WriteUInt32(mount, 12, p.ReadUInt8(metadata, 20));
+            p.WriteUInt32(mount, 16, p.ReadUInt32(metadata, 8));
+        }
         if (!TransactionReadable(ref p, rootContainer, metadata, p.BlockCount)) return false;
         if (!Block(ref p, rootContainer, ObjectId, metadata)) return false;
-        return p.ReadUInt32(metadata, 28) == RootNode && (p.ReadUInt8(metadata, 48) & 128) != 0 &&
+        var valid = p.ReadUInt32(metadata, 28) == RootNode && (p.ReadUInt8(metadata, 48) & 128) != 0 &&
             p.ReadUInt8(metadata, 49) != 0;
+        if (valid && writableRoots && !p.HasAcknowledgedCheckpoint(rootContainer))
+            p.WriteUInt32(mount, 0, rootContainer);
+        return valid;
     }
 
     private static bool Scan<T>(ref T p, APTR buffer, uint wanted, uint blockBytes, out int offset, out int next)
@@ -148,6 +163,10 @@ public static partial class AmigaSmartFileSystemCore
         offset = 0; lookupError = DOS.Error.InvalidLock;
         if (node == 0) return APTR.Null;
         var blockCount = p.BlockCount; var blockBytes = p.BlockBytes;
+        var mount = p.SfsMountStorage;
+        if (mount.IsNotNull && p.ReadUInt32(mount) != 0)
+            return ObjectViewFromRoots(ref p, node, p.ReadUInt32(mount), p.ReadUInt32(mount, 4),
+                blockCount, blockBytes, scratch, out offset);
         var buffer = RootView(ref p, scratch, blockCount, blockBytes);
         if (buffer.IsNull) { lookupError = DOS.Error.DiskNotValidated; return APTR.Null; }
         var container = p.ReadUInt32(buffer, 104);
@@ -240,6 +259,11 @@ public static partial class AmigaSmartFileSystemCore
         error = DOS.Error.None;
         if (length > 255) { error = DOS.Error.InvalidComponentName; return 0; }
         var blockCount = p.BlockCount; var blockBytes = p.BlockBytes;
+        var mount = p.SfsMountStorage;
+        if (mount.IsNotNull && p.ReadUInt32(mount) != 0)
+            return ResolveFromRoots(ref p, directory, name, length, metadata, p.ReadUInt32(mount),
+                p.ReadUInt32(mount, 4), blockCount, blockBytes, (p.ReadUInt32(mount, 12) & 128) != 0,
+                out error, out record, out recordOffset);
         var view = RootView(ref p, metadata, blockCount, blockBytes);
         if (view.IsNull) { error = DOS.Error.DiskNotValidated; return 0; }
         var caseSensitive = (p.ReadUInt8(view, 20) & 128) != 0;
@@ -461,9 +485,14 @@ public static partial class AmigaSmartFileSystemCore
             if ((p.ReadUInt8(view, at + 24) & (128 | 64)) != 0) { error = DOS.Error.ObjectWrongType; return -1; }
             cursor.Size = p.ReadUInt32(view, at + 16);
             cursor.First = p.ReadUInt32(view, at + 12);
-            view = RootView(ref p, metadata);
-            if (view.IsNull) { error = DOS.Error.DiskNotValidated; return -1; }
-            cursor.Tree = p.ReadUInt32(view, 108);
+            var mount = p.SfsMountStorage;
+            if (mount.IsNotNull && p.ReadUInt32(mount) != 0) cursor.Tree = p.ReadUInt32(mount, 8);
+            else
+            {
+                view = RootView(ref p, metadata);
+                if (view.IsNull) { error = DOS.Error.DiskNotValidated; return -1; }
+                cursor.Tree = p.ReadUInt32(view, 108);
+            }
             cursor.Extent = cursor.First; cursor.Start = 0; cursor.Count = 0; cursor.Next = 0;
             cursor.BlockBytes = p.BlockBytes; cursor.BlockCount = p.BlockCount;
             cursor.Node = node;
@@ -510,7 +539,7 @@ public static partial class AmigaSmartFileSystemCore
             var count = blockBytes - within;
             if (count > length - copied) count = length - copied;
             var target = APTR.FromPointer(destination.Raw + copied);
-            if (within == 0 && count == blockBytes && (target.Raw & 3) == 0)
+            if (within == 0 && count == blockBytes && ((target.Raw & 3) == 0 || p.SupportsUnalignedDataReads))
             {
                 var blocks = (length - copied) / blockBytes;
                 var available = extentStart + extentSize - fileBlock;
@@ -523,13 +552,16 @@ public static partial class AmigaSmartFileSystemCore
                 if (read != blocks) goto failed;
                 continue;
             }
-            // ReadBlock owns any device/DMA bounce buffering. A complete,
-            // aligned caller range can receive the block without a byte copy.
-            var direct = within == 0 && count == blockBytes && (target.Raw & 3) == 0;
-            var readTarget = data;
-            if (direct) readTarget = target;
-            if (diskBlock >= blockCount || !p.ReadBlock(diskBlock, readTarget)) goto failed;
-            if (!direct) p.Copy(APTR.FromPointer(data.Raw + within), target, count);
+            if (diskBlock >= blockCount) goto failed;
+            // A retained image is valid through this copy. ReadBlock handles a
+            // cache miss and supplies aligned scratch on restrictive platforms.
+            var image = p.SupportsUnalignedDataReads ? p.ReadRetainedBlock(diskBlock) : APTR.Null;
+            if (image.IsNull)
+            {
+                if (!p.ReadBlock(diskBlock, data)) goto failed;
+                image = data;
+            }
+            p.Copy(APTR.FromPointer(image.Raw + within), target, count);
             copied += count; position += count; fileBlock++;
         }
         cursor.Extent = extent; cursor.Start = extentStart; cursor.Count = extentSize; cursor.Next = next;
