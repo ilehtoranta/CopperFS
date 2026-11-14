@@ -7,10 +7,11 @@ namespace CopperFS.Kickstart.Tests;
 
 public static class SfsRelocationRemountProbe
 {
-    public static int Write() => Run(true);
-    public static int Verify() => Run(false);
+    public static int Seed() => Run(0);
+    public static int Write() => Run(1);
+    public static int Verify() => Run(2);
 
-    private static int Run(bool write)
+    private static int Run(int operation)
     {
         var library = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!library.HasValue) return Fail();
@@ -21,7 +22,7 @@ public static class SfsRelocationRemountProbe
         var data = APTR.FromPointer(global::Amiga.Exec.AllocMem(8192, global::Amiga.Exec.MemoryFlags.Public));
         if (control.IsNull || data.IsNull || CorrectnessProbe.Mount(control, 2) != 0) return Fail();
         var port = DOS.DeviceProc("SEQ0:");
-        if (write)
+        if (operation == 0)
         {
             var file = DOS.Open("SEQ0:Relocate", DOS.FileMode.NewFile);
             if (!file.HasValue) return Fail();
@@ -34,7 +35,10 @@ public static class SfsRelocationRemountProbe
             var neighbor = DOS.Open("SEQ0:Neighbor", DOS.FileMode.NewFile);
             if (!neighbor.HasValue || DOS.Write(neighbor.Value, data, 512) != 512 ||
                 DOS.Close(neighbor.Value) == 0 || DOS.DoPkt(port, (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) == 0) return Fail();
-            file = DOS.Open("SEQ0:Relocate", DOS.FileMode.ReadWrite);
+        }
+        else if (operation == 1)
+        {
+            var file = DOS.Open("SEQ0:Relocate", DOS.FileMode.ReadWrite);
             if (!file.HasValue || DOS.Seek(file.Value, 8192, -1) != 0) return Fail();
             for (int chunk = 1; chunk <= 2; chunk++)
             {
@@ -74,7 +78,10 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var root = Path.Combine(Path.GetDirectoryName(path)!, "relocation-8192");
         var seed = File.ReadAllBytes(manifest.ClassicBase);
         Assert.Equal(manifest.ClassicBaseSha256, Hash(seed));
-        var written = await Run(root, profile, "write", pair.Candidate, seed, true,
+        Assert.Equal(pair.OriginalSha256, Hash(File.ReadAllBytes(pair.Original)));
+        var prepared = await Run(root, profile, "seed", pair.Original, seed, true,
+            "SfsRelocationRemountProbe::Seed", cpu: M68kCpuModel.M68020);
+        var written = await Run(root, profile, "write", pair.Candidate, prepared, true,
             "SfsRelocationRemountProbe::Write", cpu: M68kCpuModel.M68000);
         var files = SfsImageChecker.Check(new MemoryStream(written), reservedBlocks: 2).Entries;
         var expected = Enumerable.Range(0, 32768).Select(i => (byte)(13 * i + i / 8192)).ToArray();
