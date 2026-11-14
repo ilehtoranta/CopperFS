@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><IsPackable>false</IsPackable><IsTestProject>true</IsTestProject><DefineConstants>$(DefineConstants);COPPERFS_CPX4</DefineConstants></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" /><PackageReference Include="xunit" Version="2.9.3" /><PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" /><PackageReference Include="Copper68k" Version="[1.5.4]" /><Using Include="Xunit" />
+    <ProjectReference Include="../../src/CopperCPX.Core/CopperCPX.Core.csproj" />
+    <ProjectReference Include="../../prototypes/CopperFS.Cpx4.Reference/CopperFS.Cpx4.Reference.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Targets.Amiga/CopperSharp.Targets.Amiga.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Sdk.Amiga/CopperSharp.Sdk.Amiga.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Compiler.BootAdf/CopperSharp.Compiler.BootAdf.csproj" />
+    <ProjectReference Include="../../../CopperScreen/CopperMod.Amiga.Lightweight/CopperMod.Amiga.Lightweight.csproj" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxIo.cs" Link="Native/NativeCpxIo.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxTransport.cs" Link="Native/NativeCpxTransport.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxUnmap.cs" Link="Native/NativeCpxUnmap.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxMemory.cs" Link="Native/NativeCpxMemory.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxMedia.cs" Link="Native/NativeCpxMedia.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxHandler.cs" Link="Native/NativeCpxHandler.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxLifecycle.cs" Link="Native/NativeCpxLifecycle.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxVolume.cs" Link="Native/NativeCpxVolume.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxRecordTimers.cs" Link="Native/NativeCpxRecordTimers.cs" />
+  </ItemGroup>
+</Project>

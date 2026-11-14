@@ -335,3 +335,30 @@ paired/separate cycle samples. These are synthetic arithmetic measurements;
 the full-ROM workload probes above qualify filesystem performance separately.
 See the [division optimization report](../../docs/divrem-optimization-2026-11-12.md)
 for the measured results and the explicit MC68020 fusion limitation.
+
+## Partitions crossing 4 GiB
+
+`WideAdmissionInstructionTests` compiles the shared admission routine for the
+68000 and executes it on 68000 and 68020 models, including the exact boundary,
+crossing and above-boundary starts, and accepted and rejected TD64 probes.
+`CopperCPX.InstructionTests` also exercises the new filesystem's narrow-range
+admission in its compiled TD64 probe.
+
+`WideMountRomTests` boots current standalone handlers on a licensed Kickstart
+3.1 ROM with a sparse 16 MiB partition starting one sector below 4 GiB. OFS,
+FFS, SFS1, SFS2 and CPX4 each run with TD64 working and with the TD64 read
+completed as `IOERR_NOCMD`. In the latter case the harness replaces the device
+completion after a read-only host operation and before the guest receives the
+reply. It requires failed startup with no narrow read retry or device writes.
+Successful cases write a file above 4 GiB and read it after a fresh boot.
+This is emulated device coverage, not physical-controller qualification.
+
+Supply the licensed `COPPERSHARP_KICKSTART31_ROM` and freshly built handler
+paths in `COPPERFS_WIDE_FFS_HANDLER`, `COPPERFS_WIDE_SFS_HANDLER`,
+`COPPERFS_WIDE_SFS2_HANDLER`, and `COPPERFS_WIDE_CPX_HANDLER`. The host must
+support sparse files. Then run:
+
+```powershell
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter 'FullyQualifiedName~WideMountRomTests|FullyQualifiedName~WideAdmissionInstructionTests'
+dotnet test tests/CopperCPX.InstructionTests -c Release --filter 'FullyQualifiedName~CompiledEngineAndTd64RespectFourKiBStack'
+```

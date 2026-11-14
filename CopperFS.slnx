@@ -1,10 +1,16 @@
 <Solution>
+  <Folder Name="/prototypes/">
+    <Project Path="prototypes/CopperFS.Cpx4.Reference/CopperFS.Cpx4.Reference.csproj" />
+  </Folder>
   <Folder Name="/src/">
+    <Project Path="src/CopperCPX.Core/CopperCPX.Core.csproj" />
     <Project Path="src/CopperSFS.Core/CopperSFS.Core.csproj" />
     <Project Path="src/CopperFFS.Core/CopperFFS.Core.csproj" />
     <Project Path="src/CopperFS.Amiga/CopperFS.Amiga.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/CopperCPX.Core.Tests/CopperCPX.Core.Tests.csproj" />
+    <Project Path="tests/CopperCPX.InstructionTests/CopperCPX.InstructionTests.csproj" />
     <Project Path="tests/CopperSFS.Core.Tests/CopperSFS.Core.Tests.csproj" />
     <Project Path="tests/CopperFFS.Core.Tests/CopperFFS.Core.Tests.csproj" />
     <Project Path="tests/CopperFS.Amiga.Tests/CopperFS.Amiga.Tests.csproj" />

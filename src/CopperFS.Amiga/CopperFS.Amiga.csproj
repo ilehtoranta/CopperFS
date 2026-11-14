@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants Condition="'$(CopperFsHandler)' == 'Cpx4'">$(DefineConstants);COPPERFS_CPX4</DefineConstants>
     <DefineConstants Condition="'$(CopperFsAutoTrim)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM</DefineConstants>
     <!-- Empty keeps the shared source consumer and host tests multi-format. -->
     <CopperFsFfsOnly Condition="'$(CopperFsHandler)' == 'Ffs'">true</CopperFsFfsOnly>
@@ -22,8 +23,8 @@
     <DefineConstants Condition="'$(CopperFsSmartOnly)' == 'true'">$(DefineConstants);COPPERSTART_SMART_ONLY</DefineConstants>
   </PropertyGroup>
   <Target Name="ValidateHandlerFamily" BeforeTargets="BeforeBuild">
-    <Error Condition="'$(CopperFsHandler)' != '' and '$(CopperFsHandler)' != 'Ffs' and '$(CopperFsHandler)' != 'Sfs'"
-           Text="CopperFsHandler must be empty, Ffs or Sfs." />
+    <Error Condition="'$(CopperFsHandler)' != '' and '$(CopperFsHandler)' != 'Ffs' and '$(CopperFsHandler)' != 'Sfs' and '$(CopperFsHandler)' != 'Cpx4'"
+           Text="CopperFsHandler must be empty, Ffs, Sfs or Cpx4 (experimental handler)." />
   </Target>
   <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
           Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">
@@ -36,10 +37,16 @@
   <Target Name="ValidateSmartOnlyProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSmartOnly)' == 'true' and '$(CopperFsFfsOnly)' == 'true'">
     <Error Text="CopperFsSmartOnly cannot be combined with CopperFsFfsOnly." />
   </Target>
-  <ItemGroup>
+  <ItemGroup Condition="'$(CopperFsHandler)' != 'Cpx4'">
     <InternalsVisibleTo Include="CopperFS.Kickstart.Tests" />
     <ProjectReference Include="../CopperSFS.Core/CopperSFS.Core.csproj" />
     <Using Include="CopperSFS" />
   </ItemGroup>
-  <Import Project="../../build/CopperFFS.Sources.props" />
+  <ItemGroup Condition="'$(CopperFsHandler)' == 'Cpx4'">
+    <Compile Remove="**/*.cs" />
+    <Compile Include="Cpx4/*.cs" />
+    <ProjectReference Include="../CopperCPX.Core/CopperCPX.Core.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Sdk.Amiga/CopperSharp.Sdk.Amiga.csproj" />
+  </ItemGroup>
+  <Import Project="../../build/CopperFFS.Sources.props" Condition="'$(CopperFsHandler)' != 'Cpx4'" />
 </Project>

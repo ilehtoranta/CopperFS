@@ -1,0 +1,97 @@
+[
+  {
+    "Source": "prototypes/CopperFS.Prototype/AddressMath.cs",
+    "Sha256": "EEC78AFE2F534AC29BE74C8F0AD0E6E1C7C135CBC5BB26BEF1C237BB512851B5",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/AddressMath.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/Continuations.cs",
+    "Sha256": "7AB7308935679E4E2DA9AD82A2E2D1D3151938D2ABB18EEB946B5B25CC615745",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/Continuations.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/DesignLayout.cs",
+    "Sha256": "E4E2936B46529A7B69A5CB1E80258062E1D192CCC903C2BE246E803F9E96F841",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/DesignLayout.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/Device.cs",
+    "Sha256": "D6CAE1F57F32D303685FD6AB4392A602E5F2BC502F10704F8A848A466B966C00",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/Device.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Allocation.cs",
+    "Sha256": "03422F850F292A7B77AB8B963CB306B1B9D9333CF3AB33746C56C4B490C1DFD0",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Allocation.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Core.cs",
+    "Sha256": "B9DD73B4FE89BC09F5AF185AD3F9EB7D9DB02FF3FC2DF209118ACC5FA2195F72",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Core.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Data.cs",
+    "Sha256": "FF9D850F2EBB4D8969BF77B8E937444D7575278DB03CDCC0BD67A04EBB6D6ADE",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Data.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Journal.cs",
+    "Sha256": "440D188D7BA1BF51D8DE8E677A5F1A9C95AADCECEE96421B7ACD3868FAE147DF",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Journal.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Names.cs",
+    "Sha256": "B018C331E037196A787AD3B5642E9D8F2CD9E7D8F21A43D2ABB3393447705C9C",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Names.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Namespace.cs",
+    "Sha256": "F6F28A34005D2A1ECFD250F90EEC58B178459FD502F2826FB2AB3EB2D7AD0078",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Namespace.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Scheduling.cs",
+    "Sha256": "84FD1BE7C3CC32395203FDA6FA3BF00384A00F0F52F45EDFEE302CF5F4A3EC4E",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Scheduling.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Trees.cs",
+    "Sha256": "1C3314DD35CD906CB2E1B71CF17417870AA8AB25D4EA4A9463640C53A7CF84A8",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Trees.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Truncate.cs",
+    "Sha256": "862C37E4004744B59BE6321C146F32D7CB307AF1BD9EFBD690765863B7A391CC",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Truncate.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Verify.cs",
+    "Sha256": "AFBC560E37E3567EDB0F0817C210062C30B06EE5DCA9216EF7EF3BE387562F7C",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Verify.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/PrototypeVolume.Write.cs",
+    "Sha256": "870A7AF907F6CF7F2A3062F28C4F18B7506C85450FD141732A207649E833465B",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/PrototypeVolume.Write.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/ScratchFrame.cs",
+    "Sha256": "61EAD104CB05C32FA1DBDDAF9B58FCD623C1B2E3658548891547563288D6BDAA",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/ScratchFrame.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype/WideMath32.cs",
+    "Sha256": "6E772A8FD616F0607A458ACF0287936286D02637F5F19E3CDEEAC27A804AE51B",
+    "Destination": "prototypes/CopperFS.Cpx4.Reference/WideMath32.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype.Tests/Devices.cs",
+    "Sha256": "E21CE34A566C8CC93D7118AFB832E72D9B644BF96FC1DC98C3C145DBCC237A57",
+    "Destination": "tests/CopperCPX.Core.Tests/Fixtures/Devices.cs"
+  },
+  {
+    "Source": "prototypes/CopperFS.Prototype.Tests/IndependentImage.cs",
+    "Sha256": "7658AB042B14C520D4EB2523FEE8B7FDD2C484A443A44685C72716A5D15AEF83",
+    "Destination": "tests/CopperCPX.Core.Tests/Fixtures/IndependentImage.cs"
+  }
+]

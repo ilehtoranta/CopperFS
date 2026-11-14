@@ -9,6 +9,7 @@ param(
     [switch]$BufferedTrst,
     [switch]$LegacyCsUn,
     [switch]$Ffs,
+    [switch]$Cpx4,
     [switch]$FfsOnly,
     [switch]$SmartOnly,
     [switch]$NoSpecialization,
@@ -22,6 +23,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Cpx4) {
+    if ($Ffs -or $Sfs2 -or $FfsOnly -or $SmartOnly) { throw 'Cpx4 is an isolated handler profile.' }
+    & (Join-Path $PSScriptRoot 'Build-Cpx4Handler.ps1') -CopperSharpRoot $CopperSharpRoot -Configuration $Configuration -ArtifactRoot $ArtifactRoot -Cpu $Cpu -SkipCompilerBuild:$SkipCompilerBuild
+    return
+}
 if ($SharedDispatch) { $NoSpecialization = $true }
 if ($Ffs -and $Sfs2) { throw 'Choose the FFS or SFS2 handler, not both.' }
 if ($FfsOnly -and (!$Ffs -or $Sfs2)) { throw 'FfsOnly requires -Ffs and excludes -Sfs2.' }
