@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CopperSFS · Amiga Smart File System and SFS2 handler</title>
+  <meta name="description" content="CopperSFS support for Amiga Smart File System volumes, including SFS2. TRST journal recovery, handler builds, CPU requirements and SFS preview installation.">
+  <link rel="canonical" href="https://ilehtoranta.github.io/CopperFS/coppersfs/">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="masthead">
+    <div class="wrap bar">
+      <a class="brand" href="../" aria-label="CopperFS home"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>CopperFS</a>
+      <nav class="primary" aria-label="Main navigation">
+        <a href="../">Overview</a>
+        <a href="../copperffs/">CopperFFS</a>
+        <a href="../coppersfs/" aria-current="page">CopperSFS</a>
+        <a href="../coppernova/">CopperNova</a>
+      </nav>
+      <a class="github" href="https://github.com/ilehtoranta/CopperFS">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+  <main class="wrap" id="main" tabindex="-1">
+    <header class="detail-head">
+      <h1>CopperSFS</h1>
+      <p class="lead">An Amiga handler for Smart File System volumes, including the updated SFS2 format.</p>
+    </header>
+    <div class="reference">
+      <nav class="outline" aria-label="Page contents"><b>On this page</b>
+        <a href="#source">Current source</a>
+        <a href="#preview">SFS preview.4</a>
+        <a href="#testing">Test coverage</a>
+      </nav>
+      <div class="content">
+        <section aria-labelledby="source">
+          <h2 id="source">Current source</h2>
+          <p>The default SFS and SFS2 handlers use a TRST redo journal. On mount, the handler replays complete journal records before making the volume available. <a href="../../docs/compatibility.md">Compatibility and recovery</a>.</p>
+          <div class="table-wrap" role="region" aria-label="TRST support by disk format" tabindex="0">
+            <table aria-labelledby="source"><thead><tr><th scope="col">Disk format</th><th scope="col">TRST support</th></tr></thead>
+              <tbody><tr><th scope="row">SFS <code>(SFS\0)</code></th><td>Supports buffered writes and replays records in the original SFS journal format.</td></tr>
+              <tr><th scope="row">SFS2</th><td>Uses a 192 kB staging area when writing changes.</td></tr></tbody>
+            </table>
+          </div>
+          <h3>Build a standalone handler</h3>
+          <p>With .NET 10 installed and CopperSharp68k beside CopperFS, run the command for your volume. Each directory receives a handler named <code>CopperSFS</code>.</p>
+          <pre tabindex="0"><code>./build/Build-Handler.ps1 -ArtifactRoot artifacts/sfs
+./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot artifacts/sfs2-trst</code></pre>
+          <p>The default target is the 68000. Add <code>-Cpu 68020</code> for a 68020 or later CPU. <a href="../../README.md#build-and-test">Source build instructions</a>.</p>
+        </section>
+        <section aria-labelledby="preview">
+          <h2 id="preview">SFS preview.4</h2>
+          <p>The <a href="https://github.com/ilehtoranta/CopperSFS/releases/tag/v0.1.0-preview.4">v0.1.0-preview.4 release</a> supplies binaries for an existing <code>SFS\0</code> partition. Its default 68020 handler uses buffered writes and a 256 kB clean-data cache. The 68020 package also offers strict writes and other cache sizes. Select the separate 68000 package for a 68000 or 68010.</p>
+          <p>Before switching handlers, confirm a successful filesystem <code>ACTION_FLUSH</code> or clean inhibit. After an interrupted update, recover the volume with the preview handler first. <a href="../../docs/handler-install.md#buffered-writes-strict-writes-and-recovery">Preview durability and recovery</a>.</p>
+          <h3>Install on a test volume</h3>
+          <p>Use an independently backed-up disposable partition, a separate boot volume and Kickstart 2.0 or newer. Verify the downloaded package checksums. Copy the executable for your CPU as <code>L:CopperSFS</code>, then adapt the supplied mount entry to the existing partition’s geometry, device, unit and DMA mask. Mount, write a test file, flush and verify its contents after remount. <a href="../../docs/handler-install.md#install-on-a-test-volume">Package selection and installation instructions</a>.</p>
+        </section>
+        <section aria-labelledby="testing">
+          <h2 id="testing">Test coverage</h2>
+          <p><strong>Source builds.</strong> The original-handler comparison exercised SFS and SFS2 TRST writes on 16 MB images. After a fix to SFS file replacement, all nine cases in the filesystem comparison passed. <a href="../../docs/sfs-mode-newfile-compatibility-2026-11-06.md#validation">Correctness results and tested builds</a>.</p>
+          <p><strong>Published preview.</strong> The buffered 68020 binary was compared with SmartFilesystem 1.279 under Kickstart 3.1, including recovery and clean handoff. The 68000 binary received five smoke cases on the 68020 emulator profile. Full-ROM coverage on a 68000 and physical hardware qualification for that package remain open. <a href="../../docs/handler-install.md#what-was-validated">Preview qualification by binary</a>.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <span><b>CopperFS</b> <span class="dim">/</span> Amiga filesystems</span>
+    <a href="https://github.com/ilehtoranta/CopperFS/blob/main/LICENSE">MIT license</a>
+  </footer>
+</body>
+</html>
