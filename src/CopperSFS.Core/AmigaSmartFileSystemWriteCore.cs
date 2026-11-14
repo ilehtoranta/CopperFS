@@ -1151,8 +1151,14 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool FileBlock<T>(ref T p, ref Work w, uint first, uint index, out uint diskBlock,
         out uint lastKey, out uint lastSize, out uint lastStart, out uint lastLeaf, out int lastOffset)
         where T : struct, IAmigaWritableFileSystemPlatform
+        => FileBlockView(ref p, ref w, first, index, out diskBlock, out lastKey, out lastSize,
+            out lastStart, out lastLeaf, out lastOffset, out _);
+
+    private static bool FileBlockView<T>(ref T p, ref Work w, uint first, uint index, out uint diskBlock,
+        out uint lastKey, out uint lastSize, out uint lastStart, out uint lastLeaf, out int lastOffset, out APTR image)
+        where T : struct, IAmigaWritableFileSystemPlatform
     {
-        diskBlock = lastKey = lastSize = lastStart = 0;
+        image = APTR.Null; diskBlock = lastKey = lastSize = lastStart = 0;
         lastLeaf = 0; lastOffset = 0;
         var key = first; var start = 0u;
         for (var guard = 0u; key != 0 && guard < w.BlockCount; guard++)
@@ -1166,7 +1172,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (count == 0 || key >= w.BlockCount || count > w.BlockCount - key ||
                 count > w.BlockCount - start) return Fail(ref w, DOS.Error.DiskNotValidated);
             lastKey = key; lastSize = count; lastStart = start;
-            if (index < start + count) { diskBlock = key + index - start; return true; }
+            if (index < start + count) { image = view; diskBlock = key + index - start; return true; }
             start += count; key = next;
         }
         if (key != 0) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -2087,10 +2093,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (w.RedoStaging && r.Length <= 65536 && r.Length % blockBytes == 0 &&
             r.Position % blockBytes == 0 && (r.Buffer.Raw & 3) == 0 && end <= size)
         {
-            if (!FileBlock(ref p, ref w, first, r.Position / blockBytes, out var current,
-                out var key, out _, out _, out var sourceLeaf, out var sourceAt) || current == 0) return FailUnlessSet(ref w);
+            if (!FileBlockView(ref p, ref w, first, r.Position / blockBytes, out var current,
+                out var key, out _, out _, out var sourceLeaf, out var sourceAt, out var sourceImage) || current == 0) return FailUnlessSet(ref w);
             if (!RelocateOverwrite(ref p, ref w, ref first, r.Node, key, current - key,
-                r.Length / blockBytes, r.Buffer, APTR.Null, 0, out var moved, sourceLeaf, sourceAt)) return false;
+                r.Length / blockBytes, r.Buffer, APTR.Null, 0, out var moved, sourceLeaf, sourceAt, sourceImage)) return false;
             if (moved)
             {
                 actual = r.Length;

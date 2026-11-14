@@ -76,7 +76,7 @@ public static partial class AmigaSmartFileSystemWriteCore
     // WriteBatched, and all replacements remain inside that request's transaction.
     private static bool RelocateOverwrite<T>(ref T p, ref Work w, ref uint first, uint node,
         uint start, uint offset, uint count, APTR source, APTR buffer, uint replacement, out bool moved,
-        uint sourceLeaf = 0, int sourceAt = 0)
+        uint sourceLeaf = 0, int sourceAt = 0, APTR sourceImage = default)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         moved = false;
@@ -86,7 +86,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (!LocateExtentRecord(ref p, ref w, start, out length, out next, out previous,
                 out sourceLeaf, out sourceAt)) return false;
         }
-        else if (!ReadLocatedExtentRecord(ref p, ref w, start, sourceLeaf, sourceAt,
+        else if (!ReadLocatedExtentRecord(ref p, ref w, start, sourceImage, sourceAt,
             out length, out next, out previous)) return false;
         var sourceLength = length; var sourceNext = next;
         var advanceTail = false;
@@ -446,14 +446,13 @@ public static partial class AmigaSmartFileSystemWriteCore
     }
 
     // FileBlock has already checked this location, and no extent mutation has
-    // intervened. Reacquire the leaf through the normal checked view; only the
-    // tree search is redundant. Keep widened fields in the out-uint contract.
-    private static bool ReadLocatedExtentRecord<T>(ref T p, ref Work w, uint key, uint leaf, int at,
+    // intervened. Consume the borrowed leaf before the next block access.
+    // Keep widened fields in the out-uint contract.
+    private static bool ReadLocatedExtentRecord<T>(ref T p, ref Work w, uint key, APTR image, int at,
         out uint length, out uint next, out uint previous)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         length = next = previous = 0;
-        var image = View(ref p, ref w, leaf, TreeId, w.Meta);
         if (image.IsNull) return false;
         length = p.ReadUInt16(image, at + 12);
         next = p.ReadUInt32(image, at + 4); previous = p.ReadUInt32(image, at + 8);

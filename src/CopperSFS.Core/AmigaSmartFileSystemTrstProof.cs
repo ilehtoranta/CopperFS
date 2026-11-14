@@ -125,10 +125,21 @@ public static partial class AmigaSmartFileSystemWriteCore
     }
 
     private static bool TrstPoolProofOwned<T>(ref T p, APTR group, APTR view) where T : struct, IAmigaGuestMemory
-        => TrstProofSealed(ref p, APTR.FromPointer(group.Raw + TrstGroupProof)) &&
-            TrstProofImage(ref p, group, view, 24, p.ReadUInt32(group, TrstGroupContinuation + 28), TreeId).IsNotNull &&
-            TrstProofImage(ref p, group, view, 28, p.ReadUInt32(group, TrstGroupProof + 56), BitmapId).IsNotNull &&
-            TrstProofImage(ref p, group, view, 32, p.ReadUInt32(group, TrstGroupProof + 60), BitmapId).IsNotNull;
+    {
+        var proof = APTR.FromPointer(group.Raw + TrstGroupProof);
+        if (!TrstProofSealed(ref p, proof) ||
+            SfsSharedImagePool.ProofImage(ref p, view, p.ReadUInt32(proof, 24), p.ReadUInt32(group, 232),
+                p.ReadUInt32(group, TrstGroupContinuation + 28), TreeId).IsNull) return false;
+        var index = p.ReadUInt32(proof, 28);
+        var revision = p.ReadUInt32(group, 236);
+        var block = p.ReadUInt32(proof, 56);
+        if (SfsSharedImagePool.ProofImage(ref p, view, index, revision, block, BitmapId).IsNull) return false;
+        var destinationIndex = p.ReadUInt32(proof, 32);
+        var destinationRevision = p.ReadUInt32(group, 240);
+        var destinationBlock = p.ReadUInt32(proof, 60);
+        return (index == destinationIndex && revision == destinationRevision && block == destinationBlock) ||
+            SfsSharedImagePool.ProofImage(ref p, view, destinationIndex, destinationRevision, destinationBlock, BitmapId).IsNotNull;
+    }
 
     private static uint TrstFreeSpan<T>(ref T p, APTR bitmap, uint bit, uint limit, bool free = true)
         where T : struct, IAmigaGuestMemory
