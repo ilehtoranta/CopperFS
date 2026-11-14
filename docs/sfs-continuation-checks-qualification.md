@@ -41,6 +41,6 @@ The three-arm ordinary measurements, Kickstart tests, scalar trace and native re
 
 ## Qualification of the retained revision
 
-Release solution build succeeded with zero warnings and errors. Across six test projects, 1,915 tests passed and five conditional tests were skipped. The default and shared-pool M68000 standalone builds passed. CopperStart passed 186 cache, buffer, transfer and geometry replays and 77 link and size replays.
+Release solution build succeeded with zero warnings and errors. The first full solution run exposed a recursive FFS table-read fallback in the checkpoint. Restoring the device read and the unsupported DOS-type fixture gave 278 passing FFS host tests. The rebuilt CopperFFS handler and 141 native buffer and geometry replays passed. The default and shared-pool M68000 standalone builds passed. CopperStart passed 186 cache, buffer, transfer and geometry replays and 77 link and size replays.
 
 Kickstart 3.1 passed 12 grouped recovery cases, including the 96 KiB workload cut at nine points and remounted by both handlers. All 43 candidate sector prefixes remounted by original SFS showed entirely old or new payloads, intact neighbors and correct free space. Partial journal and home writes, partial journal reads, handoff, close, timer, explicit flush, packet rejection, foreign startup, automatic TRIM and all five sequential-read matrix cases passed. The mixed performance gate failed on Fast and Chip RAM. Physical Amiga and storage-device coverage remains outstanding.
