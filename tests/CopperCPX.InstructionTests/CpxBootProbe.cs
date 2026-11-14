@@ -39,6 +39,7 @@ public static partial class CpxBootProbe
         if((APTR.ReadUInt32(control,60)&24)==16) return OwnerWork(control,port,data);
         if((APTR.ReadUInt32(control,60)&8)!=0) return FormatWork(control,port,data);
         if((APTR.ReadUInt32(control,60)&4)!=0) return FinishAsync(control,port,data);
+        if((APTR.ReadUInt32(control,60)&128)!=0) return FinishAsync(control,port,data);
         var file=DOS.Open("CPX0:Inline",DOS.FileMode.ReadWrite); if(!file.HasValue) return Fail(control,5);
         if(!CheckUnsupportedPackets(control,port,APTR.ReadUInt32(APTR.FromPointer(file.Value.Raw<<2),36),209)) return Fail(control,960);
         int recovered=DOS.Read(file.Value,data,3);
@@ -140,8 +141,11 @@ public static partial class CpxBootProbe
             APTR.WriteUInt32(control,36,500);
             uint exAllFailure=ExAllWork(port,data); if(exAllFailure!=0) return Fail(control,exAllFailure);
         }
-        APTR.WriteUInt32(control,36,400);
-        uint mediaFailure=MediaLifecycle(control,port,data); if(mediaFailure!=0) return Fail(control,mediaFailure);
+        if((APTR.ReadUInt32(control,60)&128)==0)
+        {
+            APTR.WriteUInt32(control,36,400);
+            uint mediaFailure=MediaLifecycle(control,port,data); if(mediaFailure!=0) return Fail(control,mediaFailure);
+        }
         APTR.WriteUInt32(control,36,0);
         if(DOS.DoPkt(port,27,0,0,0,0,0)==0) return Fail(control,15);
         APTR.WriteUInt32(control,48,Exec.AvailMem(Exec.MemoryFlags.Public)); Report(226);

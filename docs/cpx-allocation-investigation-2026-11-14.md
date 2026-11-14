@@ -52,6 +52,18 @@ it is not an allocation count for other phases or for code inside external
 devices and libraries. The local receipt is under
 `artifacts/cpx-allocation-rom-final/growth/qualification.json`.
 
+The dedicated allocation replay starts directly with record, notification and
+ExAll operations on a prepared image. It retains the same operation-phase
+allocation observer and verifies that all three phases actually ran. The wider
+boot qualification still runs the full preceding mutation workload. This avoids
+spending the allocation test's host watchdog on unrelated setup; it does not
+remove its emulated frame bound, permit operation-time allocations or use warm-up.
+The async-only diagnostic mode omits ExAll and is rejected for this test.
+The focused Debug build permits 30 minutes of host time because unoptimized
+emulation can exceed the ordinary eight-minute watchdog; the emulated frame
+limit is unchanged. A 68000 Kickstart 3.1 Debug run completed all three phases
+with 45 observed startup calls and zero calls in the monitored phases.
+
 `GC.GetAllocatedBytesForCurrentThread` was a managed-host test instrument; reading
 it did not itself request a collection. It measured allocations on the executing
 managed thread, not allocations in the freestanding native handler. The portable

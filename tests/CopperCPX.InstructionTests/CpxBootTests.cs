@@ -21,10 +21,12 @@ public sealed class CpxBootTheoryAttribute : TheoryAttribute
 }
 public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
 {
-    [CpxBootTheory][InlineData(false,false,false,false,false,false)][InlineData(true,false,false,false,false,false)][InlineData(false,true,false,false,false,false)][InlineData(false,false,true,false,false,false)][InlineData(true,false,false,true,false,false)][InlineData(false,false,true,true,false,false)][InlineData(false,false,false,false,true,false)][InlineData(false,false,false,false,true,true)] public async System.Threading.Tasks.Task ActualHunkBootsWith512KiBAndFourKiBTaskStack(bool deep,bool replay,bool format,bool owners,bool damaged,bool dma)
+    [CpxBootTheory][InlineData(false,false,false,false,false,false)][InlineData(true,false,false,false,false,false)][InlineData(false,true,false,false,false,false)][InlineData(false,false,true,false,false,false)][InlineData(true,false,false,true,false,false)][InlineData(false,false,true,true,false,false)][InlineData(false,false,false,false,true,false)][InlineData(false,false,false,false,true,true)] public System.Threading.Tasks.Task ActualHunkBootsWith512KiBAndFourKiBTaskStack(bool deep,bool replay,bool format,bool owners,bool damaged,bool dma)
+        => RunBoot(deep,replay,format,owners,damaged,dma,false);
+    private async System.Threading.Tasks.Task RunBoot(bool deep,bool replay,bool format,bool owners,bool damaged,bool dma,bool allocationOnly)
     {
         bool diagnostic=Environment.GetEnvironmentVariable("COPPERCPX_ASYNC_DIAGNOSTIC")=="1";
-        string repo=FindRoot(),root=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_BOOT_ROOT")??Path.Combine(repo,"artifacts",diagnostic?"cpx4-async-diagnostic":"cpx4-boot-512k"),dma?"dma-fallback":damaged?"backup-anchor":owners&&format?"unsupported-trim":owners?"owners-depth8":format?"format":replay?"recovery":deep?"depth8":"growth"),handler=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_HANDLER_ROOT")??Path.Combine(repo,"artifacts","native-cpx4-handler"),"CopperCPX4");
+        string repo=FindRoot(),root=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_BOOT_ROOT")??Path.Combine(repo,"artifacts",diagnostic?"cpx4-async-diagnostic":"cpx4-boot-512k"),allocationOnly?"allocation":dma?"dma-fallback":damaged?"backup-anchor":owners&&format?"unsupported-trim":owners?"owners-depth8":format?"format":replay?"recovery":deep?"depth8":"growth"),handler=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_HANDLER_ROOT")??Path.Combine(repo,"artifacts","native-cpx4-handler"),"CopperCPX4");
         string? romPath=Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM"); Assert.True(File.Exists(romPath),"Licensed Kickstart ROM is unavailable."); Assert.True(File.Exists(handler),"Rebuild CopperCPX4 first.");
         var build=ValidateBuild(repo,handler);
         Directory.CreateDirectory(Path.Combine(root,"boot","S"));
@@ -35,14 +37,14 @@ public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         File.WriteAllBytes(Path.Combine(root,"boot","PROBE"),probe.Image); File.Copy(handler,Path.Combine(root,"boot","HANDLER"),true);
         File.WriteAllText(Path.Combine(root,"boot","S","startup-sequence"),"PROBE\n");
         var boot=await FileSystemAdf.CreateAsync(Path.Combine(root,"boot"),"CPX4Boot");
-        var disk=new Image(); if(damaged) PrepareDamagedAnchor(disk); else if(!format) Format(disk); if(deep) MakeDeep(disk); if(replay) MakeReplay(disk); string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,disk.Bytes);
+        var disk=new Image(); if(damaged) PrepareDamagedAnchor(disk); else if(!format) Format(disk,allocationOnly); if(deep) MakeDeep(disk); if(replay) MakeReplay(disk); string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,disk.Bytes);
         var hook=new Storage(!(format&&owners)); using var machine=new LightweightA500Machine(new() { CpuModel=M68kCpuModel.M68000,ChipRamBytes=512*1024,FastRamBytes=0,SlowRamBytes=0,
             FloppyDriveCount=1,Hardfiles=[new(0,media,readOnly:false){ExposeBootNode=false,IoHook=hook}] });
         machine.LoadKickstart(File.ReadAllBytes(romPath!)); machine.MountAdf(0,boot); machine.SetDriveWriteProtected(0,true); machine.Reset();
         var sampler=new StackSampler(machine); uint control=0,pointer=0; int octets=0; bool done=false,failed=false;
         machine.ParallelDataWritten+=(value,_,_)=>
         {
-            if(octets!=0) { pointer=(pointer<<8)|value; if(--octets==0) { control=pointer; sampler.Control=control; BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(machine.ChipRam).Span.Slice((int)control+60),(deep?1u:0)|(replay?2u:0)|(diagnostic?4u:0)|(format?8u:0)|(owners?16u:0)|(damaged?32u:0)|(dma?64u:0)); } return; }
+            if(octets!=0) { pointer=(pointer<<8)|value; if(--octets==0) { control=pointer; sampler.Control=control; BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(machine.ChipRam).Span.Slice((int)control+60),(deep?1u:0)|(replay?2u:0)|(diagnostic?4u:0)|(format?8u:0)|(owners?16u:0)|(damaged?32u:0)|(dma?64u:0)|(allocationOnly?128u:0)); } return; }
             if(value==200) { octets=4; pointer=0; }
             if(value==224) { sampler.Code=Read(machine,control+32); sampler.Startup=true; }
             if(value==225) sampler.Startup=false;
@@ -58,6 +60,11 @@ public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         // Allow slower hosts to execute the remaining bounded frames. A stuck
         // handler still fails the unchanged emulated-frame/stack/memory gates.
         int frameLimit=deep?180000:120000,minutes=deep?30:8;
+#if DEBUG
+        // Keep the guest-frame and allocation checks while allowing the
+        // unoptimized emulator to complete the focused workload.
+        if(allocationOnly) minutes=30;
+#endif
         if(diagnostic) { frameLimit=10000; minutes=2; }
         var watch=Stopwatch.StartNew();
         for(int frame=0;frame<frameLimit&&!done&&!failed&&watch.Elapsed<TimeSpan.FromMinutes(minutes);frame++) sampler.Frame();
@@ -65,7 +72,7 @@ public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         if(!done||failed) File.WriteAllBytes(Path.Combine(root,"failed-chipram.bin"),machine.ChipRam.ToArray());
         uint extraDmaBytes=dma?Read(machine,control+1880):0,arenaBytes=CpxArena.Bytes(4096);
         uint diagnosticArena=control==0?0:Read(machine,control);
-        var receipt=new { Passed=done&&!failed,AsyncDiagnosticOnly=diagnostic,PartialPacketCoverage=true,MaximumDepthFixture=deep,CommittedJournalReplay=replay,ChipRam=512*1024,FastRam=0,SlowRam=0,Cpu="MC68000",Stage=stage,DosError=error,
+        var receipt=new { Passed=done&&!failed,AsyncDiagnosticOnly=diagnostic,AllocationOnly=allocationOnly,PartialPacketCoverage=true,MaximumDepthFixture=deep,CommittedJournalReplay=replay,ChipRam=512*1024,FastRam=0,SlowRam=0,Cpu="MC68000",Stage=stage,DosError=error,
             Substage=control==0?0:Read(machine,control+28),DiagnosticArena=diagnosticArena,
             TimerWords=diagnosticArena==0||done&&!failed?[]:Enumerable.Range(0,52).Select(n=>Read(machine,diagnosticArena+2816+(uint)n*4)).ToArray(),
             WaitWords=diagnosticArena==0||done&&!failed?[]:Enumerable.Range(0,16).Select(n=>Read(machine,diagnosticArena+CpxArena.Scratch+6*Read(machine,diagnosticArena+12)+CpxArena.IndexBytes+14336+(uint)n*4)).ToArray(),
@@ -88,21 +95,21 @@ public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         if(dma) { Assert.Equal(8192u,extraDmaBytes); Assert.Equal(0u,Read(machine,control+1884)&4095u); }
         Assert.Equal(4096u,sampler.Upper-sampler.Lower); Assert.InRange(sampler.Peak,1u,4096u); Assert.True(sampler.GuardIntact);
         Assert.InRange(sampler.StartupPeak,1u,sampler.Peak); Assert.InRange(sampler.ShutdownPeak,1u,sampler.Peak);
-        if(!diagnostic) Assert.All(sampler.UnsupportedPeak,peak=>Assert.InRange(peak,1u,4096u));
+        if(!diagnostic&&!allocationOnly) Assert.All(sampler.UnsupportedPeak,peak=>Assert.InRange(peak,1u,4096u));
         if(owners) Assert.InRange(sampler.ManualTrimPeak,1u,4096u);
         if(owners&&!format) { Assert.InRange(sampler.OwnerPeak,1u,4096u); Assert.InRange(sampler.NewReadLinkPeak,1u,4096u); }
         else if(damaged) Assert.InRange(sampler.MinimumFree,1u,524288u);
         else if(format) Assert.InRange(sampler.VolumePeak,1u,4096u);
         else {
         Assert.InRange(sampler.RecordPeak,1u,4096u); Assert.InRange(sampler.NotifyPeak,1u,4096u);
-        Assert.InRange(sampler.InhibitPeak,1u,4096u); Assert.InRange(sampler.MediaPeak,1u,4096u);
+        if(!allocationOnly) { Assert.InRange(sampler.InhibitPeak,1u,4096u); Assert.InRange(sampler.MediaPeak,1u,4096u); }
         if(!diagnostic) Assert.InRange(sampler.ExAllPeak,1u,4096u); }
-        Assert.True(hook.Reads>0&&hook.Writes>0&&hook.Flushes>=(damaged?1:7));
+        Assert.True(hook.Reads>0&&hook.Writes>0&&hook.Flushes>=(damaged||allocationOnly?1:7));
         uint manual=owners?Read(machine,control+1800):0;
         if(owners&&!format) Assert.True(manual>0);
-        if(!damaged) Assert.Equal(hook.SupportsDiscard?1+(int)manual:0,hook.Discards);
+        if(!damaged&&!allocationOnly) Assert.Equal(hook.SupportsDiscard?1+(int)manual:0,hook.Discards);
         machine.Dispose(); // Release the host hardfile handle before independent reopening.
-        if(damaged) VerifyDamagedAnchor(File.ReadAllBytes(media)); else if(owners&&!format) VerifyOwners(File.ReadAllBytes(media)); else if(format) VerifyFormat(File.ReadAllBytes(media)); else if(!diagnostic) Verify(File.ReadAllBytes(media),deep);
+        if(damaged) VerifyDamagedAnchor(File.ReadAllBytes(media)); else if(owners&&!format) VerifyOwners(File.ReadAllBytes(media)); else if(format) VerifyFormat(File.ReadAllBytes(media)); else if(allocationOnly) new Cpx4Volume<Image>(new Image{Bytes=File.ReadAllBytes(media)},new byte[36864]).Check(); else if(!diagnostic) Verify(File.ReadAllBytes(media),deep);
         Assert.Equal(build.HunkSha256,ValidateBuild(repo,handler).HunkSha256);
         File.WriteAllText(Path.Combine(root,"qualification.json"),json);
     }
@@ -111,7 +118,8 @@ public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
     public System.Threading.Tasks.Task NativeHandlerExAllAndAsyncOperationsAvoidExecAllocation(bool unused)
     {
         Assert.False(unused);
-        return ActualHunkBootsWith512KiBAndFourKiBTaskStack(false,false,false,false,false,false);
+        Assert.NotEqual("1",Environment.GetEnvironmentVariable("COPPERCPX_ASYNC_DIAGNOSTIC"));
+        return RunBoot(false,false,false,false,false,false,true);
     }
     private static void PrepareDamagedAnchor(Image image)
     {
@@ -165,10 +173,10 @@ public class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
     private static string FindRoot()
     { string? p=AppContext.BaseDirectory; while(p!=null&&!File.Exists(Path.Combine(p,"CopperFS.slnx"))) p=Path.GetDirectoryName(p); return p??throw new InvalidOperationException("Repository not found."); }
     private static uint Read(LightweightA500Machine machine,uint p)=>BinaryPrimitives.ReadUInt32BigEndian(machine.ChipRam.Span.Slice((int)p,4));
-    private static void Format(Image disk)
+    private static void Format(Image disk,bool allocationOnly = false)
     {
         Cpx4Volume<Image>.Format(disk,512,new byte[36864],12345); var v=new Cpx4Volume<Image>(disk,new byte[36864]);
-        v.Create("Inline"u8,out _); v.Create("Payload"u8,out ulong id); byte[] data=Enumerable.Range(0,4096).Select(n=>(byte)(n*7+11)).ToArray(); v.Write(id,0,data,out _);
+        v.Create("Inline"u8,out ulong id); if(allocationOnly) v.SetComment(id,"native comment"u8); v.Create("Payload"u8,out id); byte[] data=Enumerable.Range(0,4096).Select(n=>(byte)(n*7+11)).ToArray(); v.Write(id,0,data,out _);
         v.Create("Wide"u8,out id); v.Write(id,0x100000009UL,new byte[]{0x5a},out _);
         v.Create("Extents"u8,out id);
         for(uint n=0;n<6;n++) v.Write(id,n*1024,new byte[512],out _);
