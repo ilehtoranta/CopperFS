@@ -19,11 +19,35 @@ public sealed class SequentialHandlerTheoryAttribute : TheoryAttribute
     }
 }
 
+public sealed class FfsAllocationTheoryAttribute : TheoryAttribute
+{
+    public FfsAllocationTheoryAttribute()
+    {
+        if (!File.Exists(Environment.GetEnvironmentVariable("COPPERFS_FFS_HANDLER")) ||
+            !File.Exists(Environment.GetEnvironmentVariable("COPPERFS_FFS_68020_HANDLER")))
+            Skip = "Set COPPERFS_FFS_HANDLER and COPPERFS_FFS_68020_HANDLER to freshly built handlers with maps.";
+    }
+}
+
 // Synthetic media is authored here from the maintained format layouts. The
 // CopperStart instruction replay bus executes the actual standalone HUNK;
 // Exec copy/device calls are service doubles, not full-ROM qualification.
 public sealed class SequentialReadHandlerTests
 {
+    [FfsAllocationTheory]
+    [InlineData(false)] [InlineData(true)]
+    public void FfsStreamingReadsDoNotCallExecAllocators(bool m68020)
+    {
+        var path = Environment.GetEnvironmentVariable(m68020 ? "COPPERFS_FFS_68020_HANDLER" : "COPPERFS_FFS_HANDLER")!;
+        var f = new Fixture(false, m68020, cacheBlocks: 128, handlerPath: path);
+        f.EnableFfsSequentialStream();
+        f.ForbidExecAllocations();
+        f.Read(0, 8192);
+        f.Read(0, 8192);
+        f.Read(8192, 8192);
+        f.AssertAllocationTrapWorks();
+    }
+
     [SequentialHandlerTheory]
     [InlineData(false)] [InlineData(true)]
     public void FfsSustainedFourKiBReadsDrainWarmupThenReadDirectAndRestoreSmallReadAhead(bool m68020)
@@ -1444,10 +1468,10 @@ public sealed class SequentialReadHandlerTests
         private readonly M68kCpuModel model;
         private Action<M68kCpuState>? scsiInquiry;
 
-        internal Fixture(bool sfs2, bool m68020, bool wide = false, uint cacheBlocks = 1, bool bypass = false)
+        internal Fixture(bool sfs2, bool m68020, bool wide = false, uint cacheBlocks = 1, bool bypass = false, string? handlerPath = null)
         {
             this.sfs2 = sfs2; this.wide = wide; model = m68020 ? M68kCpuModel.M68020 : M68kCpuModel.M68000;
-            var path = Environment.GetEnvironmentVariable(sfs2 ? "COPPERFS_SFS2_HANDLER" : "COPPERFS_FFS_HANDLER")!;
+            var path = handlerPath ?? Environment.GetEnvironmentVariable(sfs2 ? "COPPERFS_SFS2_HANDLER" : "COPPERFS_FFS_HANDLER")!;
             map = System.IO.File.ReadAllText(path + ".map");
             Bus = NativeParityBus.LoadHunk(System.IO.File.ReadAllBytes(path), Load);
             var execSlot = Regex.Match(map, @"(?m)^([0-9A-Fa-f]{8})\s+4\s+_ExecBase\r?$");
@@ -1506,6 +1530,20 @@ public sealed class SequentialReadHandlerTests
 
         internal int FileAllocations { get; private set; }
         internal int FileFrees { get; private set; }
+
+        internal void ForbidExecAllocations()
+        {
+            foreach (var lvo in new uint[] { 198, 204, 222, 654, 666, 684, 696, 708, 870, 894, 936, 942, 972, 984 })
+                Bus.RegisterGateway(Exec - lvo, _ => throw new InvalidOperationException($"Unexpected Exec allocation at -{lvo}."));
+        }
+
+        internal void AssertAllocationTrapWorks()
+        {
+            using var cpu = M68kCoreFactory.Default.Create(model, Bus);
+            cpu.Reset(Exec - 198, 0xF00000);
+            var error = Assert.Throws<InvalidOperationException>(() => cpu.ExecuteInstruction());
+            Assert.Contains("-198", error.Message);
+        }
 
         internal void EnableFixedDiskOpens(uint cacheSlots = 0)
         {

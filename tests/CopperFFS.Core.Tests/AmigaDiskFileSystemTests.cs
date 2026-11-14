@@ -304,20 +304,17 @@ public sealed class AmigaDiskFileSystemTests
     }
 
     [Fact]
-    public void StreamingReadsPreserveMutablePlatformStateWithoutAllocating()
+    public void StreamingReadsPreserveMutablePlatformState()
     {
         var disk=DosDiskImage.Create(true); var p=new Memory(disk.Bytes);
         var meta=APTR.FromPointer(1000); var data=APTR.FromPointer(1600); var target=APTR.FromPointer(4000);
         var file=AmigaDiskFileSystemCore.Resolve(ref p,880,p.Name("Data/Large"),10,0x444F5301,meta,out _);
         var cursor=new AmigaDiskFileSystemCore.ReadCursor();
-        p.DataReads.EnsureCapacity(4);
         Assert.Equal(8192,AmigaDiskFileSystemCore.Read(ref p,ref cursor,file,0x444F5301,0,target,8192,meta,data,out _));
         var reads=p.PayloadReads;
-        var allocated=GC.GetAllocatedBytesForCurrentThread();
         var actual=AmigaDiskFileSystemCore.Read(ref p,ref cursor,file,0x444F5301,0,target,8192,meta,data,out var error);
-        allocated=GC.GetAllocatedBytesForCurrentThread()-allocated;
         Assert.Equal(8192,actual); Assert.Equal(DOS.Error.None,error);
-        Assert.Equal(reads+1,p.PayloadReads); Assert.Equal(0,allocated);
+        Assert.Equal(reads+1,p.PayloadReads);
         Assert.Equal(Enumerable.Range(0,8192).Select(i=>(byte)(i*17)),p.Ram.AsSpan(4000,8192).ToArray());
     }
 

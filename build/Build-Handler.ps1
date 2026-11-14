@@ -97,6 +97,11 @@ foreach ($assembly in @('CopperSFS.Core.dll', 'CopperSharp.Sdk.Amiga.dll',
 }
 dotnet @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler compilation failed.' }
+$report = Get-Content -LiteralPath (Join-Path $ArtifactRoot 'CopperSFS.compatibility.json') -Raw | ConvertFrom-Json
+if ($report.IsCompatible -ne $true -or !$report.PSObject.Properties['ManagedAllocationSites'] -or
+    $null -eq $report.ManagedAllocationSites -or @($report.ManagedAllocationSites).Count -ne 0) {
+    throw 'Standalone handler must be compatible and contain no reachable managed allocation sites.'
+}
 $map = "$output.map"
 $requiredMethods = @('NativeSfsExtension::Entry', 'AmigaSmartFileSystemWriteCore::Write', 'AmigaSmartFileSystemWriteCore::Recover')
 if ($Sfs2) {

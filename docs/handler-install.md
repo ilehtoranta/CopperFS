@@ -43,7 +43,10 @@ so use these hashes rather than AmigaDOS `Version` to identify this preview.
   range, track geometry, block size, transfer limit and DMA mask.
 - A writable block device that honors flush barriers and atomic sector
   writes. A partition extending beyond 4 GiB additionally needs working
-  TD64 or NSD 64-bit I/O; native large-device operation remains unqualified.
+  TD64 64-bit I/O; NSD is not supported. Native large-device operation remains
+  unqualified. Current development handlers check TD64 with a read-only request
+  before mounting a partition extending beyond 4 GiB and reject it if the request
+  fails. The published preview packages predate this admission check.
 
 ## Upgrade or change durability policy
 

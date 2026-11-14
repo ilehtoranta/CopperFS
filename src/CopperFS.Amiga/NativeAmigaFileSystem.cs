@@ -319,6 +319,8 @@ public static partial class NativeAmigaFileSystem
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.IoBufferOffset, cache); APTR.WriteUInt32(s, NativeFileSystemStateCodec.CacheOffset, cache);
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.CacheBlocksOffset, cacheBlocks); APTR.WriteUInt32(s, NativeFileSystemStateCodec.CacheBytesOffset, cacheBytes);
         if (cache == 0) { Destroy(s); return APTR.Null; }
+        if (!AmigaFileSystemDeviceCore.AdmitPartition(ref p, geometry, APTR.FromPointer(cache)))
+        { Destroy(s); return APTR.Null; }
         var type = 0u;
         if (!AmigaDiskFileSystemCore.Mount(ref p, Metadata(s), out type))
         {

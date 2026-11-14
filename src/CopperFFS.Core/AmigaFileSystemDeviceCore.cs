@@ -10,6 +10,19 @@ public interface IAmigaFileSystemDevicePlatform
 /// <summary>Translate partition keys to device offsets; split transfers without wrapping at 4 GiB.</summary>
 public static class AmigaFileSystemDeviceCore
 {
+    // A wide partition must be admitted before any filesystem mount or recovery.
+    // Probe with a read only, using the mount's DMA-safe scratch buffer.
+    public static bool AdmitPartition<T>(ref T p, AmigaVolumeGeometry geometry, APTR scratch)
+        where T : struct, IAmigaFileSystemDevicePlatform
+    {
+        var bytes = (ulong)geometry.BlockCount * geometry.BlockBytes;
+        if (bytes > ulong.MaxValue - geometry.StartByte) return false;
+        if (geometry.StartByte + bytes <= 0x100000000UL) return true;
+        if (geometry.SectorBytes == 0 || geometry.MaxTransfer < geometry.SectorBytes ||
+            bytes < geometry.SectorBytes || scratch.IsNull) return false;
+        return p.Transfer(24, geometry.StartByte, geometry.SectorBytes, scratch);
+    }
+
     public static bool Transfer<T>(ref T p, AmigaVolumeGeometry geometry, bool write,
         uint block, uint blocks, APTR buffer) where T : struct, IAmigaFileSystemDevicePlatform
     {
