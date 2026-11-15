@@ -4,6 +4,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants Condition="'$(CopperFsHandler)' == 'Cpx4'">$(DefineConstants);COPPERFS_CPX4</DefineConstants>
     <DefineConstants Condition="'$(CopperFsAutoTrim)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsFfsOnly)' == 'true' and '$(CopperFsFfsTrimLayoutControl)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM;COPPERFS_FFS_TRIM_LAYOUT_CONTROL</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsFfsOnly)' == 'true' and '$(CopperFsFfsTrimLayoutControl)' == 'true' and '$(CopperFsAutoTrim)' != 'true'">$(DefineConstants);COPPERFS_FFS_TRIM_POLICY_OFF</DefineConstants>
     <DefineConstants Condition="'$(CopperFsFfsIndexKiB)' == '64'">$(DefineConstants);COPPERFS_FFS_INDEX64</DefineConstants>
     <DefineConstants Condition="'$(CopperFsFfsIndexKiB)' == '1024'">$(DefineConstants);COPPERFS_FFS_INDEX1024</DefineConstants>
     <!-- Empty keeps the shared source consumer and host tests multi-format. -->

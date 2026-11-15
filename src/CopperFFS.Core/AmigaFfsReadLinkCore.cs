@@ -46,9 +46,8 @@ public static class AmigaFfsReadLinkCore
             while (offset < length && p.ReadUInt8(path, (int)offset) != '/') offset++;
             var count = offset - start;
             if (count > 30) { error = DOS.Error.InvalidComponentName; return -1; }
-            uint hash = count;
-            for (uint i = 0; i < count; i++) hash = (hash * 13 + Upper(p.ReadUInt8(path, (int)(start + i)), dosType)) & 0x7FF;
-            var key = p.ReadUInt32(metadata, 24 + (int)AmigaGeometryMath.Remainder(hash, geometry.TableEntries) * 4);
+            var key = p.ReadUInt32(metadata, 24 + (int)AmigaDiskFileSystemCore.NameBucket(ref p, APTR.FromPointer(path.Raw + start),
+                count, dosType, geometry.TableEntries) * 4);
             var matched = false;
             for (uint visited = 0; key != 0 && visited < geometry.BlockCount; visited++)
             {

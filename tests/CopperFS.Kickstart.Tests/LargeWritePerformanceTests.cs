@@ -5,6 +5,22 @@ namespace CopperFS.Kickstart.Tests;
 
 public sealed partial class OriginalHandlerCorrectnessTests
 {
+    [PerformanceProfileTheory]
+    [InlineData("ffs")] [InlineData("ofs")]
+    public async System.Threading.Tasks.Task ProfileLargeClassicWrites(string profile)
+    {
+        var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
+        var pair = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!.Profiles.Single(p => p.Name == profile);
+        var initial = CopperStart.Floppy.Native.Tests.DosDiskImage.Create(profile == "ffs",
+            includeLargeFile: false, blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3]).Bytes;
+        var root = Path.Combine(Path.GetDirectoryName(path)!, "large-write-profile", profile);
+        var disk = await Run(root, profile, "candidate", pair.Candidate, initial, true,
+            profile == "ffs" ? "LargeWriteProbe::Ffs" : "LargeWriteProbe::Ofs");
+        Assert.True(File.Exists(Path.Combine(root, "candidate", "grow-profile.json")));
+        var file = DosImageInspection.Check(disk, true, false).Files.Single(f => f.Path == "/Large");
+        Assert.Equal(Hash(Enumerable.Repeat((byte)0xD4, 98304).ToArray()), file.Sha256);
+    }
+
     [HandlerSizePerformanceTheory]
     [InlineData("ofs", false)] [InlineData("ffs", false)] [InlineData("sfs", false)]
     [InlineData("ofs", true)] [InlineData("ffs", true)]

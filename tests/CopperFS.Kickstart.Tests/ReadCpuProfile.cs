@@ -35,16 +35,16 @@ internal sealed class ReadCpuProfile
     private uint commitEntry, journalPageEntry, journalBlockEntry, pressureFlushEntry;
     private uint cacheReturn, cacheReturnStack;
     private int cacheLookups, cacheHits;
-    private readonly List<object> interrupts = [];
-    private readonly Dictionary<(uint Task, int Mask), long> romCycles = [];
     private long start;
     private string? phase;
     private string? callDirectory;
     private string callStage = "setup";
+    private string serviceStage = "setup";
     private bool stopCalls;
     private uint callReturn, callReturnStack;
     private int callSequence;
     private Func<object>? callSnapshot;
+    private Action<string, long>? recordService;
     private object? snapshotStart;
     private readonly Dictionary<uint, string> watchedCalls = [];
     private readonly Dictionary<uint, string> methodEntries = [];
@@ -70,14 +70,15 @@ internal sealed class ReadCpuProfile
 
     // Method-entry/return scopes exclude the five-second timer wait and guest
     // workload. Nested inclusive costs include OS calls and must not be summed.
-    internal void ArmTrimCalls(string directory, Func<object> snapshot)
+    internal void ArmTrimCalls(string directory, Func<object> snapshot, Action<string, long> service)
     {
         if (codeBase == 0) LocateCode();
-        callDirectory = directory; callSnapshot = snapshot; stopCalls = false;
+        callDirectory = directory; callSnapshot = snapshot; recordService = service; stopCalls = false;
+        var classicTurn = symbols.Any(s => s.Name.EndsWith("NativeAmigaFileSystem::ServiceClassicTrimTurn", StringComparison.Ordinal));
         foreach (var method in symbols) methodEntries.TryAdd(codeBase + method.Offset, method.Name);
         foreach (var (kind, name) in new[] {
             ("initialization", "NativeAutomaticTrim::Initialize"),
-            ("service", "NativeAutomaticTrim::Service"),
+            ("service", classicTurn ? "NativeAmigaFileSystem::ServiceClassicTrimTurn" : "NativeAutomaticTrim::Service"),
             ("tracking", "NativeFileSystemPlatform::ObserveFreedRange"),
             ("flush", "NativeAmigaFileSystem::FlushSmart") })
         {
@@ -95,9 +96,9 @@ internal sealed class ReadCpuProfile
         if (phase == null) callDirectory = null;
     }
 
-    internal void ObserveRead(ushort command)
+    internal void ObserveTransfer(ushort command)
     {
-        if (phase == null || command is not (2 or 24)) return;
+        if (phase == null || command is not (2 or 3 or 24 or 25)) return;
         // CopperHDF's guest BeginIO gateway passes the IORequest in A1.
         var request = core.State.A[1];
         Assert.Equal(command, ReadWord(request + 0x1C));
@@ -123,12 +124,13 @@ internal sealed class ReadCpuProfile
             s.Name.EndsWith("::" + method, StringComparison.Ordinal)).Offset;
         commitEntry = Entry("CommitTrst"); journalPageEntry = Entry("TrstWritePage");
         journalBlockEntry = Entry("TrstWriteBlock"); pressureFlushEntry = Entry("FlushNativeTrstGroup");
-        activeCalls.Clear(); inclusiveCalls.Clear(); interrupts.Clear(); romCycles.Clear();
+        activeCalls.Clear(); inclusiveCalls.Clear();
     }
 
     internal void End(string directory, long cycle)
     {
         if (phase == null) return;
+        if (phase.EndsWith("-service", StringComparison.Ordinal)) recordService?.Invoke(serviceStage, cycle - start);
         var rows = counts.Select(p => new
         {
             Pc = p.Key, Offset = unchecked(p.Key - codeBase), Opcode = ReadWord(p.Key), p.Value.Cycles, p.Value.Instructions,
@@ -144,9 +146,6 @@ internal sealed class ReadCpuProfile
             InclusiveMethods = inclusiveCalls.Select(p => new { Name = p.Key, p.Value.Cycles, p.Value.Calls }).OrderByDescending(p => p.Cycles),
             Methods = rows.GroupBy(r => r.Name).Select(g => new { Name = g.Key, Cycles = g.Sum(r => r.Cycles), Instructions = g.Sum(r => r.Instructions) }).OrderByDescending(r => r.Cycles),
             Regions = rows.GroupBy(r => r.Region).Select(g => new { Region = g.Key, Cycles = g.Sum(r => r.Cycles), Instructions = g.Sum(r => r.Instructions) }),
-            Interrupts = interrupts,
-            RomExecution = romCycles.Select(r => new { Task = r.Key.Task, Name = TaskName(r.Key.Task),
-                InterruptMask = r.Key.Mask, Cycles = r.Value }),
             RecognizedMoveBytesToCaller = recognizedMoveBytes, IoRequests = ioRequests, CopyEntries = copyEntries,
             TransactionCalls = transactionCalls, BlockTransfers = blockTransfers, DeviceCalls = deviceCalls,
             CacheIndexLookups = cacheLookups, CacheIndexHits = cacheHits,
@@ -250,29 +249,6 @@ internal sealed class ReadCpuProfile
         if (address >= callerBuffer && address - callerBuffer < callerBytes && width <= callerBytes - (address - callerBuffer)) recognizedMoveBytes += width;
     }
 
-    private string TaskName(uint task)
-    {
-        if (task == 0 || Memory(task, 14).Length != 14) return "";
-        var name = ReadLong(task + 10); // Exec Node.ln_Name
-        var text = new System.Text.StringBuilder();
-        for (var i = 0u; i < 80; i++)
-        {
-            var c = Memory(name + i, 1);
-            if (c.IsEmpty || c[0] == 0) break;
-            text.Append((char)c[0]);
-        }
-        return text.ToString();
-    }
-
-    private bool DispatchInterrupt()
-    {
-        if (!dispatch()) return false;
-        if (phase != null)
-            interrupts.Add(new { At = machine.Cpu.Cycles - start, Entry = machine.Cpu.ProgramCounter,
-                Mask = (machine.Cpu.StatusRegister >> 8) & 7 });
-        return true;
-    }
-
     internal void ExecuteFrame()
     {
         var target = machine.CompletedFrames + 1; var cpu = machine.Cpu;
@@ -283,12 +259,12 @@ internal sealed class ReadCpuProfile
             if (cpu.Stopped)
             {
                 var wake = ((cpu.StatusRegister >> 8) & 7) >= 6 ? end : clamp(end);
-                advance(wake); cpu.Cycles = Math.Max(cpu.Cycles, wake); DispatchInterrupt(); continue;
+                advance(wake); cpu.Cycles = Math.Max(cpu.Cycles, wake); dispatch(); continue;
             }
-            if (DispatchInterrupt()) continue;
+            if (dispatch()) continue;
             while (cpu.Cycles < end)
             {
-                if (DispatchInterrupt()) continue;
+                if (dispatch()) continue;
                 if (cpu.Halted || cpu.Stopped) break;
                 var pc = cpu.ProgramCounter; var before = cpu.Cycles;
                 if (callDirectory != null)
@@ -305,6 +281,7 @@ internal sealed class ReadCpuProfile
                     }
                     if (phase == null && watchedCalls.TryGetValue(pc, out var kind))
                     {
+                        serviceStage = callStage;
                         Begin($"{callStage}-{++callSequence:D4}-{kind}", before);
                         snapshotStart = callSnapshot?.Invoke();
                         callReturn = ReadLong(core.State.A[7]); callReturnStack = core.State.A[7] + 4;
@@ -327,10 +304,6 @@ internal sealed class ReadCpuProfile
                     {
                         activeCalls.Pop(); var total = inclusiveCalls.GetValueOrDefault(frame.Name);
                         inclusiveCalls[frame.Name] = (total.Cycles + before - frame.Start, total.Calls + 1);
-                        if (phase == "overwrite" && (frame.Name.Contains("::RelocateOverwrite<") ||
-                            activeCalls.Any(f => f.Name.Contains("::RelocateOverwrite<"))))
-                            transactionCalls.Add(new { Method = frame.Name, Start = frame.Start - start, Cycles = before - frame.Start,
-                                Caller = activeCalls.TryPeek(out var parentFrame) ? parentFrame.Name : null });
                         if (frame.Name == "CopperStart.Dos.NativeFileSystemPlatform::Transfer")
                             deviceCalls.Add(new { Start = frame.Start - start, Cycles = before - frame.Start,
                                 Caller = activeCalls.TryPeek(out var caller) ? caller.Name : null });
@@ -366,15 +339,10 @@ internal sealed class ReadCpuProfile
                 }
                 if (measuredPhase != null && pc == copyEntry && copyEntries.Count < 4096)
                     copyEntries.Add(new { Cycle = before, Source = core.State.A[0], Destination = core.State.A[1], Bytes = core.State.D[0] });
-                // Attribute ROM instructions to the task and interrupt mask at entry.
-                // ExecBase.ThisTask is at byte 276 in the Kickstart Exec ABI.
-                var measureRom = measuredPhase != null && pc >= 0x1000000u - (uint)rom.Length && pc < 0x1000000u;
-                var context = measureRom ? (ReadLong(ReadLong(4) + 276), (cpu.StatusRegister >> 8) & 7) : default;
                 core.ExecuteInstruction();
                 if (cpu.Cycles <= before) throw new InvalidOperationException("CPU clock did not advance.");
                 if (measuredPhase != null && measuredPhase == phase)
                 {
-                    if (measureRom) romCycles[context] = romCycles.GetValueOrDefault(context) + cpu.Cycles - before;
                     var value = counts.GetValueOrDefault(pc);
                     counts[pc] = (value.Cycles + cpu.Cycles - before, value.Instructions + 1);
                     if (pc >= blockCopyEntry && pc - blockCopyEntry < blockCopyBytes)

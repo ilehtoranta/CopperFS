@@ -9,8 +9,14 @@ internal readonly struct AmigaFfsGeometry
     private AmigaFfsGeometry(uint blocks, uint bytes, uint reserved)
     {
         BlockCount = blocks; BlockBytes = bytes; ReservedBlocks = reserved;
-        RootBlock = (blocks - 1) / 2 + reserved / 2 +
-            ((blocks - 1) % 2 + reserved % 2) / 2;
+        RootBlock = RootFor(blocks, reserved);
+    }
+
+    internal static uint RootFor(uint blocks, uint reserved)
+    {
+        // Midpoint of the first and last usable block, without overflowing.
+        var last = blocks - 1;
+        return (last & reserved) + ((last ^ reserved) >> 1);
     }
 
     public static AmigaFfsGeometry Read<T>(ref T p) where T : struct, IAmigaFileSystemPlatform

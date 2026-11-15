@@ -1,71 +1,136 @@
 # Deferred automatic TRIM (experimental)
 
-Build with `build/Build-Handler.ps1 -AutoTrim`, adding `-Ffs` for OFS/FFS,
-`-Sfs2` for SFS2 CSUN, or `-Sfs2 -Sfs2TrstWrites` for SFS2 TRST. The option
-remains off by default. Use a separate artifact directory per profile.
+Automatic TRIM remains disabled by default. Build with
+`build/Build-Handler.ps1 -AutoTrim`, adding `-Ffs` for OFS/FFS, no format
+switch for SFS, `-Sfs2 -Sfs2CsunWrites` for SFS2 CSUN, or `-Sfs2` for SFS2
+TRST. Use a separate artifact directory per profile. Manual CopperTrim retains
+its existing single-range transport, maintenance scan and version-1 packet ABI.
 
-A successful DeleteObject packet schedules maintenance on the handler's
-five-second timer. Another deletion restarts the cursor. Recycled SFS files
-remain allocated and are preserved. Truncation alone does not schedule a pass.
+The [OFS/FFS mount index qualification](ffs-index-performance.md) covers the
+indexed CopperFFS handler. The [metadata write comparison](metadata-write-qualification-2026-11-12.md)
+records the preceding cross-family measurements.
+The candidate still fails original-handler parity, so the default remains off.
 
-Each turn discards within a 4,096-filesystem-block window. Windows overlap for
-physical-sector alignment. The scanner visits only bitmap pages intersecting
-that window. Mount ownership remains exclusive until synchronous UNMAP completes;
-allocations cannot interleave with a scanned range. Device requests can still
-stall foreground packets. This is deferred maintenance, not an idle-priority or
-asynchronous device worker.
+SFS2 TRST also has an opt-in `-GroupedSfs2Trst` profile. Its
+[cross-packet grouping qualification](sfs2-group-qualification-2026-11-13.md)
+documents commit boundaries and the original-SFS comparison. Pending groups
+block automatic discard; manual TRIM commits them before scanning allocation.
 
-## Validation and durability
+## Tracking and memory
 
-The first window recovers outstanding transactions, checkpoints acknowledged
-changes, completes the durability barrier and validates the full allocation
-layout. A caller-owned four-byte certificate retains that global validation
-while the mount remains unchanged. Subsequent windows still prepare fresh work
-and checksum the current bitmap pages; they retain no lists of freed addresses.
-They reuse the completed barrier when no writes or recovery have intervened.
+Unallocation accumulates consecutive blocks in the freeing operation's local
+state before notifying the mount. The callback extends the
+last adjacent/overlapping hint or appends to a fixed 128-entry queue. It does
+not search the queue, force a commit or send a disk command. The first pending
+FFS range schedules the five-second timer.
+Overflow drops incoming hints. SFS recycled files remain allocated; their data
+is eligible only when actually unallocated. There is no allocation-side
+cancellation and no persistent discard log.
 
-The native adapter invalidates the certificate before normal, queued, overlay,
-retained, unpublished and raw device writes, including failed attempts. Pending
-buffered timer commits also invalidate it before being attempted. Geometry
-changes, inhibit/remount and teardown reset maintenance and validation state.
-A restart begins with a cleared certificate. Reallocation between windows is
-therefore checked against the current allocation map, and pending changes must
-be made durable before newly free space can be discarded.
+An opt-in mount uses up to 2,148 bytes of dedicated TRIM storage.
 
-Portable callers opting into the certificate MUST implement that same lifetime
-contract. Null storage retains uncached full validation and barriers. This is
-explicit caller-owned scratch, independent of all filesystem work buffers.
-The manual command and its version-1 packet ABI are unchanged.
+| Storage | Bytes |
+| --- | ---: |
+| 128 range pairs and queue count | 1,028 |
+| Prepared batch, layout cursor, input/output/remainder ranges | 512 |
+| Scheduling, capabilities and counters | 64 |
+| Generation-bound SFS root scalars | 32 |
+| DMA-compatible SCSI command buffer | 512 |
+| **Total** | **2,148** |
 
-The first full preflight can still be expensive on large volumes; in particular,
-FFS checks bitmap-pointer aliases. The window bounds discard volume, not a hard
-latency limit. Cached validation does not replace a complete filesystem checker.
+The specialized CopperFFS handler places its 64-byte control record and a
+four-byte staging pointer in the unused SFS reservation area. Its 64, 256 and
+1024 KiB workspace builds each reserve the last 1,572 bytes for the queue,
+batch and root scalars. The first free initializes that storage. A mount that
+could not allocate the optional index requests those 1,572 bytes separately
+on its first free. The portable core receives only the index portion.
 
-## Devices and lifecycle
+The DMA command buffer adds 512 bytes on the first eligible CopperFFS service
+turn. Other handlers request it during automatic-TRIM initialization. Failure
+to allocate staging or the command buffer disables maintenance for the
+attachment. Timer resources are additional.
 
-The build adds 44 bytes to mount state and uses the existing temporary manual
-TRIM control buffer during service. There is no allocated free-range queue.
-Discovery still requires SCSI UNMAP through HD_SCSICMD. There is no ATA
-pass-through or inference from an SSD label. Unsupported discovery in the
-automatic FFS path no longer reads the boot block and evicts cached file data.
-Manual discovery keeps its existing format-check ordering.
+## Commit boundary and ownership
 
-Unsupported devices and failed passes suspend automatic TRIM without changing
-the delete result. Inhibit stops maintenance. Remount clears the suspension and
-certificate; a subsequent successful delete can schedule a new pass. Manual
-CopperTrim remains available independently.
+The sequence is **record hints → normal commit → validate allocation → one
+discard command → check waiting packets**. Foreground replies never execute
+automatic TRIM. A five-second timer establishes eligibility; ordinary SFS
+commit processing remains responsible for completing buffered changes.
 
-## Release gate
+Automatic collectors never recover a journal or commit a logical overlay.
+SFS/SFS2 require no pending overlay/checkpoint, a validated clean marker and a
+successful durability barrier. TRST publication alone is insufficient. FFS/OFS
+require valid allocation metadata and an idle-time durability barrier. A raw
+device `Flush()` cannot certify an unfinished filesystem transaction.
 
-The release performance gate is parity with original FFS 40.1 and
-SmartFilesystem 1.279, not parity with an earlier Copper build. The new original
-comparison rotates three trials, uses identical media and CPU settings, and
-allocates the Fast RAM payload before loading either handler. It includes an
-explicit filesystem ACTION_FLUSH in the mutation timing and verifies results.
-Internal before/after comparisons remain useful diagnostics.
+The explicit 512-byte batch context belongs to a mount and generation. In the
+specialized CopperFFS handler the first intervening packet, including a read,
+invalidates the prepared input. Subsequent packets see an empty batch. The
+other handlers check the pending context on each foreground operation.
+Recovery, inhibit, media/geometry reset and failed maintenance
+also invalidate it. Prepared root values are scalars, not borrowed cache
+pointers. Callers of the portable collectors must enforce this lifetime and
+only reuse Stage/RootsValid after their own successful validation.
 
-Automatic TRIM remains disabled. See [qualification and measurements](automatic-trim-qualification-2026-11-12.md)
-for the original-handler results, cached preflight costs and coverage limits.
-Physical devices, asynchronous controllers and actual hot-swapped media remain
-unqualified; emulator inhibit/remount checks are separate evidence. Neither
-packages nor ROMs are published by this work.
+Only bitmap words intersecting the selected hints are scanned. Checks include
+bitmap identity, checksum and permanent-metadata allocation/exclusions.
+Free-then-reallocate is safe because the current allocation state decides what
+can be discarded. Single-owner mount execution excludes mutation from final
+validation through device completion. Remainders are hints: allocation is
+checked again before the next command even if the generation has not changed.
+
+With a verified CopperFFS workspace, the collector looks up bitmap identities
+directly and checks the sorted permanent-block keys against the hints. It still
+reads and checks the affected bitmap before each command. Manual CopperTrim
+rebuilds the entire layout proof on a fresh invocation.
+
+Without a verified workspace FFS shares one pointer-layout walk across the batch, retains exact alias checks
+for touched bitmap pages and protects all layout keys. It yields after at most
+128 pointer entries per maintenance turn. The preliminary lookup of selected
+bitmap addresses uses one forward cursor and the same budget; root and bitmap
+self-allocation checks use addresses captured by the walk instead of starting
+new pointer-chain lookups. A foreground operation discards its
+partial context. Work therefore scales with pointer-layout size, but no
+unrelated bitmap contents or full-volume free-space totals are scanned.
+
+## Bounded idle processing
+
+The event loop services maintenance only when the packet port is empty. Each
+batch selects at most eight hints totalling 4,096 filesystem blocks, sorts and
+merges them, and issues at most one UNMAP before checking the port again.
+Subsequent idle turns continue immediately without waiting for a larger batch.
+The command limit is aggregate across all descriptors, not a limit per range.
+
+An optional batch-discard platform interface packs up to eight ranges into one
+UNMAP. Devices advertising one descriptor receive one range per command. Up
+to eight excess free fragments remain staged for revalidation; further
+fragmentation is dropped. Alignment rounds inward and never extends a discard
+into unchecked blocks. Splitting queued ranges preserves enough overlap to
+avoid losing aligned interior sectors at a batch boundary.
+
+Capabilities, including unsupported status, are cached for a media attachment.
+Inhibit/remount and geometry/media resets clear the cache. Query, discard or
+ordinary device-transfer failure suspends maintenance until remount. A partial discard invalidates all
+submitted cache ranges, since any subset may have completed. Pending recovery
+or failed commit also suspends automatic maintenance; normal recovery owns the
+repair. The filesystem operation that produced the hint remains unaffected.
+
+A crash loses optional reclamation. Existing free space without hints remains
+available to manual CopperTrim. Continuous foreground traffic can postpone
+maintenance indefinitely. CPU work and command count are bounded; a packet
+arriving during synchronous UNMAP still waits for that command's device latency.
+
+## Qualification and enablement
+
+The release gate is parity with original FFS 40.1 and SmartFilesystem 1.279,
+with CILica scalar replacement enabled and inlining disabled. Comparisons use
+identical media/CPU/packets, three rotated trials and controlled Fast or Chip
+RAM payload placement before either handler is loaded. Mutation timing includes
+an explicit filesystem ACTION_FLUSH. Separate measurements report initialization,
+tracking, deferred service, device commands and reclamation coverage.
+
+See the [current qualification report](deferred-trim-design-qualification-2026-11-12.md).
+Earlier [freed-range results](freed-range-trim-qualification-2026-11-12.md) and
+[cycle profiles](trim-cpu-profile-2026-11-12.md) are retained as historical
+baselines. Emulator tests do not qualify physical SSD/controller latency,
+real DMA behavior or hot replacement. No package or ROM is published here.

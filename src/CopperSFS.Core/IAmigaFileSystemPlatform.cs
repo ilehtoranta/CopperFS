@@ -36,6 +36,14 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
         view = APTR.Null;
         return false;
     }
+    /// <summary>Borrow a cached classic block with a verified zero-sum checksum.
+    /// The view expires at the next block access. A handled checksum failure
+    /// returns a null view. False requests an ordinary read and full validation.</summary>
+    bool TryBorrowCheckedClassicBlock(uint block, APTR scratch, APTR output, uint outputBytes, out APTR view)
+    {
+        view = APTR.Null;
+        return false;
+    }
     /// <summary>Optional copy of a retained, logically current SFS2 metadata block
     /// verified for type, block number and version-4 checksum. False requests the
     /// ordinary read and validation path.</summary>
@@ -145,6 +153,14 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity) { capacity = 0; return APTR.Null; }
     void ReleaseSfsJournalPages(APTR pages) { }
     bool WriteRetainedBlock(uint block, APTR source) => false;
+    // The caller has sealed the classic block's zero-sum checksum. Only the
+    // matching retained image may inherit that proof after successful I/O.
+    bool WriteSealedClassicBlock(uint block, APTR source) =>
+        SupportsRetainedBlockWrites ? WriteRetainedBlock(block, source) : WriteBlock(block, source);
+    // Patch an allocated FFS payload sector through a private DMA-safe cache
+    // slot. False requests the caller's ordinary read/modify/write path.
+    bool TryPatchClassicSector(uint key, uint offset, APTR source, uint length, out DOS.Error error)
+    { error = DOS.Error.None; return false; }
     /// <summary>Maximum adjacent TRST home images the platform can gather using
     /// existing storage. Each entry in slots points at a redo slot, with its
     /// image at SlotHeaderBytes. Only called after durable journal publication.</summary>

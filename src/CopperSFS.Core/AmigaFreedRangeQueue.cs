@@ -43,6 +43,41 @@ public static class AmigaFreedRangeQueue
         return true;
     }
 
+    // An idle mount can join data and extension hints before splitting them
+    // into batches. The queue is fixed at 128 entries. Sort in place with
+    // decreasing strides, then merge only touching or overlapping intervals.
+    public static void Coalesce<T>(ref T p, APTR queue) where T : struct, IAmigaGuestMemory
+    {
+        var count = Count(ref p, queue);
+        if (count > Capacity) { Clear(ref p, queue); return; }
+        if (count < 2) return;
+        var ranges = APTR.FromPointer(queue.Raw + 4);
+        for (var gap = count / 2; gap != 0; gap /= 2)
+        {
+            var stride = (int)gap * 8;
+            for (var i = gap; i < count; i++)
+            {
+                var at = (int)i * 8;
+                var first = p.ReadUInt32(ranges, at);
+                var length = p.ReadUInt32(ranges, at + 4);
+                var target = at;
+                while (target >= stride)
+                {
+                    var previous = target - stride;
+                    var key = p.ReadUInt32(ranges, previous);
+                    if (key <= first) break;
+                    p.WriteUInt32(ranges, target, key);
+                    p.WriteUInt32(ranges, target + 4, p.ReadUInt32(ranges, previous + 4));
+                    target = previous;
+                }
+                if (target == at) continue;
+                p.WriteUInt32(ranges, target, first);
+                p.WriteUInt32(ranges, target + 4, length);
+            }
+        }
+        p.WriteUInt32(queue, 0, AmigaAutomaticTrimBatch.MergeSorted(ref p, ranges, count));
+    }
+
     /// <summary>Remove a bounded chunk. Overlap preserves alignment opportunities
     /// across chunk boundaries. The receiver still revalidates every hinted block.</summary>
     public static bool Take<T>(ref T p, APTR queue, uint maximum, uint overlap,

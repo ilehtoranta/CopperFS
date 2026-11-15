@@ -147,14 +147,19 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         var rom = File.ReadAllBytes(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")!);
         var hook = storage ?? new WritableHook();
         var timing = Environment.GetEnvironmentVariable("COPPERFS_FFS_TIMING_DEVICE");
-        var timingDevice = profile is "ffs" or "ofs" && timing is "cold" or "warm" && deviceHook == null &&
+        var warmed = timing is "warm" or "warm-unsupported";
+        var timingDevice = profile is "ffs" or "ofs" && (timing == "cold" || warmed) && deviceHook == null &&
             (entry.StartsWith("CorrectnessProbe::Benchmark") || entry.StartsWith("CorrectnessProbe::OwnedBenchmark") ||
-             entry.StartsWith("LargeWriteProbe::")) ? new AutomaticDiscardHook(false) : null;
+             entry.StartsWith("LargeWriteProbe::") || entry.StartsWith("FfsAppendProbe::") && !entry.EndsWith("Seed"))
+                ? new AutomaticDiscardHook(false, supportsDiscard: timing != "warm-unsupported") : null;
         if (timingDevice != null) deviceHook = timingDevice;
         var warmupDiscards = 0;
+        var warmupScsi = 0;
         var trimProfile = Environment.GetEnvironmentVariable("COPPERFS_TRIM_PROFILE") == "1" &&
             entry.StartsWith("CorrectnessProbe::Auto", StringComparison.Ordinal);
         var trimIo = trimProfile ? new TrimProfileIoHook(deviceHook ?? hook) : null;
+        var discard = deviceHook as AutomaticDiscardHook;
+        List<(string Stage, long Cycles)>? serviceTurns = trimProfile ? [] : null;
         uint control = 0, pointer = 0; var octets = 0; var done = false; var failed = false;
         uint stage = 0, error = 0;
         uint[]? probeData = null;
@@ -175,11 +180,23 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             var benchmarkProfile = Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1" &&
                 (entry.StartsWith("CorrectnessProbe::Benchmark", StringComparison.Ordinal) ||
                  entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal));
+            var ffsLargeProfile = (entry is "LargeWriteProbe::Ffs" or "LargeWriteProbe::Ofs") &&
+                Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
+            var appendProfile = (entry is "FfsAppendProbe::Ffs" or "FfsAppendProbe::Ofs") && label == "0-candidate" &&
+                Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
+            var sfs2ThroughputProfile = entry.StartsWith("Sfs2ThroughputProbe::", StringComparison.Ordinal) &&
+                Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
             var overwriteProfile = entry == "LargeWriteProbe::Sfs" && Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
-            var writeProfiler = trimProfile || benchmarkProfile || overwriteProfile || Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
+            var deletionProfile = label == "candidate" && (entry is "CorrectnessProbe::TraceCommitFfs" or "CorrectnessProbe::TraceCommitOfs") &&
+                Environment.GetEnvironmentVariable("COPPERFS_TRIM_DELETE_PROFILE") == "1";
+            var writeProfiler = trimProfile || benchmarkProfile || overwriteProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile || deletionProfile || Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
                 (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend")
                 ? new ReadCpuProfile(machine, handler, rom) : null;
-            if (writeProfiler != null) hook.CommandObserved = writeProfiler.ObserveRead;
+            if (writeProfiler != null)
+            {
+                hook.CommandObserved = writeProfiler.ObserveTransfer;
+                if (discard != null) discard.CommandObserved = writeProfiler.ObserveTransfer;
+            }
             machine.ParallelDataWritten += (value, _, busCycle) =>
             {
                 if (octets != 0)
@@ -188,7 +205,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                     if (--octets == 0)
                     {
                         control = pointer;
-                        if (timingDevice != null && timing == "warm")
+                        if (timingDevice != null && warmed)
                         {
                             var memory = control < machine.ChipRam.Length ? machine.ChipRam : machine.FastRam;
                             var offset = control < machine.ChipRam.Length ? control : control - machine.FastRamBase!.Value;
@@ -217,7 +234,11 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 if (value == 250) failed = true;
                 if (trimProfile)
                 {
-                    if (value == 224) { writeProfiler!.ArmTrimCalls(directory, trimIo!.Snapshot); writeProfiler.SetCallStage("cold"); }
+                    if (value == 224)
+                    {
+                        writeProfiler!.ArmTrimCalls(directory, trimIo!.Snapshot, (stage, cycles) => serviceTurns!.Add((stage, cycles)));
+                        writeProfiler.SetCallStage("cold");
+                    }
                     if (value == 225) writeProfiler!.SetCallStage("setup");
                     if (Environment.GetEnvironmentVariable("COPPERFS_TRIM_DELETE_PROFILE") == "1")
                     {
@@ -229,20 +250,34 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                     if (value == 231) writeProfiler!.SetCallStage("warm");
                     if (value == 222) writeProfiler!.StopTrimCalls();
                 }
-                if (overwriteProfile && value == 220) writeProfiler!.Begin("growth", busCycle);
-                if (overwriteProfile && value == 221) writeProfiler!.End(directory, busCycle);
-                if (overwriteProfile && value == 224) writeProfiler!.Begin("verification", busCycle);
-                if (overwriteProfile && value == 225) writeProfiler!.End(directory, busCycle);
-                if (overwriteProfile && value == 222) writeProfiler!.Begin("overwrite", busCycle);
-                if (overwriteProfile && value == 223) writeProfiler!.End(directory, busCycle);
-                if (!trimProfile && !overwriteProfile && value == 220) writeProfiler?.Begin(benchmarkProfile ? "mutate" : "write", busCycle);
-                if (!trimProfile && !overwriteProfile && value == 221) writeProfiler?.End(directory, busCycle);
+                if ((overwriteProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile) && value == 222) writeProfiler!.Begin("overwrite", busCycle);
+                if ((overwriteProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile) && value == 223) writeProfiler!.End(directory, busCycle);
+                if (deletionProfile)
+                {
+                    if (value is 176 or 177 or 178 or 164 or 166 or 167 or 168 or 169) writeProfiler!.End(directory, busCycle);
+                    if (value == 163) writeProfiler!.Begin("delete", busCycle);
+                    if (value == 176) writeProfiler!.Begin("reopen", busCycle);
+                    if (value == 177) writeProfiler!.Begin("append-after-delete", busCycle);
+                    if (value == 178) writeProfiler!.Begin("patch", busCycle);
+                    if (value == 165) writeProfiler!.Begin("rename-create-write", busCycle);
+                    if (value == 166) writeProfiler!.Begin("publish-new-file", busCycle);
+                    if (value == 167) writeProfiler!.Begin("truncate-write", busCycle);
+                    if (value == 168) writeProfiler!.Begin("publish-truncate", busCycle);
+                }
+                if (!trimProfile && !overwriteProfile && !deletionProfile && value == 220) writeProfiler?.Begin(benchmarkProfile ? "mutate" : ffsLargeProfile ? "grow" : appendProfile ? "append" : "write", busCycle);
+                if (!trimProfile && !overwriteProfile && !deletionProfile && value == 221) writeProfiler?.End(directory, busCycle);
                 if (benchmarkProfile && value == 222) writeProfiler?.Begin("verify", busCycle);
                 if (benchmarkProfile && value == 223) writeProfiler?.End(directory, busCycle);
+                if (sfs2ThroughputProfile && value == 224) writeProfiler!.Begin("read", busCycle);
+                if (sfs2ThroughputProfile && value == 225) writeProfiler!.End(directory, busCycle);
                 if (value == 221 && profile == "sfs2-trst") OwnedMountMemory.Capture(machine, directory);
-                if (timingDevice != null && value == 220) warmupDiscards = timingDevice.Discards;
-                observe?.Invoke(value, busCycle, timingDevice?.ReadCommands ?? hook.ReadCommands,
-                    timingDevice?.WriteCommands ?? hook.WriteCommands, timingDevice?.Flushes ?? hook.Flushes);
+                if (timingDevice != null && value == 220)
+                {
+                    warmupDiscards = timingDevice.Discards;
+                    warmupScsi = timingDevice.ScsiCommands;
+                }
+                observe?.Invoke(value, busCycle, discard?.ReadCommands ?? hook.ReadCommands,
+                    discard?.WriteCommands ?? hook.WriteCommands, discard?.Flushes ?? hook.Flushes);
             };
             for (var frame = 0; frame < 100000 && watch.Elapsed < TimeSpan.FromMinutes(10) && !done && !failed; frame++)
             {
@@ -272,16 +307,20 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             PC = pc.ToString("X8"), Frames = frames, HostSeconds = watch.Elapsed.TotalSeconds,
             HandlerSha256 = Hash(File.ReadAllBytes(handler)), ProbeSha256 = Hash(probe), KickstartSha256 = Hash(rom),
             InitialSha256 = initialHash, ResultSha256 = initialHash == null ? null : Hash(File.ReadAllBytes(media)),
-            TimingDevice = timingDevice == null ? null : timing, WarmupDiscards = warmupDiscards,
-            UNMAPs = timingDevice?.Discards, ReclaimedBytes = timingDevice?.DiscardBytes,
-            Writes = timingDevice?.Writes ?? hook.Writes, Flushes = timingDevice?.Flushes ?? hook.Flushes,
-            ReadBytes = timingDevice?.ReadBytes ?? hook.ReadBytes, WriteBytes = timingDevice?.WriteBytes ?? hook.WriteBytes };
+            TimingDevice = timingDevice == null ? null : timing, WarmupDiscards = warmupDiscards, WarmupScsiCommands = warmupScsi,
+            UNMAPs = discard?.Discards, ReclaimedBytes = discard?.DiscardBytes, ScsiCommands = discard?.ScsiCommands,
+            Writes = discard?.Writes ?? hook.Writes, Flushes = discard?.Flushes ?? hook.Flushes,
+            ReadCommands = discard?.ReadCommands ?? hook.ReadCommands, WriteCommands = discard?.WriteCommands ?? hook.WriteCommands,
+            ReadBytes = discard?.ReadBytes ?? hook.ReadBytes, WriteBytes = discard?.WriteBytes ?? hook.WriteBytes,
+            Service = serviceTurns?.GroupBy(turn => turn.Stage).Select(group => new { Stage = group.Key, Turns = group.Count(),
+                TotalCycles = group.Sum(turn => turn.Cycles), LongestTurnCycles = group.Max(turn => turn.Cycles) }).ToArray() };
         File.WriteAllText(Path.Combine(directory, "result.json"), JsonSerializer.Serialize(result, Json));
         output.WriteLine(JsonSerializer.Serialize(result));
         Assert.True(result.Passed, $"{profile}/{label}: stage {stage}, IoErr {error}, PC {pc:X8}, {frames} frames");
         if (timing == "cold" && timingDevice != null) Assert.Equal(0, warmupDiscards);
         if (timing == "warm" && timingDevice != null && label.EndsWith("-candidate", StringComparison.Ordinal))
             Assert.True(warmupDiscards > 0, $"{profile}/{label}: no completed warm-up UNMAP before the timed workload");
+        if (timing == "warm-unsupported" && timingDevice != null) Assert.Equal(0, timingDevice.Discards);
         if (!write && initialHash != null) Assert.Equal(result.InitialSha256, result.ResultSha256);
     }
 

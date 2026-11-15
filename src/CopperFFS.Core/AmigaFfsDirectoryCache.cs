@@ -71,7 +71,7 @@ public static partial class AmigaFfsWriteCore
             return Fail(ref w, DOS.Error.DiskNotValidated);
         if (!ReleaseCache(ref p, ref w, directory)) return false;
         w.NextKey = g.ReservedBlocks;
-        var first = Allocate(ref p, ref w); if (first == 0) return false;
+        var first = Allocate(ref p, ref w, in g); if (first == 0) return false;
         var current = first; EmptyCache(ref p, ref w, current, directory);
         var at = 24u; var records = 0u; var visited = 0u;
         for (var slot = 0u; slot < g.TableEntries; slot++)
@@ -90,7 +90,7 @@ public static partial class AmigaFfsWriteCore
                 {
                     p.WriteUInt32(w.Data, 12, records);
                     if (!Put(ref p, ref w, current, w.Data, 20)) return false;
-                    var following = Allocate(ref p, ref w); if (following == 0) return false;
+                    var following = Allocate(ref p, ref w, in g); if (following == 0) return false;
                     // Allocation can use Data as bitmap-pointer scratch. Meta still owns the entry.
                     if (!p.ReadBlock(current, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
                     p.WriteUInt32(w.Data, 16, following);

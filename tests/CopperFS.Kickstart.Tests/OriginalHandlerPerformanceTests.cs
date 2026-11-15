@@ -84,7 +84,10 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var candidate = samples.Where(s => s.Arm == "candidate" && s.Phase == phase).Average(s => s.Cycles);
             var percent = 100 * (candidate / original - 1);
             output.WriteLine($"{profile}/{phase}: {percent:F3}% versus original");
-            if (candidate > original * 1.001) failures.Add($"{phase}: {percent:F3}% slower");
+            // SFS2's accepted target is at most 10% more cycles than 1.279.
+            // Other filesystem profiles retain their existing gate.
+            var allowance = profile.StartsWith("sfs2", StringComparison.Ordinal) ? 1.10 : 1.001;
+            if (candidate > original * allowance) failures.Add($"{phase}: {percent:F3}% slower (limit {(allowance - 1) * 100:F1}%)");
         }
         Assert.True(failures.Count == 0, string.Join("; ", failures));
     }

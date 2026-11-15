@@ -24,6 +24,12 @@ internal static class NativeFfsSequentialRead
     internal static bool NeedsWarmup(APTR state, APTR file) => APTR.ReadUInt32(file, Count) < Warmup &&
         APTR.ReadUInt32(file, Mode) != Disabled && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0;
 
+    internal static void ResetForSeek(APTR file)
+    {
+        if (APTR.ReadUInt32(file, Count) != 0 || APTR.ReadUInt32(file, Mode) != 0 ||
+            APTR.ReadUInt32(file, Minimum) != uint.MaxValue) Reset(file);
+    }
+
     internal static void Reset(APTR file)
     {
         APTR.WriteUInt32(file, Count, 0); APTR.WriteUInt32(file, Mode, 0);

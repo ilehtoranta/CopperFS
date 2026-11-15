@@ -59,12 +59,18 @@ public sealed class AutomaticTrimInstructionTests
         Assert.True(compiled.FrameworkAnalysis.IsCompatible);
         Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
         var bus = new TrimBus(); compiled.Code.CopyTo(bus.Memory, 0x10000);
-        // Exec AllocMem failure fixture. Both preferred and Chip fallback return
-        // zero, while the real compiled initialization path executes unchanged.
+        // The lazy standalone queue can use an Exec allocation when no mount
+        // index was supplied. Only the allocation-failure probe denies memory.
         bus.Put(4, 0x8000);
         BinaryPrimitives.WriteUInt16BigEndian(bus.Memory.AsSpan(0x8000 - 198), 0x4EF9);
         bus.Put(0x8000 - 196, 0x9000);
-        bus.Put(0x9000, 0x70004E75); // MOVEQ #0,D0; RTS
+        if (probe == typeof(AutomaticTrimAllocationFailureProbe))
+            bus.Put(0x9000, 0x70004E75); // MOVEQ #0,D0; RTS
+        else
+        {
+            bus.Put(0x9000, 0x203C000D);
+            bus.Put(0x9004, 0x00004E75); // MOVE.L #$D0000,D0; RTS
+        }
         BinaryPrimitives.WriteUInt16BigEndian(bus.Memory.AsSpan(0x8000 - 456), 0x4EF9);
         bus.Put(0x8000 - 454, 0x9100);
         bus.Put(0x9100, 0x137C0001); // MOVE.B #1,31(A1): io_Error
@@ -111,7 +117,7 @@ public static class AutomaticTrimInvalidationProbe
         var p = new NativeFileSystemPlatform(state);
         p.ObserveFreedRange(64, 2);
         p.ObserveFreedRange(66, 3);
-        var queue = APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimQueueOffset);
+        var queue = NativeAutomaticTrim.QueueForFree(state);
         if (AmigaFreedRangeQueue.Count(ref p, queue) != 1 || !NativeAutomaticTrim.Pending(state)) return 2;
         if (APTR.ReadUInt32(queue, 4) != 64 || APTR.ReadUInt32(queue, 8) != 5) return 3;
         if (NativeAutomaticTrim.Ready(state)) return 4;
@@ -120,7 +126,7 @@ public static class AutomaticTrimInvalidationProbe
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 1);
         if (NativeAutomaticTrim.Ready(state)) return 6;
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 0);
-        var batch = APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimBatchOffset);
+        var batch = NativeAutomaticTrim.Batch(state);
         APTR.WriteUInt32(batch, AmigaAutomaticTrimBatch.Inputs, 2);
         APTR.WriteUInt32(batch, AmigaAutomaticTrimBatch.Outputs, 1);
         NativeAutomaticTrim.BeforeOperation(state);

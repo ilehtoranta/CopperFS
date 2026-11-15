@@ -14,7 +14,10 @@ public static class AmigaDiskFileSystemCore
         var remaining = p.BlockBytes;
         uint sum = 0;
         var cursor = buffer;
-        for (; remaining >= 32; remaining -= 32)
+        // Keep the eight loads in one expression so the 68000 can add them
+        // directly from memory without spilling temporary words.
+        var end = APTR.FromPointer(cursor.Raw + (remaining & ~31u));
+        while (cursor != end)
         {
             sum = unchecked(sum + p.ReadUInt32(cursor) + p.ReadUInt32(cursor, 4) +
                 p.ReadUInt32(cursor, 8) + p.ReadUInt32(cursor, 12) +
@@ -22,6 +25,7 @@ public static class AmigaDiskFileSystemCore
                 p.ReadUInt32(cursor, 24) + p.ReadUInt32(cursor, 28));
             cursor = APTR.FromPointer(cursor.Raw + 32);
         }
+        remaining &= 31;
         for (; remaining >= 4; remaining -= 4)
         {
             sum = unchecked(sum + p.ReadUInt32(cursor));
@@ -39,18 +43,45 @@ public static class AmigaDiskFileSystemCore
     internal static bool Header<T>(ref T p, in AmigaFfsGeometry geometry, uint block, APTR buffer, bool links)
         where T : struct, IAmigaFileSystemPlatform
     {
-        if (block < geometry.ReservedBlocks || block >= geometry.BlockCount || !p.ReadBlock(block, buffer) ||
-            !Checksum(ref p, buffer) || p.ReadUInt32(buffer) != 2) return false;
-        var type = unchecked((int)p.ReadUInt32(buffer, geometry.Tail + 508));
-        return block == geometry.RootBlock ? type == 1 && p.ReadUInt32(buffer, 12) == geometry.TableEntries :
-            p.ReadUInt32(buffer, 4) == block && (type == 2 || type == -3 || (links && type is 3 or 4 or -4));
+        var image = HeaderView(ref p, in geometry, block, buffer, APTR.Null, 0, links);
+        if (image.IsNull) return false;
+        if (image != buffer) p.Copy(image, buffer, geometry.BlockBytes);
+        return true;
     }
 
-    private static APTR FfsMetadataView<T>(ref T p, uint block, APTR scratch, APTR output, uint outputBytes)
+    internal static APTR HeaderView<T>(ref T p, in AmigaFfsGeometry g, uint block, APTR scratch,
+        APTR output, uint length, bool links) where T : struct, IAmigaFileSystemPlatform
+    {
+        if (block < g.ReservedBlocks || block >= g.BlockCount) return APTR.Null;
+        APTR view;
+#if COPPERFS_FFS_HANDLER
+        // Only the standalone classic platform maintains this checksum proof.
+        if (!p.TryBorrowCheckedClassicBlock(block, scratch, output, length, out view))
+#endif
+        {
+            if (!p.ReadBlock(block, scratch) || !Checksum(ref p, scratch)) return APTR.Null;
+            view = scratch;
+        }
+        if (view.IsNull || p.ReadUInt32(view) != 2) return APTR.Null;
+        var type = unchecked((int)p.ReadUInt32(view, g.Tail + 508));
+        var valid = block == g.RootBlock ? type == 1 && p.ReadUInt32(view, 12) == g.TableEntries :
+            p.ReadUInt32(view, 4) == block && (type == 2 || type == -3 || (links && type is 3 or 4 or -4));
+        return valid ? view : APTR.Null;
+    }
+
+    private static APTR CheckedFfsMetadataView<T>(ref T p, uint block, APTR scratch, APTR output, uint outputBytes)
         where T : struct, IAmigaFileSystemPlatform
     {
-        if (p.TryBorrowFfsMetadataBlock(block, scratch, output, outputBytes, out var view)) return view;
-        return p.ReadBlock(block, scratch) ? scratch : APTR.Null;
+        APTR view;
+#if COPPERFS_FFS_HANDLER
+        if (p.TryBorrowCheckedClassicBlock(block, scratch, output, outputBytes, out view)) return view;
+#endif
+        if (!p.TryBorrowFfsMetadataBlock(block, scratch, output, outputBytes, out view))
+        {
+            if (!p.ReadBlock(block, scratch)) return APTR.Null;
+            view = scratch;
+        }
+        return view.IsNotNull && Checksum(ref p, view) ? view : APTR.Null;
     }
 
     private static APTR FileHeaderView<T>(ref T p, uint block, APTR scratch, APTR output, uint outputBytes)
@@ -58,10 +89,10 @@ public static class AmigaDiskFileSystemCore
     {
         var count = p.BlockCount; var bytes = p.BlockBytes; var reserved = p.ReservedBlocks;
         if (block < reserved || block >= count) return APTR.Null;
-        var view = FfsMetadataView(ref p, block, scratch, output, outputBytes);
-        if (view.IsNull || !Checksum(ref p, view) || p.ReadUInt32(view) != 2) return APTR.Null;
+        var view = CheckedFfsMetadataView(ref p, block, scratch, output, outputBytes);
+        if (view.IsNull || p.ReadUInt32(view) != 2) return APTR.Null;
         var type = unchecked((int)p.ReadUInt32(view, (int)bytes - 4));
-        var root = (count - 1) / 2 + reserved / 2 + ((count - 1) % 2 + reserved % 2) / 2;
+        var root = AmigaFfsGeometry.RootFor(count, reserved);
         return block == root
             ? type == 1 && p.ReadUInt32(view, 12) == bytes / 4 - 56 ? view : APTR.Null
             : p.ReadUInt32(view, 4) == block && (type == 2 || type == -3) ? view : APTR.Null;
@@ -81,10 +112,50 @@ public static class AmigaDiskFileSystemCore
     internal static byte Upper(byte c, uint type) => c is >= 97 and <= 122 ||
         (type >= 0x444F5302 && c is >= 224 and <= 254 && c != 247) ? unchecked((byte)(c - 32)) : c;
 
+    internal static uint NameBucket<T>(ref T p, APTR name, uint length, uint dosType, uint buckets)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        // Only the low eleven bits contribute to the DOS hash. Discarding
+        // the high bits once gives the same residue for every component.
+        var hash = length;
+        var cursor = name;
+        var end = name.Raw + length;
+        while (cursor.Raw != end)
+        {
+            hash = unchecked(hash * 13 + Upper(p.ReadUInt8(cursor), dosType));
+            cursor = APTR.FromPointer(cursor.Raw + 1);
+        }
+        return AmigaGeometryMath.Remainder(hash & 2047, buckets);
+    }
+
     public static uint Resolve<T>(ref T p, uint directory, APTR name, uint length,
         uint dosType, APTR buffer, out DOS.Error error) where T : struct, IAmigaFileSystemPlatform
     {
+        var key = ResolveView(ref p, directory, name, length, dosType, buffer, out error, out var image);
+        if (key != 0 && image != buffer) p.Copy(image, buffer, p.BlockBytes);
+        return key;
+    }
+
+    // Consume the returned header before another block access. Resolve exposes
+    // the same traversal to callers that need a stable copy in their scratch.
+    internal static uint ResolveView<T>(ref T p, uint directory, APTR name, uint length,
+        uint dosType, APTR buffer, out DOS.Error error, out APTR image, APTR mountIndex = default) where T : struct, IAmigaFileSystemPlatform
+        => ResolveForOpen(ref p, directory, name, length, dosType, buffer, out error, out image, out _, mountIndex);
+
+    internal struct MissingComponent
+    {
+        internal uint Parent, Start;
+        internal int HashSlot;
+    }
+
+    internal static uint ResolveForOpen<T>(ref T p, uint directory, APTR name, uint length,
+        uint dosType, APTR buffer, out DOS.Error error, out APTR image, out MissingComponent missing,
+        APTR mountIndex = default)
+        where T : struct, IAmigaFileSystemPlatform
+    {
         var geometry = AmigaFfsGeometry.Read(ref p);
+        missing = default;
+        image = APTR.Null;
         error = DOS.Error.None;
         if (length > 255) { error = DOS.Error.InvalidComponentName; return 0; }
         var tableEntries = geometry.TableEntries;
@@ -92,16 +163,57 @@ public static class AmigaDiskFileSystemCore
         var offset = 0u;
         for (var i = 0u; i < length; i++)
             if (p.ReadUInt8(name, (int)i) == ':') { directory = geometry.RootBlock; offset = i + 1; }
-        var loaded = false;
+        var rootStart = offset;
+        var prefixIndex = APTR.Null;
+        var view = APTR.Null;
+        if (directory == geometry.RootBlock && mountIndex.IsNotNull &&
+            p.ReadUInt32(mountIndex, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.MetadataOpen &&
+            p.ReadUInt32(mountIndex, AmigaFfsMountIndex.Type) == dosType)
+        {
+            // Build verified this root's identity, checksum and table size.
+            // Grouped namespace operations update the same private hash table.
+            var root = APTR.FromPointer(p.ReadUInt32(mountIndex, AmigaFfsMountIndex.RootImage));
+            if (root.IsNotNull && !Overlaps(name, length, root, geometry.BlockBytes)) view = root;
+            if (view.IsNotNull && length > offset &&
+                !Overlaps(name, length, APTR.FromPointer(mountIndex.Raw + AmigaFfsMountIndex.PrefixName), AmigaFfsMountIndex.PrefixCapacity))
+            {
+                prefixIndex = mountIndex;
+                var child = p.ReadUInt32(prefixIndex, AmigaFfsMountIndex.PrefixDirectory);
+                if (child != 0)
+                {
+                    var bytes = p.ReadUInt32(prefixIndex, AmigaFfsMountIndex.PrefixLength);
+                    // The saved prefix ends just after a checked directory's
+                    // slash. A parent lookup may request the same name alone.
+                    if (bytes == length - offset + 1) bytes--;
+                    if (bytes <= length - offset)
+                    {
+                        uint i = 0;
+                        while (i < bytes && p.ReadUInt8(prefixIndex, AmigaFfsMountIndex.PrefixName + (int)i) ==
+                            p.ReadUInt8(name, (int)(offset + i))) i++;
+                        if (i == bytes)
+                        {
+                            directory = child;
+                            offset += bytes;
+                            view = APTR.Null;
+                        }
+                    }
+                }
+            }
+        }
         for (var depth = 0; depth <= 255; depth++)
         {
-            if (!loaded && !Header(ref p, in geometry, directory, buffer, false)) { error = DOS.Error.DiskNotValidated; return 0; }
-            if (offset == length) return directory;
-            if (unchecked((int)p.ReadUInt32(buffer, geometry.Tail + 508)) < 0) { error = DOS.Error.ObjectWrongType; return 0; }
+            if (view.IsNull) view = HeaderView(ref p, in geometry, directory, buffer, name, length, false);
+            if (view.IsNull) { error = DOS.Error.DiskNotValidated; return 0; }
+            if (offset == length)
+            {
+                image = view;
+                return directory;
+            }
+            if (unchecked((int)p.ReadUInt32(view, geometry.Tail + 508)) < 0) { error = DOS.Error.ObjectWrongType; return 0; }
             if (p.ReadUInt8(name, (int)offset) == '/')
             {
-                directory = directory == geometry.RootBlock ? geometry.RootBlock : p.ReadUInt32(buffer, geometry.Tail + 500);
-                loaded = false;
+                directory = directory == geometry.RootBlock ? geometry.RootBlock : p.ReadUInt32(view, geometry.Tail + 500);
+                view = APTR.Null;
                 offset++;
                 continue;
             }
@@ -109,24 +221,54 @@ public static class AmigaDiskFileSystemCore
             while (offset < length && p.ReadUInt8(name, (int)offset) != '/') offset++;
             var count = offset - start;
             if (count == 0 || count > 30) { error = DOS.Error.InvalidComponentName; return 0; }
-            var hash = count;
-            for (var i = 0u; i < count; i++) hash = (hash * 13 + Upper(p.ReadUInt8(name, (int)(start + i)), dosType)) & 0x7FF;
-            var entry = p.ReadUInt32(buffer, 24 + (int)(AmigaGeometryMath.Remainder(hash, tableEntries)) * 4);
+            var slot = 24 + (int)NameBucket(ref p, APTR.FromPointer(name.Raw + start), count, dosType, tableEntries) * 4;
+            var entry = p.ReadUInt32(view, slot);
+            if (entry != 0 && directory == geometry.RootBlock && prefixIndex.IsNotNull &&
+                AmigaFfsMountIndex.SoleRootChildDiffers(ref p, prefixIndex, slot, entry, count))
+                entry = 0;
             var found = false;
             for (var guard = 0u; entry != 0 && guard < geometry.BlockCount; guard++)
             {
-                if (!Header(ref p, in geometry, entry, buffer, false) || p.ReadUInt32(buffer, geometry.Tail + 500) != directory)
+                view = HeaderView(ref p, in geometry, entry, buffer, name, length, false);
+                if (view.IsNull || p.ReadUInt32(view, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return 0; }
-                var matches = p.ReadUInt8(buffer, geometry.Tail + 432) == count;
-                for (var i = 0u; matches && i < count; i++) matches =
-                    Upper(p.ReadUInt8(buffer, geometry.Tail + 433 + (int)i), dosType) == Upper(p.ReadUInt8(name, (int)(start + i)), dosType);
+                var matches = p.ReadUInt8(view, geometry.Tail + 432) == count;
+                for (var i = 0u; matches && i < count; i++)
+                {
+                    var stored = p.ReadUInt8(view, geometry.Tail + 433 + (int)i);
+                    var requested = p.ReadUInt8(name, (int)(start + i));
+                    matches = stored == requested || Upper(stored, dosType) == Upper(requested, dosType);
+                }
                 if (matches) { found = true; break; }
-                entry = p.ReadUInt32(buffer, geometry.Tail + 496);
+                entry = p.ReadUInt32(view, geometry.Tail + 496);
             }
-            if (!found) { error = entry != 0 ? DOS.Error.DiskNotValidated : DOS.Error.ObjectNotFound; return 0; }
+            if (!found)
+            {
+                error = entry != 0 ? DOS.Error.DiskNotValidated : DOS.Error.ObjectNotFound;
+                if (entry == 0 && offset == length)
+                {
+                    missing.Parent = directory;
+                    missing.Start = start;
+                    missing.HashSlot = slot;
+                }
+                return 0;
+            }
             directory = entry;
-            loaded = true; // The matching header is still in the caller's scratch.
-            if (offset < length) offset++; // separator; a second slash means parent
+            if (offset < length)
+            {
+                offset++; // separator; a second slash means parent
+                var prefix = offset - rootStart;
+                // A checked directory survives file writes and sibling creates.
+                // Rename and directory removal expire this root-relative path.
+                if (prefixIndex.IsNotNull && prefix <= AmigaFfsMountIndex.PrefixCapacity &&
+                    p.ReadUInt32(view, geometry.Tail + 508) == 2)
+                {
+                    p.Copy(APTR.FromPointer(name.Raw + rootStart),
+                        APTR.FromPointer(prefixIndex.Raw + AmigaFfsMountIndex.PrefixName), prefix);
+                    p.WriteUInt32(prefixIndex, AmigaFfsMountIndex.PrefixLength, prefix);
+                    p.WriteUInt32(prefixIndex, AmigaFfsMountIndex.PrefixDirectory, entry);
+                }
+            }
         }
         error = DOS.Error.DiskNotValidated;
         return 0;
@@ -270,7 +412,7 @@ public static class AmigaDiskFileSystemCore
             var within = blockBytes == 512 ? position & 511 : AmigaGeometryMath.Remainder(position, blockBytes);
             var target = APTR.FromPointer(destination.Raw + copied);
             var remaining = length - copied;
-            if (within == 0 && remaining >= blockBytes && (target.Raw & 3) == 0)
+            if (within == 0 && remaining >= blockBytes && ((target.Raw & 3) == 0 || p.SupportsUnalignedDataReads))
             {
                 var blocks = blockBytes == 512 ? remaining >> 9 : AmigaGeometryMath.Divide(remaining, blockBytes);
                 var available = cursor.RunCount - (index - cursor.RunStart);
@@ -339,18 +481,35 @@ public static class AmigaDiskFileSystemCore
         where T : struct, IAmigaFileSystemPlatform
     {
         if (block < reserved || block >= blockCount) return APTR.Null;
-        var view = FfsMetadataView(ref p, block, metadata, output, outputBytes);
-        return view.IsNotNull && Checksum(ref p, view) && p.ReadUInt32(view) == 16 &&
+        var view = CheckedFfsMetadataView(ref p, block, metadata, output, outputBytes);
+        return view.IsNotNull && p.ReadUInt32(view) == 16 &&
             p.ReadUInt32(view, 4) == block && p.ReadUInt32(view, tail + 500) == header &&
             unchecked((int)p.ReadUInt32(view, tail + 508)) == -3 ? view : APTR.Null;
     }
 
-    private static int ReadSingleBlocks<T>(ref T p, uint header, uint dosType, uint position,
+    private static bool TryReadOfsPayload<T>(ref T p, APTR directory, uint header, uint dosType, uint position,
+        APTR destination, uint length, APTR metadata, APTR data) where T : struct, IAmigaFileSystemPlatform
+    {
+        if (directory.IsNull || length == 0 || header == 0 ||
+            p.ReadUInt32(directory, AmigaFfsMountIndex.Status) != AmigaFfsMountIndex.Clean ||
+            p.ReadUInt32(directory, AmigaFfsMountIndex.ReadHeader) != header ||
+            p.ReadUInt32(directory, AmigaFfsMountIndex.Type) != dosType) return false;
+        var offset = unchecked(position - p.ReadUInt32(directory, AmigaFfsMountIndex.ReadStart));
+        var bytes = p.ReadUInt32(directory, AmigaFfsMountIndex.ReadBytes);
+        if (offset >= bytes || length > bytes - offset || !p.IsMapped(destination, length) ||
+            Overlaps(destination, length, metadata, p.BlockBytes) || Overlaps(destination, length, data, p.BlockBytes) ||
+            Overlaps(destination, length, directory, p.ReadUInt32(directory, AmigaFfsMountIndex.Bytes))) return false;
+        p.Copy(APTR.FromPointer(p.ReadUInt32(directory, AmigaFfsMountIndex.BitmapImage) + offset), destination, length);
+        return true;
+    }
+
+    internal static int ReadSingleBlocks<T>(ref T p, uint header, uint dosType, uint position,
         APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error, APTR directory)
         where T : struct, IAmigaFileSystemPlatform
     {
-        var geometry = AmigaFfsGeometry.Read(ref p);
         error = DOS.Error.None;
+        if (TryReadOfsPayload(ref p, directory, header, dosType, position, destination, length, metadata, data)) return (int)length;
+        var geometry = AmigaFfsGeometry.Read(ref p);
         if (length > int.MaxValue || !p.IsMapped(destination, length))
         { error = DOS.Error.DiskNotValidated; return -1; }
         // The single-owner mount verified the file type, length and complete
@@ -450,6 +609,21 @@ public static class AmigaDiskFileSystemCore
                     ofsSequenceBase = index + 1 - sequence;
                 }
                 dataOffset = 24;
+                if (copied == 0 && count == length && staged && dosType == p.ReadUInt32(directory, AmigaFfsMountIndex.Type) &&
+                    !Overlaps(destination, length, directory, p.ReadUInt32(directory, AmigaFfsMountIndex.Bytes)))
+                {
+                    var saved = APTR.FromPointer(p.ReadUInt32(directory, AmigaFfsMountIndex.BitmapImage));
+                    if (saved.IsNotNull)
+                    {
+                        var start = position - within;
+                        var validBytes = p.ReadUInt32(image, 12);
+                        if (validBytes > size - start) validBytes = size - start;
+                        p.Copy(APTR.FromPointer(image.Raw + dataOffset), saved, validBytes);
+                        p.WriteUInt32(directory, AmigaFfsMountIndex.ReadStart, start);
+                        p.WriteUInt32(directory, AmigaFfsMountIndex.ReadBytes, validBytes);
+                        p.WriteUInt32(directory, AmigaFfsMountIndex.ReadHeader, header);
+                    }
+                }
             }
             var source = APTR.FromPointer(image.Raw + dataOffset + within);
             var target = APTR.FromPointer(destination.Raw + copied);
@@ -643,9 +817,11 @@ public static class AmigaDiskFileSystemCore
         return block >= geometry.ReservedBlocks && block < geometry.BlockCount && block != geometry.RootBlock;
     }
 
-    internal static uint CountAllocated<T>(ref T p, APTR bitmap, uint count) where T : struct, IAmigaFileSystemPlatform
+    internal static bool CountCheckedBitmap<T>(ref T p, APTR bitmap, uint count, out uint allocated)
+        where T : struct, IAmigaFileSystemPlatform
     {
         uint used = 0;
+        var sum = p.ReadUInt32(bitmap);
         var remaining = count;
         var word = APTR.FromPointer(bitmap.Raw + 4);
         while (remaining >= 32)
@@ -656,6 +832,7 @@ public static class AmigaDiskFileSystemCore
                 p.ReadUInt32(word, 8) & p.ReadUInt32(word, 12) & p.ReadUInt32(word, 16) &
                 p.ReadUInt32(word, 20) & p.ReadUInt32(word, 24) & p.ReadUInt32(word, 28)) == uint.MaxValue)
             {
+                sum = unchecked(sum - 8);
                 word = APTR.FromPointer(word.Raw + 32); remaining -= 256; continue;
             }
             var words = remaining >= 256 ? 8u : remaining / 32;
@@ -663,15 +840,29 @@ public static class AmigaDiskFileSystemCore
             do
             {
                 var free = p.ReadUInt32(word);
+                sum = unchecked(sum + free);
                 word = APTR.FromPointer(word.Raw + 4);
                 if (free == 0) used += 32;
                 else if (free != uint.MaxValue) used += 32 - AmigaBitmapWordCore.Population(free);
             } while (--words != 0);
         }
-        // Padding bits outside the volume are never counted.
+        // The checksum includes every padding bit and word in the last page.
+        // Only the in-range low bits of its last logical word describe blocks.
         if (remaining != 0)
-            used += remaining - AmigaBitmapWordCore.Population(p.ReadUInt32(word) & ((1u << (int)remaining) - 1));
-        return used;
+        {
+            var last = p.ReadUInt32(word);
+            used += remaining - AmigaBitmapWordCore.Population(last & ((1u << (int)remaining) - 1));
+            sum = unchecked(sum + last);
+            word = APTR.FromPointer(word.Raw + 4);
+        }
+        var end = bitmap.Raw + p.BlockBytes;
+        while (word.Raw != end)
+        {
+            sum = unchecked(sum + p.ReadUInt32(word));
+            word = APTR.FromPointer(word.Raw + 4);
+        }
+        allocated = used;
+        return sum == 0;
     }
 
     public static bool CountUsed<T>(ref T p, APTR scratch, APTR bitmap, out uint used)
@@ -692,10 +883,11 @@ public static class AmigaDiskFileSystemCore
         var cursor = new BitmapCursor();
         for (var index = 0u; key < geometry.BlockCount; index++)
         {
-            if (!BitmapBlock(ref p, ref cursor, index, scratch, out var block) || !p.ReadBlock(block, bitmap) || !Checksum(ref p, bitmap)) return false;
+            if (!BitmapBlock(ref p, ref cursor, index, scratch, out var block) || !p.ReadBlock(block, bitmap)) return false;
             var count = geometry.BlockCount - key;
             if (count > geometry.BitmapBits) count = geometry.BitmapBits;
-            used += CountAllocated(ref p, bitmap, count);
+            if (!CountCheckedBitmap(ref p, bitmap, count, out var allocated)) return false;
+            used += allocated;
             key += count;
         }
         return true;

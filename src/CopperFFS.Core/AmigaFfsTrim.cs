@@ -50,6 +50,9 @@ public static partial class AmigaFfsWriteCore
         out AmigaSmartFileSystemWriteCore.TrimResult result, uint startBlock, uint blockCount, APTR validation, bool tracked, bool committed = false) where T : struct, IAmigaDiscardFileSystemPlatform
     {
         result = default; w.Error = DOS.Error.None;
+        // Discard preflight always starts with an uncached allocation page,
+        // including when the caller reuses a completed mutation's work record.
+        w.LayoutKnown = false; w.BitmapBlock = 0; w.BitmapDirty = 0;
         if (flags > AmigaSmartFileSystemTrimPacket.QueryOnly) return Fail(ref w, DOS.Error.BadNumber);
         if (p.Geometry.BitmapBits == 0 || p.Geometry.BlockCount <= AmigaFfsGeometry.Read(ref p).ReservedBlocks)
             return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -69,6 +72,9 @@ public static partial class AmigaFfsWriteCore
         }
         if (flags == AmigaSmartFileSystemTrimPacket.QueryOnly) return true;
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
+        if (w.Index.IsNotNull &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.GroupOpen or AmigaFfsMountIndex.MetadataOpen &&
+            !FinishFileWriteGroup(ref p, ref w)) return false;
 
         // FFS mutations finish their bitmap writes before returning to dispatch.
         // Flush all acknowledged writes, including the valid root, before trusting
@@ -91,9 +97,9 @@ public static partial class AmigaFfsWriteCore
         }
         if (!validated && !tracked && !TrimLayout(ref p, ref w)) return false;
         if (tracked && !TrimTrackedLayout(ref p, ref w, startBlock, blockCount)) return false;
-        if (!Prepare(ref p, ref w, 0, scan: !validated && !tracked)) return false;
-        AmigaTrimValidation.Complete(ref p, validation);
         var g = AmigaFfsGeometry.Read(ref p);
+        if (!Prepare(ref p, ref w, in g, 0, scan: !validated && !tracked)) return false;
+        AmigaTrimValidation.Complete(ref p, validation);
         var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
         uint index = startBlock > g.ReservedBlocks ? (startBlock - g.ReservedBlocks) / g.BitmapBits : 0;
         if (startBlock >= g.BlockCount) return true;
@@ -109,6 +115,7 @@ public static partial class AmigaFfsWriteCore
             // The next tracked range may use IsFree/LoadBitmap. Keep the cached
             // identity in sync with the page we just loaded into that scratch.
             w.BitmapBlock = map; w.BitmapFirst = first; w.BitmapCount = count; w.BitmapDirty = 0;
+            w.ActiveBitmap = w.Bitmap;
             for (var bit = startBlock > first ? startBlock - first : 0; bit < count; bit++)
             {
                 if (first + bit >= startBlock && first + bit - startBlock >= blockCount) break;

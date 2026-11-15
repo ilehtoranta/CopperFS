@@ -70,7 +70,7 @@ internal static class NativeFileSystemNotifications
         => APTR.ReadUInt8(message, NativeExecFieldCodec.NodeTypeOffset) == (byte)NodeType.ReplyMessage &&
             RetireOwnedReply(state, message);
 
-    private static bool RetireOwnedReply(APTR state, APTR message)
+    internal static bool RetireOwnedReply(APTR state, APTR message)
     {
         var link = APTR.FromPointer(state.Raw + Messages);
         for (var current = APTR.FromPointer(R(link, 0)); current.IsNotNull; current = APTR.FromPointer(R(link, 0)))
