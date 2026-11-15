@@ -12,11 +12,10 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool TrstProofSealed<T>(ref T p, APTR proof)
         where T : struct, IAmigaGuestMemory
     {
-        var sum = 0u;
-        for (var at = 0; at < 76; at += 4) sum = unchecked(sum + p.ReadUInt32(proof, at));
+        var sum = AmigaSmartFileSystemCore.BlockSum(ref p, proof, 76);
         var group = APTR.FromPointer(proof.Raw - TrstGroupProof);
         if (p.ReadUInt32(group, 12) == 0)
-            for (var at = 232; at <= 240; at += 4) sum = unchecked(sum + p.ReadUInt32(group, at));
+            sum = unchecked(sum + p.ReadUInt32(group, 232) + p.ReadUInt32(group, 236) + p.ReadUInt32(group, 240));
         return sum == uint.MaxValue;
     }
 

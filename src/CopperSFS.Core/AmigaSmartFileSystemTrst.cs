@@ -255,8 +255,32 @@ public static partial class AmigaSmartFileSystemWriteCore
             {
                 if (bytes <= end - destination)
                 {
-                    p.Copy(APTR.FromPointer(pointer), APTR.FromPointer(destination), bytes);
-                    destination += bytes;
+                    // Each literal is a whole number of longwords, and both
+                    // spans have already been bounded by the plan and page.
+                    // Odd journal offsets need byte accesses on the 68000.
+                    var from = pointer;
+                    var until = destination + bytes;
+                    if (((from | destination) & 1) == 0)
+                    {
+                        do
+                        {
+                            p.WriteUInt32(APTR.FromPointer(destination), 0, p.ReadUInt32(APTR.FromPointer(from)));
+                            destination += 4; from += 4;
+                        } while (destination != until);
+                    }
+                    else
+                    {
+                        do
+                        {
+                            var src = APTR.FromPointer(from);
+                            var dst = APTR.FromPointer(destination);
+                            p.WriteUInt8(dst, 0, p.ReadUInt8(src, 0));
+                            p.WriteUInt8(dst, 1, p.ReadUInt8(src, 1));
+                            p.WriteUInt8(dst, 2, p.ReadUInt8(src, 2));
+                            p.WriteUInt8(dst, 3, p.ReadUInt8(src, 3));
+                            destination += 4; from += 4;
+                        } while (destination != until);
+                    }
                 }
                 else
                 {
