@@ -175,7 +175,8 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             var benchmarkProfile = Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1" &&
                 (entry.StartsWith("CorrectnessProbe::Benchmark", StringComparison.Ordinal) ||
                  entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal));
-            var overwriteProfile = entry == "LargeWriteProbe::Sfs" && Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
+            var overwriteProfile = (entry is "LargeWriteProbe::Sfs" or "LargeWriteProbe::SfsChip") &&
+                Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
             var writeProfiler = trimProfile || benchmarkProfile || overwriteProfile || Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
                 (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend")
                 ? new ReadCpuProfile(machine, handler, rom) : null;
