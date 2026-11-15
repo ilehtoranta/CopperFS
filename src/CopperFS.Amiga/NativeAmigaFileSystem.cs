@@ -1666,6 +1666,7 @@ public static partial class NativeAmigaFileSystem
 
     // Recovery owns a full Work record. Keep its native local initialization
     // on the error path instead of paying for it before every successful Write.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void RecoverSmartWriteError(APTR state, DOS.Error error)
     {
 #if COPPERFS_SFS_GROUPED

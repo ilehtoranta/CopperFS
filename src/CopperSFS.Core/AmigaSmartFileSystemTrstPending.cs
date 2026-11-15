@@ -173,6 +173,17 @@ public static partial class AmigaSmartFileSystemWriteCore
             }
             if (!MaterializeTrstRun(ref p, active, group)) { error = DOS.Error.DiskNotValidated; return false; }
         }
+        return AdmitTrstContinuation(ref p, group, active, meta, reservations, bytes,
+            ref r, out handled, out error, deferUpdates);
+    }
+
+    // An established deferred run needs no preparation workspace. Keep the
+    // 68000 stack initialization for first admission on the admission path.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool AdmitTrstContinuation<T>(ref T p, APTR group, APTR active, APTR meta,
+        APTR reservations, uint bytes, ref Request r, out bool handled, out DOS.Error error, bool deferUpdates)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
         var w = new TrstContinuationWork { Meta = meta, Reservations = reservations,
             RootContainer = p.ReadUInt32(group, 24), BlockBytes = bytes,
             BlockCount = p.ReadUInt32(group, 48), ReservedBlocks = p.ReadUInt32(group, 56) };

@@ -49,3 +49,30 @@ With identical input assembly SHA-256 22A8847231083C426FBD23C9C95C659523D576B0CC
 On Kickstart 3.1 the inlined M68000 binary passed 12 grouped recovery and pressure cases, two partial journal/home-write cases, two overwrite contract cases, 22 flush/close, handoff and compatibility cases, seven foreign-startup cases, five TRIM cases, a journal read fault, the commit-boundary trace and five sequential-read tests. The mixed Fast mutation and verification means were 17,330,787 and 19,846,083 against 17,501,030 and 20,073,530 for SFS 1.279. Chip means were 17,332,233 and 19,912,803 against 17,557,333 and 20,140,017. Each mixed phase passed the +0.1% gate. Growth and overwrite still exceed original cycles. The grouped and inlining profiles remain opt-in. Physical-device qualification is outstanding.
 
 The exact replay-qualified source passed the Release solution build and tests (2177 passed, 5 conditional skips), the default and grouped M68000 builds and both CPU copy-instruction tests. The build reported one nullable-reference warning from the CopperSharp compiler dependency.
+
+## Continuation admission workspace
+
+The general error-recovery routine had been inlined into the write dispatcher, placing a 168-byte Work local in its native stack frame. Keeping recovery out of line reduced the dispatcher frame from 184 bytes to 12. The deferred continuation also allocated its admission workspace on every established run. Moving first admission into a separate checked function retains the same validations and rollback and leaves that workspace off the common path. The dispatcher change alone slowed the overwrite. Both changes together improved growth, overwrite and total cycles in both placements.
+
+| Placement and phase | Original SFS | 9d6c8c4 | Separate admission |
+|---|---:|---:|---:|
+| Fast growth and flush | 1,039,297 | 1,098,163 | 1,089,363 |
+| Fast overwrite and flush | 347,703 | 556,503 | 551,937 |
+| Fast verification | 4,069,770 | 3,989,913 | 3,987,897 |
+| Fast total | 5,781,693 | 5,963,213 | 5,950,873 |
+| Chip growth and flush | 1,048,047 | 1,098,583 | 1,089,553 |
+| Chip overwrite and flush | 347,967 | 558,867 | 554,383 |
+| Chip verification | 4,072,957 | 3,993,487 | 3,992,107 |
+| Chip total | 5,793,933 | 5,969,577 | 5,957,760 |
+
+The three original Fast overwrite samples were 324,540, 393,970 and 324,600 cycles. All three contribute to the reported mean. Relative to the median original run, CopperSFS overwrite took 1.70 times as many cycles.
+
+The exact grouped handler SHA-256 is 02C85144E1304DE8B6AC2C2A6BB8AC33F5C26AE966B055747E99E270C23BFD58. Guest memory remained 126,008 bytes after mount and 138,888 after mutation with 32 DOS buffers. Full-ROM samples and individual qualification results are in artifacts/sfs-cold-admission. Physical devices remain untested.
+
+The grouped binary occupies 180,104 bytes, down 452 bytes from 9d6c8c4. On growth, SFS 1.279 issued eight writes and four flushes. Both CopperSFS builds issued one read, nine writes and four flushes. Each CopperSFS growth run committed its group once. On overwrite, SFS 1.279 issued twelve writes and one flush. CopperSFS issued seventeen writes and four flushes.
+
+In the instruction profile the new growth commit took 381,590 cycles out of 1,089,380. Planning eleven journal records took 129,507 cycles, emitting them took 111,261, and writing the home runs took 81,971. The complete growth phase spent 135,762 cycles in 63 block copies. These inclusive measurements overlap. Original SFS spent 789,409 cycles in its handler during growth against 931,679 for CopperSFS. During overwrite those figures were 156,494 and 431,511, while Kickstart took 158,076 and 114,184 respectively. The original instruction profile is in artifacts/sfs-overwrite-rom-eof/rom-original. Ordinary acceptance timings above use the original measured alongside both CopperSFS builds.
+
+A separate tree-descent prototype borrowed the current image until the first edit. It reduced the Fast total to 5,933,823 cycles and growth to 1,072,610, but overwrite rose to 566,830 cycles. Chip overwrite also rose, to 569,400. It remains experimental. Hoisting shared-pool geometry checks also increased Fast overwrite to 555,463 and total to 5,957,223. A compiler-only experiment applying scalar replacement and inlining to 23 portable methods on top of 9d6c8c4 measured 553,183 Fast overwrite cycles and 5,960,147 total. The ordinary comparisons are in artifacts/sfs-borrow-tree, artifacts/sfs-proof-geometry and artifacts/sfs-core-continuation-on respectively.
+
+The Release solution build succeeded with one compiler dependency warning. The solution tests passed 2,177 cases with five conditional skips. Both standalone builds succeeded and the two CopperStart native replay suites passed 186 and 77 cases. Kickstart 3.1 runs passed grouped power cuts and failures, journal and home partial writes, explicit flush and close, original-handler recovery and handoff, foreign startup, TRIM and read placement. Mixed mutation and verification passed the original-handler gate in Fast and Chip RAM. Growth and overwrite remain above the release threshold, so this profile remains opt-in.
