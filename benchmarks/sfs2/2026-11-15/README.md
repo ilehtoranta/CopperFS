@@ -6,7 +6,7 @@ for the comparison, configuration, limitations, and source/binary distinction.
 They contain no executable, ROM, or disk-image data.
 
 `512-fast-cycles.json`, `4096-fast-cycles.json`, and `65536-fast-cycles.json`
-come from `Sfs2ThroughputTests.PacketThroughput`. `mixed-cycles.json` comes
+come from `Sfs2ThroughputTests`. `mixed-cycles.json` comes
 from the paired original-handler performance test. Both arms execute the same
 DOS probe, with three alternating trials. The original and candidate SHA256
 hashes are embedded in every file. KiB means 1024 bytes.
