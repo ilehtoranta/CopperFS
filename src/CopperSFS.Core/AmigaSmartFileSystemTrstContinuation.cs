@@ -108,8 +108,22 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (deferUpdates && group.Raw > 1 && p.ReadUInt32(active, 12) == 0)
         {
             runLimit = TrstFreeSpan(ref p, newBitmap, p.ReadUInt32(proof, 68) + progress, limit - progress);
-            var occupied = TrstFreeSpan(ref p, oldBitmap, p.ReadUInt32(proof, 64) + progress, runLimit, false);
-            if (runLimit > occupied) runLimit = occupied;
+            var firstCount = runLimit < tailLength ? runLimit : tailLength;
+            var occupied = TrstFreeSpan(ref p, oldBitmap, p.ReadUInt32(proof, 64) + progress, firstCount, false);
+            if (occupied == tailLength && runLimit > tailLength)
+            {
+                // An extended durable window proves this terminal successor
+                // stays in the same leaf and original bitmap.
+                var next = p.ReadUInt32(hint, 24);
+                var bit = next - (p.ReadUInt32(proof, 12) - p.ReadUInt32(proof, 64));
+                var bits = (w.BlockBytes - 12) * 8;
+                var afterAt = (int)p.ReadUInt32(hint, 40);
+                if (next == 0 || bit >= bits || runLimit - tailLength > bits - bit ||
+                    p.ReadUInt32(leaf, afterAt + 4) != 0 || runLimit - tailLength > p.ReadUInt16(leaf, afterAt + 12))
+                    return FailContinuation(ref w, DOS.Error.DiskNotValidated);
+                occupied += TrstFreeSpan(ref p, oldBitmap, bit, runLimit - tailLength, false);
+            }
+            runLimit = occupied;
             if (runLimit < count) runLimit = 0;
         }
         p.RedoOverlay = APTR.Null;
@@ -164,7 +178,28 @@ public static partial class AmigaSmartFileSystemWriteCore
                 p.WriteUInt32(hint, 40, 0);
             }
             else p.WriteUInt32(hint, 0, 0);
-            p.WriteUInt32(hint, TrstGroupProof - TrstGroupContinuation, 0);
+            var proof = APTR.FromPointer(hint.Raw + TrstGroupProof - TrstGroupContinuation);
+            var oldProof = p.ReadUInt32(proof);
+            p.WriteUInt32(proof, 0, 0);
+            if (p.ReadUInt32(hint) != 0 && oldProof == p.ReadUInt32(hint, 44))
+            {
+                var nextDestination = destination + count;
+                var used = nextDestination - p.ReadUInt32(proof, 16);
+                var limit = p.ReadUInt32(proof, 20);
+                if (used < limit)
+                {
+                    var sourceBit = after - (p.ReadUInt32(proof, 12) - p.ReadUInt32(proof, 64));
+                    p.WriteUInt32(proof, 12, after); p.WriteUInt32(proof, 16, nextDestination);
+                    p.WriteUInt32(proof, 20, limit - used);
+                    p.WriteUInt32(proof, 36, (uint)afterAt); p.WriteUInt32(proof, 40, (uint)beforeAt);
+                    p.WriteUInt32(proof, 44, 0); p.WriteUInt32(proof, 48, p.ReadUInt16(leaf, 12));
+                    p.WriteUInt32(proof, 64, sourceBit); p.WriteUInt32(proof, 68, p.ReadUInt32(proof, 68) + used);
+                    var group = APTR.FromPointer(hint.Raw - TrstGroupContinuation);
+                    var sum = unchecked(oldProof + AmigaSmartFileSystemCore.BlockSum(ref p, proof, 72)
+                        + p.ReadUInt32(group, 232) + p.ReadUInt32(group, 236) + p.ReadUInt32(group, 240));
+                    p.WriteUInt32(proof, 72, ~sum); p.WriteUInt32(proof, 0, oldProof);
+                }
+            }
         }
         else
         {

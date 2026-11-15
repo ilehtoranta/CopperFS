@@ -29,6 +29,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (group.IsNull) return true;
         // Retain the same header and full-span checks in their sole caller.
         // This region certificate still expires before any protection query.
+    RecheckPacket:
         var mappedLower = 0u; var mappedUpper = 0u;
         if (group.IsNull || !p.TryMappedRegion(group, TrstGroupHeaderBytes, out mappedLower, out mappedUpper) ||
             p.ReadUInt32(group) != TrstGroupMagic || p.ReadUInt32(group, 52) != p.BlockBytes)
@@ -129,6 +130,14 @@ public static partial class AmigaSmartFileSystemWriteCore
                     (reservations.IsNotNull && ((reservations.Raw >= mappedLower && reservations.Raw <= mappedUpper && OverwriteReservationBytes <= mappedUpper - reservations.Raw) || p.IsMapped(reservations, OverwriteReservationBytes)) && p.ReadUInt32(reservations) != 0))
                 {
                     if (!MaterializeTrstRun(ref p, active, group)) { error = DOS.Error.DiskNotValidated; return false; }
+                    // Materialization can rebind the unconsumed destination
+                    // window to the terminal successor. Re-enter the ordinary
+                    // nondeferred checks, including protection and mapping.
+                    // The deferred run was cleared before this one retry.
+                    if (eligible && count > validationLimit - accepted &&
+                        p.ReadUInt32(group, TrstGroupProof) == active.Raw &&
+                        p.ReadUInt32(group, TrstGroupProof + 12) == p.ReadUInt32(group, TrstGroupContinuation + 8))
+                        goto RecheckPacket;
                     return true;
                 }
                 if ((r.Buffer.Raw < mappedLower || r.Buffer.Raw > mappedUpper || r.Length > mappedUpper - r.Buffer.Raw) && !p.IsMapped(r.Buffer, r.Length)) { error = DOS.Error.BadNumber; return false; }
@@ -149,7 +158,14 @@ public static partial class AmigaSmartFileSystemWriteCore
                         ? DOS.Error.DiskWriteProtected : DOS.Error.DiskNotValidated;
                     return false;
                 }
-                p.ObserveFreedRange(p.ReadUInt32(group, TrstGroupContinuation + 8) + accepted, count);
+                var tailCount = p.ReadUInt32(group, TrstGroupContinuation + 12);
+                if (accepted < tailCount)
+                {
+                    var firstCount = count < tailCount - accepted ? count : tailCount - accepted;
+                    p.ObserveFreedRange(p.ReadUInt32(group, TrstGroupContinuation + 8) + accepted, firstCount);
+                    if (count != firstCount) p.ObserveFreedRange(p.ReadUInt32(group, TrstGroupContinuation + 24), count - firstCount);
+                }
+                else p.ObserveFreedRange(p.ReadUInt32(group, TrstGroupContinuation + 24) + (accepted - tailCount), count);
                 accepted += count;
                 p.WriteUInt32(group, TrstDeferredCount, accepted);
                 p.WriteUInt32(group, TrstDeferredInverse, ~accepted);

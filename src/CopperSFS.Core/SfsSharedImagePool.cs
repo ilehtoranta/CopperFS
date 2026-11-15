@@ -163,12 +163,34 @@ public static class SfsSharedImagePool
     internal static APTR SlotAt<T>(ref T p, APTR view, uint index) where T : struct, IAmigaGuestMemory
         => APTR.FromPointer(p.ReadUInt32(APTR.FromPointer(p.ReadUInt32(view, 20) + index * 4)));
 
+    // Native SFS reads usually hit the first pool bucket, or find it empty.
+    // Deferred materialization, collisions and uncertified images take the
+    // normal checked lookup, including the legacy and recovery arena formats.
+    public static APTR ReadOverlay<T>(ref T p, APTR view, uint block, uint id, uint bytes, out bool found)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        if (p.ReadUInt32(view, 8) == (Format | bytes) && p.ReadUInt32(view, 12) <= 1)
+        {
+            var index = Hash(block) & p.ReadUInt32(view, 16);
+            var slot = APTR.FromPointer(p.ReadUInt32(view, (int)(ViewBytes + index * 4)));
+            if (slot.IsNull) { found = false; return APTR.Null; }
+            if (id != 0 && p.ReadUInt32(slot) == block && p.ReadUInt32(slot, 4) == id)
+            {
+                found = true;
+                return APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
+            }
+        }
+        return AmigaSmartFileSystemRedoArena.MetadataView(ref p, view, block, id, false, out found);
+    }
+
+    private static uint Hash(uint block) => block ^ (block >> 16);
+
     private static APTR Probe<T>(ref T p, APTR view, uint block) where T : struct, IAmigaGuestMemory
     {
         var mask = p.ReadUInt32(view, 16);
         // Fold the two 16-bit halves. Both adjacent blocks and large-volume
         // block numbers contribute, with a single word swap on 68k.
-        var index = (block ^ (block >> 16)) & mask;
+        var index = Hash(block) & mask;
         for (var attempts = 0u; attempts <= mask; attempts++, index = (index + 1) & mask)
         {
             var bucket = APTR.FromPointer(view.Raw + ViewBytes + index * 4);

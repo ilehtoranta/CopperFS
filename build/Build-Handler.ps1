@@ -20,6 +20,7 @@ param(
     [ValidateSet(64, 256, 1024)] [int]$FfsIndexKiB = 256,
     [switch]$SkipCompilerBuild,
     [switch]$SkipCilica,
+    [switch]$CilicaInlining,
     [switch]$GroupedSfs2Trst,
     [switch]$GroupedSfsTrst,
     [switch]$SharedSfsPool,
@@ -88,10 +89,11 @@ if (!$SkipCilica) {
     # The pinned optimizer supports scalar replacement independently of inlining.
     # Reprocess the original input with that profile, never the inlined output.
     $optimizer = Join-Path $CopperSharpRoot '.artifacts/CilicaOptimizer/build/bin/CilicaOptimizer/release/CilicaOptimizer.dll'
-    dotnet $optimizer $dos $optimizedDos --resolver $inputRoot --inlining off
-    if ($LASTEXITCODE -ne 0) { throw 'Standalone no-inline CILica optimization failed.' }
+    $inlining = if ($CilicaInlining) { 'on' } else { 'off' }
+    dotnet $optimizer $dos $optimizedDos --resolver $inputRoot --inlining $inlining
+    if ($LASTEXITCODE -ne 0) { throw 'Standalone CILica optimization failed.' }
     $report = Get-Content -LiteralPath "$optimizedDos.cilica.json" -Raw | ConvertFrom-Json
-    if ($report.EnableInlining -ne $false -or $report.EnableScalarReplacement -ne $true) { throw 'Unexpected CILica optimization profile.' }
+    if ($report.EnableInlining -ne $CilicaInlining.IsPresent -or $report.EnableScalarReplacement -ne $true) { throw 'Unexpected CILica optimization profile.' }
     $dos = $optimizedDos
 }
 $output = Join-Path $ArtifactRoot $(if ($Ffs) { 'CopperFFS' } else { 'CopperSFS' })

@@ -29,9 +29,12 @@ public sealed class CopyInstructionTests
         Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
         for (var sourceAlignment = 0u; sourceAlignment < 4; sourceAlignment++)
         for (var targetAlignment = 0u; targetAlignment < 4; targetAlignment++)
-        foreach (var length in new uint[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 31, 32, 33, 511, 512, 513 })
+        foreach (var length in new uint[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 31, 32, 33, 255, 256, 257, 511, 512, 513 })
         {
-            var bus = new CopyBus(); compiled.Code.CopyTo(bus.Memory, 0x10000);
+            var bus = new CopyBus { WideUnaligned = model == M68kCpuModel.M68020 };
+            bus.Put(4, 0x2000);
+            BinaryPrimitives.WriteUInt16BigEndian(bus.Memory.AsSpan(0x2000 + 296, 2), bus.WideUnaligned ? (ushort)2 : (ushort)0);
+            compiled.Code.CopyTo(bus.Memory, 0x10000);
             foreach (var relocation in compiled.Relocations)
             {
                 var address = 0x10000u + (uint)relocation.Offset;
@@ -57,6 +60,7 @@ public sealed class CopyInstructionTests
     {
         public readonly byte[] Memory = new byte[0x100000];
         public uint Source, Target, Bytes;
+        public bool WideUnaligned;
         private void Range(uint address, uint bytes, bool write)
         {
             if (address < 0x4000 || address >= 0x5000) return;
@@ -69,15 +73,15 @@ public sealed class CopyInstructionTests
         public byte ReadByte(uint a, ref long c, M68kBusAccessKind k)
         { Range(a, 1, false); return Memory[a]; }
         public ushort ReadWord(uint a, ref long c, M68kBusAccessKind k)
-        { Range(a, 2, false); Assert.Equal(0u, a & 1); return BinaryPrimitives.ReadUInt16BigEndian(Memory.AsSpan((int)a, 2)); }
+        { Range(a, 2, false); if (!WideUnaligned) Assert.Equal(0u, a & 1); return BinaryPrimitives.ReadUInt16BigEndian(Memory.AsSpan((int)a, 2)); }
         public uint ReadLong(uint a, ref long c, M68kBusAccessKind k)
-        { Range(a, 4, false); Assert.Equal(0u, a & 1); return Get(a); }
+        { Range(a, 4, false); if (!WideUnaligned) Assert.Equal(0u, a & 1); return Get(a); }
         public void WriteByte(uint a, byte v, ref long c, M68kBusAccessKind k)
         { Range(a, 1, true); Memory[a] = v; }
         public void WriteWord(uint a, ushort v, ref long c, M68kBusAccessKind k)
-        { Range(a, 2, true); Assert.Equal(0u, a & 1); BinaryPrimitives.WriteUInt16BigEndian(Memory.AsSpan((int)a, 2), v); }
+        { Range(a, 2, true); if (!WideUnaligned) Assert.Equal(0u, a & 1); BinaryPrimitives.WriteUInt16BigEndian(Memory.AsSpan((int)a, 2), v); }
         public void WriteLong(uint a, uint v, ref long c, M68kBusAccessKind k)
-        { Range(a, 4, true); Assert.Equal(0u, a & 1); Put(a, v); }
+        { Range(a, 4, true); if (!WideUnaligned) Assert.Equal(0u, a & 1); Put(a, v); }
     }
 }
 
