@@ -65,3 +65,33 @@ The 13 other full-ROM compatibility cases passed, including deferred close, expl
 The Release solution built with one nullable-reference warning in the CopperSharp compiler. Its tests recorded 2,263 passes and five skips, including 1,330 SFS passes. The added SFS tests exercise whole-extent replacement in a non-root leaf with both borrowed and scratch-backed metadata. They check pending visibility, the committed view before flush, extent links, file contents and a neighboring file.
 
 The free-memory probe sampled Exec memory after loading each handler. Both CopperSFS builds retained 130,104 bytes after mount and 139,864 after mixed work. That is zero additional per-mount RAM. The new code accounts for 920 more bytes of loaded handler memory. Physical Amiga and device qualification was outside these emulator measurements.
+
+## Classic grouped handler without a shared pool
+
+The non-pool MC68000 HUNK previously reached default interface dispatch for
+optional journal operations. The writer could persist the expected payload
+without replying to DOS. Giving the native platform concrete one-block
+fallbacks for journal original reads, journal scratch borrowing and retained
+writes restored completion. A control compiled from the same optimized inputs
+with those five methods removed again failed to finish the writer probe.
+
+With Kickstart 3.1, the rebuilt grouped HUNK
+`2CB44A070D05419C812FD4D25AA72ED7A492269FE38776C87127747F21C12238`
+completed two 8,192-byte overwrites beginning at offsets 8,192 and 16,384.
+Close and explicit DOS flush succeeded. The write boot recorded four device
+flushes. A new MC68000 boot read all 32,768 bytes, including the original
+prefix and suffix, reached EOF and issued zero writes. The independent SFS
+checker verified the file and its 512-byte neighbor. The five grouped-close
+cases cover explicit flush, timer expiry, inhibit, manual TRIM and a power cut
+after close. All five passed, as did recovery after each of four failed commit
+barriers. Local boot receipts are under `artifacts/sfs-writer-fix/fixed`.
+
+On the relocation-remount branch, the grouped writer also requires the grouped
+SFS checkpoint and checked extent-leaf changes through commit `f61bc65`.
+Building this branch with `Build-Handler.ps1 -GroupedSfsTrst` produced a
+157,704-byte MC68000 HUNK with SHA-256
+`12CBB336A58562F66D40E7724816308136F7AACE31E5D8EA1A9869FD39CC3976`.
+All 13 selected Kickstart tests and 141 native replay tests passed. The
+relocation writer finished in 886 frames with four device flushes. Cold
+remount verified the file through EOF in 910 frames and issued zero writes.
+Branch-build receipts are under `artifacts/sfs-writer-push`.

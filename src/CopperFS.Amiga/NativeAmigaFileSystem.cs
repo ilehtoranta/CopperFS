@@ -3548,6 +3548,24 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
                 FindCached(first + i), bytes);
         return true;
     }
+#else
+    // Bind these optional journal operations directly on the native value type.
+    // The non-pool handler uses the ordinary one-block read and write paths.
+    public bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success)
+    {
+        success = false;
+        return false;
+    }
+
+    public APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity)
+    {
+        capacity = 0;
+        return APTR.Null;
+    }
+
+    public void ReleaseSfsJournalPages(APTR pages) { }
+    public uint RetainedRunCapacity => 1;
+    public bool WriteRetainedRun(uint first, uint count, APTR slots) => false;
 #endif
     public bool WriteRetainedBlock(uint block, APTR source)
     {
