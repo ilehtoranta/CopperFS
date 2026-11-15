@@ -64,6 +64,9 @@ public static partial class NativeAmigaFileSystem
 
     internal static bool MountSfs2ForInput(ref NativeFileSystemPlatform p, APTR state, bool emptyCache = false)
     {
+#if COPPERFS_SFS2_OWNED
+        if (!NativeSfs2Bridge.MountContext(state)) return false;
+#endif
         var entry = APTR.FromPointer(APTR.ReadUInt32(state, SmartEnumerationCacheOffset));
         if (entry.IsNotNull)
         {

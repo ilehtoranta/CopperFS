@@ -7,6 +7,41 @@ namespace CopperSFS.Tests;
 public sealed class AmigaScsiUnmapTests
 {
     [Theory]
+    [InlineData(1u)] [InlineData(2u)] [InlineData(8u)]
+    public void VectorDiscardReusesDiscoveryAndHonoursDescriptorLimit(uint descriptors)
+    {
+        var p = new Scsi { MaximumDescriptors = descriptors }; var control = APTR.FromPointer(512);
+        var ranges = APTR.FromPointer(2048);
+        AmigaVolumeGeometry.Create(10000, 512, 1, out var g);
+        Assert.True(AmigaScsiUnmap.Query(ref p, g, control, out _));
+        Assert.Equal(descriptors, AmigaScsiUnmap.MaximumDescriptors(ref p, control));
+        for (var i = 0u; i < 8; i++)
+        { p.WriteUInt32(ranges, (int)i * 8, 100 + i * 10); p.WriteUInt32(ranges, (int)i * 8 + 4, 3); }
+        Assert.True(AmigaScsiUnmap.DiscardRanges(ref p, g, control, ranges, descriptors));
+        Assert.True(AmigaScsiUnmap.DiscardRanges(ref p, g, control, ranges, descriptors));
+        Assert.Equal((int)descriptors * 2, p.Unmapped.Count);
+        Assert.Equal(new byte[] { 0x12, 0x12, 0x9E, 0x42, 0x42 }, p.Opcodes);
+        if (descriptors < 8) Assert.False(AmigaScsiUnmap.DiscardRanges(ref p, g, control, ranges, descriptors + 1));
+        g.StartByte += 512;
+        Assert.False(AmigaScsiUnmap.DiscardRanges(ref p, g, control, ranges, descriptors));
+        Assert.Equal(5, p.Opcodes.Count);
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void VectorRejectsAggregateOverflowOrInvalidLastRangeBeforeAnyDiscard(bool badLast)
+    {
+        var p = new Scsi { MaximumDescriptors = 8, MaximumSectors = 32 }; var control = APTR.FromPointer(512);
+        var ranges = APTR.FromPointer(2048);
+        AmigaVolumeGeometry.Create(10000, 512, 1, out var g);
+        Assert.True(AmigaScsiUnmap.Query(ref p, g, control, out _));
+        p.WriteUInt32(ranges, 0, 100); p.WriteUInt32(ranges, 4, 20);
+        p.WriteUInt32(ranges, 8, badLast ? 9999u : 200u); p.WriteUInt32(ranges, 12, 20);
+        Assert.False(AmigaScsiUnmap.DiscardRanges(ref p, g, control, ranges, 2));
+        Assert.Empty(p.Unmapped); Assert.Equal(3, p.Opcodes.Count);
+    }
+
+    [Theory]
     [InlineData(512u, 512u, 0UL, 1u, 2u)]
     [InlineData(512u, 1024u, 0x100000000UL, 3u, 5u)]
     [InlineData(512u, 512u, 0x20000000000UL, 1u, 7u)]
@@ -80,6 +115,7 @@ public sealed class AmigaScsiUnmapTests
         public readonly List<byte> Opcodes = [];
         public readonly List<(ulong Lba, ulong Count)> Unmapped = [];
         public uint SectorBytes = 512;
+        public uint MaximumDescriptors = 1, MaximumSectors = 32768;
         public int FailCommand, Failure, CapFault = -1;
         public Scsi() { }
         public bool ScsiDirect(APTR command)
@@ -96,7 +132,7 @@ public sealed class AmigaScsiUnmapTests
                 var page = ReadUInt8(cdb, 2); WriteUInt8(data, 1, CapFault == 0 ? (byte)0 : page);
                 WriteUInt16(data, 2, (ushort)(page == 0xB2 ? 4 : 60));
                 if (page == 0xB2) { WriteUInt8(data, 5, CapFault == 1 ? (byte)0 : (byte)128); WriteUInt32(command, 8, 8); }
-                else { WriteUInt32(data, 20, CapFault == 2 ? 0u : 32768u); WriteUInt32(data, 24, CapFault == 3 ? 0u : 1u); }
+                else { WriteUInt32(data, 20, CapFault == 2 ? 0u : MaximumSectors); WriteUInt32(data, 24, CapFault == 3 ? 0u : MaximumDescriptors); }
             }
             else if (opcode == 0x9E)
             {
@@ -106,11 +142,15 @@ public sealed class AmigaScsiUnmapTests
             }
             else
             {
-                Assert.Equal(0x42, opcode); Assert.Equal(10, cmdLength); Assert.Equal(24u, length);
-                Assert.Equal(24, ReadUInt8(cdb, 8)); Assert.Equal(0, ReadUInt8(cdb, 1));
-                Assert.Equal(22, ReadUInt16(data)); Assert.Equal(16, ReadUInt16(data, 2));
-                Assert.Equal(0u, ReadUInt32(data, 4)); Assert.Equal(0u, ReadUInt32(data, 20));
-                Unmapped.Add((((ulong)ReadUInt32(data, 8) << 32) | ReadUInt32(data, 12), ReadUInt32(data, 16)));
+                Assert.Equal(0x42, opcode); Assert.Equal(10, cmdLength);
+                Assert.Equal(length, (uint)ReadUInt16(cdb, 7)); Assert.Equal(0, ReadUInt8(cdb, 1));
+                Assert.Equal(length - 2, (uint)ReadUInt16(data)); Assert.Equal(length - 8, (uint)ReadUInt16(data, 2));
+                Assert.Equal(0u, ReadUInt32(data, 4));
+                for (var at = 8; at < length; at += 16)
+                {
+                    Assert.Equal(0u, ReadUInt32(data, at + 12));
+                    Unmapped.Add((((ulong)ReadUInt32(data, at) << 32) | ReadUInt32(data, at + 4), ReadUInt32(data, at + 8)));
+                }
             }
             if (Opcodes.Count == FailCommand)
             {

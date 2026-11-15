@@ -158,6 +158,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
             // OriginallyFree/FreeSearchMap exclude these retired blocks until
             // commit, even though the transaction's current bitmap frees them.
             if (!Put(ref p, ref w, map, w.Bitmap)) return false;
+            p.ObserveFreedRange(first, take);
             w.FreeDelta += (int)take; first += take; count -= take;
         }
         return true;

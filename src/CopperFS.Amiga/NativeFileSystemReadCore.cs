@@ -11,12 +11,17 @@ public static class NativeFileSystemReadCore
     // FFS uses its otherwise unused word at 96 for the next pointer-table key.
     public static int ReadFfsAligned<T>(ref T p, APTR file, uint header, uint dosType, uint position,
         APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)
+        where T : struct, IAmigaFileSystemPlatform =>
+        ReadFfsAligned(ref p, file, header, dosType, position, destination, length, metadata, data, out error, APTR.Null);
+
+    public static int ReadFfsAligned<T>(ref T p, APTR file, uint header, uint dosType, uint position,
+        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error, APTR mountIndex)
         where T : struct, IAmigaFileSystemPlatform
     {
         if (file.IsNull) return AmigaDiskFileSystemCore.Read(ref p, header, dosType, position,
-            destination, length, metadata, data, out error);
+            destination, length, metadata, data, out error, mountIndex);
         if (length != 0 && length < 512)
-            return ReadFfsPartial(ref p,file,header,dosType,position,destination,length,metadata,data,out error);
+            return ReadFfsPartial(ref p,file,header,dosType,position,destination,length,metadata,data,out error,mountIndex);
         // The native record already owns a validated run. Whole 512-byte
         // reads within it need no temporary cursor, table frame or division.
         // Keep the general reader for scratch/private-record aliases and tails.
@@ -50,11 +55,11 @@ public static class NativeFileSystemReadCore
                 }
             }
         }
-        return ReadFfs(ref p, file, header, dosType, position, destination, length, metadata, data, out error);
+        return ReadFfs(ref p, file, header, dosType, position, destination, length, metadata, data, out error, mountIndex);
     }
 
     private static int ReadFfsPartial<T>(ref T p, APTR file, uint header, uint dosType, uint position,
-        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)
+        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error, APTR mountIndex = default)
         where T : struct, IAmigaFileSystemPlatform
     {
         // A retained run also covers partial packets within a single sector.
@@ -78,7 +83,7 @@ public static class NativeFileSystemReadCore
                 }
             }
         }
-        return ReadFfs(ref p,file,header,dosType,position,destination,length,metadata,data,out error);
+        return ReadFfs(ref p,file,header,dosType,position,destination,length,metadata,data,out error,mountIndex);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
@@ -97,10 +102,15 @@ public static class NativeFileSystemReadCore
 
     public static int ReadFfs<T>(ref T p, APTR file, uint header, uint dosType, uint position,
         APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error)
+        where T : struct, IAmigaFileSystemPlatform =>
+        ReadFfs(ref p, file, header, dosType, position, destination, length, metadata, data, out error, APTR.Null);
+
+    public static int ReadFfs<T>(ref T p, APTR file, uint header, uint dosType, uint position,
+        APTR destination, uint length, APTR metadata, APTR data, out DOS.Error error, APTR mountIndex)
         where T : struct, IAmigaFileSystemPlatform
     {
         if (file.IsNull) return AmigaDiskFileSystemCore.Read(ref p, header, dosType, position,
-            destination, length, metadata, data, out error);
+            destination, length, metadata, data, out error, mountIndex);
         var cursor = new AmigaDiskFileSystemCore.ReadCursor
         {
             Header = p.ReadUInt32(file, 56), Size = p.ReadUInt32(file, 60), Table = p.ReadUInt32(file, 64),
@@ -109,7 +119,7 @@ public static class NativeFileSystemReadCore
             NextTable = p.ReadUInt32(file, 96)
         };
         var actual = AmigaDiskFileSystemCore.Read(ref p, ref cursor, header, dosType, position,
-            destination, length, metadata, data, out error, out var changed);
+            destination, length, metadata, data, out error, out var changed, mountIndex);
         // Retain the old writeback if the caller aliases the private object:
         // copying data there may have overwritten its cached cursor words.
         if (!changed && (destination.Raw <= file.Raw

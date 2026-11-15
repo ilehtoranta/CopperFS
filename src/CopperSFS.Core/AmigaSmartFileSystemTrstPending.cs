@@ -72,8 +72,18 @@ public static partial class AmigaSmartFileSystemWriteCore
                 if (group.Raw <= 1 || span < TrstGroupHeaderBytes || group.Raw > uint.MaxValue - span ||
                     (queryProtection && !p.IsMapped(group, span)) || p.ReadUInt32(group) != TrstGroupMagic ||
                     p.ReadUInt32(group, 4) != 1 || p.ReadUInt32(group, 8) != span) { error = DOS.Error.DiskNotValidated; return false; }
-                var validationArenaBytes = p.ReadUInt32(group, 12);
                 var validationBytes = p.ReadUInt32(group, 52);
+                if (p.ReadUInt32(group, 12) == 0)
+                {
+                    if (!SfsSharedImagePool.ValidLayout(ref p, group, active, span, validationBytes) ||
+                        p.ReadUInt32(group, 16) != active.Raw || p.ReadUInt32(active, 12) != group.Raw ||
+                        p.ReadUInt32(active, 8) != (validationBytes | SfsSharedImagePool.Format | AmigaSmartFileSystemRedoArena.Deferred) ||
+                        !TrstPoolProofOwned(ref p, group, active)) { error = DOS.Error.DiskNotValidated; return false; }
+                }
+                else
+                {
+                var validationArenaBytes = p.ReadUInt32(group, 12);
+
                 if (validationBytes < 512 || validationBytes > 32768 || validationArenaBytes < validationBytes + 40 ||
                     validationArenaBytes > (uint.MaxValue - TrstGroupHeaderBytes) / 2 ||
                     span != TrstGroupHeaderBytes + validationArenaBytes * 2) { error = DOS.Error.DiskNotValidated; return false; }
@@ -97,6 +107,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                     if (validationCapacity > (validationAvailable >> 9) || (validationCapacity << 9) + (validationCapacity << 3) > validationAvailable) { error = DOS.Error.DiskNotValidated; return false; }
                 }
                 else if (validationCapacity > validationAvailable / (validationBytes + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)) { error = DOS.Error.DiskNotValidated; return false; }
+                }
                 var validationCount = p.ReadUInt32(group, TrstDeferredCount); var validationLimit = p.ReadUInt32(group, TrstDeferredLimit);
                 if (validationCount == 0 || validationCount > validationLimit || validationLimit > ushort.MaxValue ||
                     p.ReadUInt32(group, TrstDeferredInverse) != ~validationCount ||
@@ -138,6 +149,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                         ? DOS.Error.DiskWriteProtected : DOS.Error.DiskNotValidated;
                     return false;
                 }
+                p.ObserveFreedRange(p.ReadUInt32(group, TrstGroupContinuation + 8) + accepted, count);
                 accepted += count;
                 p.WriteUInt32(group, TrstDeferredCount, accepted);
                 p.WriteUInt32(group, TrstDeferredInverse, ~accepted);

@@ -45,6 +45,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         // It never holds a borrowed metadata pointer.
         internal APTR TrstObjectHint;
         internal APTR TrstContinuation;
+        internal uint FreedFirst, FreedCount;
+        internal bool TrackFrees;
     }
 
     public struct Request
@@ -440,6 +442,7 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool Prepare<T>(ref T p, ref Work w)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        w.FreedCount = 0; w.TrackFrees = p.TracksFreedRanges;
         w.Error = DOS.Error.None; w.FreeDelta = 0; w.PreserveBitmap = false;
         w.RecycledFilesDelta = w.RecycledBlocksDelta = 0;
         w.JournalActive = false; w.JournalHead = 0; w.PublishedHead = 0; w.AdminReservation = 0;
@@ -544,6 +547,7 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool Finish<T>(ref T p, ref Work w) where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (w.Error != DOS.Error.None) return false;
+        if (w.FreedCount != 0) { p.ObserveFreedRange(w.FreedFirst, w.FreedCount); w.FreedCount = 0; }
         if (w.FreeDelta != 0 || w.RecycledFilesDelta != 0 || w.RecycledBlocksDelta != 0)
         {
             var root = Edit(ref p, ref w, w.RootContainer, ObjectId, w.Meta);
@@ -621,9 +625,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         free = false;
-        if (!BitmapPosition(ref p, ref w, block, out var map, out var offset, out var mask) ||
-            !Read(ref p, ref w, map, BitmapId, w.Bitmap)) return false;
-        free = (p.ReadUInt32(w.Bitmap, offset) & mask) != 0 && !OverwriteReserved(ref p, ref w, block);
+        if (!BitmapPosition(ref p, ref w, block, out var map, out var offset, out var mask)) return false;
+        var bitmap = View(ref p, ref w, map, BitmapId, w.Bitmap);
+        if (bitmap.IsNull) return false;
+        free = (p.ReadUInt32(bitmap, offset) & mask) != 0 && !OverwriteReserved(ref p, ref w, block);
         if (free && w.JournalActive)
         {
             if (!JournalContains(ref p, ref w, block, out var inUse)) return false;
@@ -649,6 +654,15 @@ public static partial class AmigaSmartFileSystemWriteCore
         ReplaceWord(ref p, bitmap, offset, free ? old | mask : old & ~mask);
         if (!PutSealed(ref p, ref w, map, bitmap)) return false;
         w.FreeDelta += free ? 1 : -1;
+        if (free && w.TrackFrees)
+        {
+            if (w.FreedCount != 0 && block == w.FreedFirst + w.FreedCount) w.FreedCount++;
+            else
+            {
+                if (w.FreedCount != 0) p.ObserveFreedRange(w.FreedFirst, w.FreedCount);
+                w.FreedFirst = block; w.FreedCount = 1;
+            }
+        }
         return true;
     }
 
@@ -851,16 +865,17 @@ public static partial class AmigaSmartFileSystemWriteCore
     {
         node = leaf = 0; slot = 0;
         if (depth >= 8) return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (!Read(ref p, ref w, block, NodeId, w.Meta)) return false;
-        var first = p.ReadUInt32(w.Meta, 12);
-        var stride = p.ReadUInt32(w.Meta, 16);
+        var image = View(ref p, ref w, block, NodeId, w.Meta);
+        if (image.IsNull) return false;
+        var first = p.ReadUInt32(image, 12);
+        var stride = p.ReadUInt32(image, 16);
         if (stride == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (stride == 1)
         {
             for (var at = 20; at + 10 <= w.BlockBytes; at += 10)
             {
                 var candidate = first + (uint)((at - 20) / 10);
-                if (candidate == 0 || p.ReadUInt32(w.Meta, at) != 0) continue;
+                if (candidate == 0 || p.ReadUInt32(image, at) != 0) continue;
                 node = candidate; leaf = block; slot = at; return true;
             }
             return false;
@@ -963,8 +978,9 @@ public static partial class AmigaSmartFileSystemWriteCore
     {
         full = false;
         if (depth >= 8) return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (!Read(ref p, ref w, block, NodeId, w.Meta)) return false;
-        var first = p.ReadUInt32(w.Meta, 12); var stride = p.ReadUInt32(w.Meta, 16);
+        var image = View(ref p, ref w, block, NodeId, w.Meta);
+        if (image.IsNull) return false;
+        var first = p.ReadUInt32(image, 12); var stride = p.ReadUInt32(image, 16);
         if (stride == 0 || node < first) return Fail(ref w, DOS.Error.DiskNotValidated);
         var index = (node - first) / stride;
         if (stride == 1)
@@ -972,12 +988,12 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (index >= (w.BlockBytes - 20) / 10) return Fail(ref w, DOS.Error.DiskNotValidated);
             full = true;
             for (var at = 20; at + 10 <= w.BlockBytes; at += 10)
-                if (p.ReadUInt32(w.Meta, at) == 0) { full = false; break; }
+                if (p.ReadUInt32(image, at) == 0) { full = false; break; }
             return true;
         }
         if (index >= (w.BlockBytes - 20) / 4) return Fail(ref w, DOS.Error.DiskNotValidated);
         var offset = 20 + (int)index * 4;
-        var pointer = p.ReadUInt32(w.Meta, offset);
+        var pointer = p.ReadUInt32(image, offset);
         var shift = 0;
         while ((1u << shift) < w.BlockBytes) shift++;
         shift -= 5;
@@ -1135,8 +1151,14 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool FileBlock<T>(ref T p, ref Work w, uint first, uint index, out uint diskBlock,
         out uint lastKey, out uint lastSize, out uint lastStart, out uint lastLeaf, out int lastOffset)
         where T : struct, IAmigaWritableFileSystemPlatform
+        => FileBlockView(ref p, ref w, first, index, out diskBlock, out lastKey, out lastSize,
+            out lastStart, out lastLeaf, out lastOffset, out _);
+
+    private static bool FileBlockView<T>(ref T p, ref Work w, uint first, uint index, out uint diskBlock,
+        out uint lastKey, out uint lastSize, out uint lastStart, out uint lastLeaf, out int lastOffset, out APTR image)
+        where T : struct, IAmigaWritableFileSystemPlatform
     {
-        diskBlock = lastKey = lastSize = lastStart = 0;
+        image = APTR.Null; diskBlock = lastKey = lastSize = lastStart = 0;
         lastLeaf = 0; lastOffset = 0;
         var key = first; var start = 0u;
         for (var guard = 0u; key != 0 && guard < w.BlockCount; guard++)
@@ -1147,9 +1169,10 @@ public static partial class AmigaSmartFileSystemWriteCore
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             var count = p.ReadUInt16(view, lastOffset + 12);
             var next = p.ReadUInt32(view, lastOffset + 4);
-            if (count == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (count == 0 || key >= w.BlockCount || count > w.BlockCount - key ||
+                count > w.BlockCount - start) return Fail(ref w, DOS.Error.DiskNotValidated);
             lastKey = key; lastSize = count; lastStart = start;
-            if (index < start + count) { diskBlock = key + index - start; return true; }
+            if (index < start + count) { image = view; diskBlock = key + index - start; return true; }
             start += count; key = next;
         }
         if (key != 0) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -1158,24 +1181,34 @@ public static partial class AmigaSmartFileSystemWriteCore
 
     private static bool ExtentLeaf<T>(ref T p, ref Work w, uint key, out uint leaf)
         where T : struct, IAmigaWritableFileSystemPlatform
+        => ExtentLeafView(ref p, ref w, key, out leaf, mutableScratch: true).IsNotNull;
+
+    // Internal nodes are read-only. The returned leaf is borrowed until the
+    // next block access. Request explicitly owned scratch for mutation even if
+    // a platform happens to back a read-only view with that same address.
+    private static APTR ExtentLeafView<T>(ref T p, ref Work w, uint key, out uint leaf, bool mutableScratch = false)
+        where T : struct, IAmigaWritableFileSystemPlatform
     {
         leaf = w.ExtentRoot;
         for (var depth = 0u; depth < w.BlockCount; depth++)
         {
-            if (!Read(ref p, ref w, leaf, TreeId, w.Meta)) return false;
-            var count = p.ReadUInt16(w.Meta, 12); var isLeaf = p.ReadUInt8(w.Meta, 14) != 0;
-            var stride = p.ReadUInt8(w.Meta, 15);
+            var image = mutableScratch
+                ? (Read(ref p, ref w, leaf, TreeId, w.Meta) ? w.Meta : APTR.Null)
+                : View(ref p, ref w, leaf, TreeId, w.Meta);
+            if (image.IsNull) return APTR.Null;
+            var count = p.ReadUInt16(image, 12); var isLeaf = p.ReadUInt8(image, 14) != 0;
+            var stride = p.ReadUInt8(image, 15);
             if ((!isLeaf && count == 0) || stride < (isLeaf ? 14 : 8) ||
-                16u + (uint)count * stride > w.BlockBytes)
-                return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (isLeaf) return true;
+                16u + (uint)count * stride > w.BlockBytes) break;
+            if (isLeaf) return image;
             var selected = 16;
-            for (var i = 1; i < count && p.ReadUInt32(w.Meta, 16 + i * stride) <= key; i++)
+            for (var i = 1; i < count && p.ReadUInt32(image, 16 + i * stride) <= key; i++)
                 selected = 16 + i * stride;
-            leaf = p.ReadUInt32(w.Meta, selected + 4);
-            if (leaf == 0 || leaf >= w.BlockCount) return Fail(ref w, DOS.Error.DiskNotValidated);
+            leaf = p.ReadUInt32(image, selected + 4);
+            if (leaf == 0 || leaf >= w.BlockCount) break;
         }
-        return Fail(ref w, DOS.Error.DiskNotValidated);
+        Fail(ref w, DOS.Error.DiskNotValidated);
+        return APTR.Null;
     }
 
     private static void InsertBnode<T>(ref T p, APTR buffer, int count, int stride, uint key,
@@ -1322,10 +1355,10 @@ public static partial class AmigaSmartFileSystemWriteCore
     // update and extend its extent once. The bitmap and extent remain covered
     // by the same undo transaction as the ordinary block-by-block path.
     private static bool AppendContiguousRun<T>(ref T p, ref Work w, ref Request r,
-        uint first, uint oldBlocks, out bool handled, out uint runStart)
+        uint first, uint oldBlocks, out bool handled, out uint runStart, bool deferPayload = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (!AppendPreferredRun(ref p, ref w, ref r, first, oldBlocks, out handled, out runStart)) return false;
+        if (!AppendPreferredRun(ref p, ref w, ref r, first, oldBlocks, out handled, out runStart, deferPayload)) return false;
         if (handled) return true;
         var blocks = r.Length / w.BlockBytes;
         if (blocks < 2 || blocks > 65536 / w.BlockBytes || w.JournalHead != 0) return true;
@@ -1345,7 +1378,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             !GrowExtent(ref p, ref w, start, start + 1, count - 1)) return false;
         if ((r.Buffer.Raw & 3) == 0)
         {
-            if (!WriteNewDataRun(ref p, ref w, start, count, r.Buffer)) return false;
+            if (!deferPayload && !WriteNewDataRun(ref p, ref w, start, count, r.Buffer)) return false;
         }
         else for (var block = 0u; block < count; block++)
         {
@@ -1358,7 +1391,7 @@ public static partial class AmigaSmartFileSystemWriteCore
     }
 
     private static bool AppendPreferredRun<T>(ref T p, ref Work w, ref Request r,
-        uint first, uint oldBlocks, out bool handled, out uint runStart)
+        uint first, uint oldBlocks, out bool handled, out uint runStart, bool deferPayload)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         handled = false; runStart = 0;
@@ -1438,7 +1471,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         else if (!GrowExtentAt(ref p, ref w, lastLeaf, lastOffset, lastSize + blocks)) return false;
         if ((r.Buffer.Raw & 3) == 0)
         {
-            if (!WriteNewDataRun(ref p, ref w, start, blocks, r.Buffer)) return false;
+            if (!deferPayload && !WriteNewDataRun(ref p, ref w, start, blocks, r.Buffer)) return false;
         }
         else for (var block = 0u; block < blocks; block++)
         {
@@ -1495,6 +1528,23 @@ public static partial class AmigaSmartFileSystemWriteCore
         return true;
     }
 
+    private static void RemoveLeafRecord<T>(ref T p, APTR leaf, int at, int count, int stride)
+        where T : struct, IAmigaGuestMemory
+    {
+        // Overlapping records move towards lower addresses. The final record
+        // can end on a word boundary when the standard 14-byte stride is used.
+        var end = 16 + (count - 1) * stride;
+        if (((leaf.Raw | (uint)stride) & 1) == 0)
+        {
+            while (end - at >= 4)
+            { p.WriteUInt32(leaf, at, p.ReadUInt32(leaf, at + stride)); at += 4; }
+            if (at < end) p.WriteUInt16(leaf, at, p.ReadUInt16(leaf, at + stride));
+        }
+        else for (; at < end; at++) p.WriteUInt8(leaf, at, p.ReadUInt8(leaf, at + stride));
+        p.Clear(APTR.FromPointer(leaf.Raw + (uint)end), (uint)stride);
+        p.WriteUInt16(leaf, 12, (ushort)(count - 1));
+    }
+
     private static bool RemoveExtent<T>(ref T p, ref Work w, uint key, out uint next, bool freeData = true)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
@@ -1509,11 +1559,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             var previous = p.ReadUInt32(w.Meta, at + 8);
             var blocks = p.ReadUInt16(w.Meta, at + 12);
             if (blocks == 0 || key > w.BlockCount - blocks) return Fail(ref w, DOS.Error.DiskNotValidated);
-            var end = 16 + count * stride;
-            for (var offset = at; offset < end - stride; offset++)
-                p.WriteUInt8(w.Meta, offset, p.ReadUInt8(w.Meta, offset + stride));
-            for (var offset = end - stride; offset < end; offset++) p.WriteUInt8(w.Meta, offset, 0);
-            p.WriteUInt16(w.Meta, 12, (ushort)(count - 1));
+            RemoveLeafRecord(ref p, w.Meta, at, count, stride);
             if (!Put(ref p, ref w, leaf, w.Meta)) return false;
             if (count == 1 && leaf != w.ExtentRoot &&
                 !PruneExtent(ref p, ref w, w.ExtentRoot, key, 0, out _)) return false;
@@ -1894,6 +1940,20 @@ public static partial class AmigaSmartFileSystemWriteCore
         return replacement || Finish(ref p, ref w);
     }
 
+    // The caller has checked the date buffer and resolved the object first.
+    private static bool AttributeValue<T>(ref T p, ref Work w, ref Request r, bool date, out int field, out uint value)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        field = 8; value = r.Position ^ 15;
+        if (!date) return true;
+        var days = p.ReadUInt32(r.Buffer); var minutes = p.ReadUInt32(r.Buffer, 4);
+        var ticks = p.ReadUInt32(r.Buffer, 8);
+        if (minutes >= 1440 || ticks >= 3000 || days > (uint.MaxValue - minutes * 60 - ticks / 50) / 86400)
+            return Fail(ref w, DOS.Error.BadNumber);
+        field = 20; value = days * 86400 + minutes * 60 + ticks / 50;
+        return true;
+    }
+
     private static bool MetadataOperation<T>(ref T p, ref Work w, ref Request r, DosPacketAction action)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
@@ -1912,25 +1972,14 @@ public static partial class AmigaSmartFileSystemWriteCore
             w.NodeRoot, w.BlockCount, w.BlockBytes, w.Meta, out var at);
         if (original.IsNull) return Fail(ref w, DOS.Error.DiskNotValidated);
         var container = p.ReadUInt32(original, 8);
-        if (action == DosPacketAction.SetProtection)
+        if (action != DosPacketAction.SetComment)
         {
+            if (!AttributeValue(ref p, ref w, ref r, action == DosPacketAction.SetDate, out var field, out var value)) return false;
+            if (p.ReadUInt32(original, at + field) == value) return true;
             if (!Begin(ref p, ref w)) return false;
             var image = Edit(ref p, ref w, container, ObjectId, w.Meta);
             if (image.IsNull) return false;
-            ReplaceWord(ref p, image, at + 8, r.Position ^ 15);
-            return PutSealed(ref p, ref w, container, image) && Finish(ref p, ref w);
-        }
-        if (action == DosPacketAction.SetDate)
-        {
-            var days = p.ReadUInt32(r.Buffer, 0); var minutes = p.ReadUInt32(r.Buffer, 4);
-            var ticks = p.ReadUInt32(r.Buffer, 8);
-            if (minutes >= 1440 || ticks >= 3000 || days > (uint.MaxValue - minutes * 60 - ticks / 50) / 86400)
-                return Fail(ref w, DOS.Error.BadNumber);
-            var seconds = days * 86400 + minutes * 60 + ticks / 50;
-            if (!Begin(ref p, ref w)) return false;
-            var image = Edit(ref p, ref w, container, ObjectId, w.Meta);
-            if (image.IsNull) return false;
-            ReplaceWord(ref p, image, at + 20, seconds);
+            ReplaceWord(ref p, image, at + field, value);
             return PutSealed(ref p, ref w, container, image) && Finish(ref p, ref w);
         }
         if (original != w.Meta) p.Copy(original, w.Meta, w.BlockBytes);
@@ -1942,6 +1991,14 @@ public static partial class AmigaSmartFileSystemWriteCore
         var oldCommentEnd = commentAt;
         while (oldCommentEnd < end && p.ReadUInt8(w.Meta, oldCommentEnd) != 0) oldCommentEnd++;
         if (oldCommentEnd >= end) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if ((uint)(oldCommentEnd - commentAt) == r.Length)
+        {
+            var same = true;
+            for (var i = 0u; i < r.Length; i++)
+                if (p.ReadUInt8(w.Meta, commentAt + (int)i) != p.ReadUInt8(r.Buffer, (int)i))
+                { same = false; break; }
+            if (same) return true;
+        }
         var oldAfter = (oldCommentEnd + 2) & ~1;
         var newAfter = (commentAt + (int)r.Length + 2) & ~1;
         var shift = newAfter - oldAfter;
@@ -2036,10 +2093,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (w.RedoStaging && r.Length <= 65536 && r.Length % blockBytes == 0 &&
             r.Position % blockBytes == 0 && (r.Buffer.Raw & 3) == 0 && end <= size)
         {
-            if (!FileBlock(ref p, ref w, first, r.Position / blockBytes, out var current,
-                out var key, out _, out _, out var sourceLeaf, out var sourceAt) || current == 0) return FailUnlessSet(ref w);
+            if (!FileBlockView(ref p, ref w, first, r.Position / blockBytes, out var current,
+                out var key, out _, out _, out var sourceLeaf, out var sourceAt, out var sourceImage) || current == 0) return FailUnlessSet(ref w);
             if (!RelocateOverwrite(ref p, ref w, ref first, r.Node, key, current - key,
-                r.Length / blockBytes, r.Buffer, APTR.Null, 0, out var moved, sourceLeaf, sourceAt)) return false;
+                r.Length / blockBytes, r.Buffer, APTR.Null, 0, out var moved, sourceLeaf, sourceAt, sourceImage)) return false;
             if (moved)
             {
                 actual = r.Length;
@@ -2060,6 +2117,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         var position = r.Position;
         var searchKey = first;
         var searchStart = 0u;
+        var mappedBlocks = 0u;
+        var appendProbe = w.RedoStaging && newBlocks > oldBlocks && newBlocks - oldBlocks >= 2;
+        uint pendingStart = 0, pendingBlocks = 0;
+        var pendingSource = APTR.Null;
         while (actual < r.Length)
         {
             var index = position / blockBytes;
@@ -2068,25 +2129,66 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (count > r.Length - actual) count = r.Length - actual;
             var source = APTR.FromPointer(r.Buffer.Raw + actual);
             var direct = within == 0 && count == blockBytes && (source.Raw & 3) == 0;
-            if (!FileBlock(ref p, ref w, searchKey, index - searchStart,
-                out var diskBlock, out var lastKey, out var lastSize, out var lastStart,
-                out var lastLeaf, out var lastOffset)) return false;
-            var absoluteStart = searchStart + lastStart;
-            if (lastKey != 0) { searchKey = lastKey; searchStart = absoluteStart; }
+            // A partial first/last sector need not force the complete appended
+            // middle through the redo arena. Use the same original-free and
+            // acknowledged-checkpoint checks as an entirely aligned append.
+            // Metadata and boundary sectors remain in this packet's transaction.
+            if (appendProbe && direct && index >= oldBlocks &&
+                r.Length - actual >= blockBytes * 2)
+            {
+                appendProbe = false;
+                var runBytes = r.Length - actual;
+                if (runBytes > 65536) runBytes = 65536;
+                runBytes -= runBytes % blockBytes;
+                var run = new Request { Node = r.Node, Position = position, Buffer = source, Length = runBytes };
+                // Only the final full-sector body of a grouped append can be
+                // delayed. Its trailing partial sector has a distinct newly
+                // allocated block. Keep the caller's bytes until this packet's
+                // metadata fits, before the caller can observe acceptance.
+                var deferPayload = w.RedoCheckpoint.IsNotNull && w.TrstContinuation.IsNotNull &&
+                    r.Length - actual - runBytes < blockBytes &&
+                    !Overlap(source, runBytes, w.Data, blockBytes) && !Overlap(source, runBytes, w.Meta, blockBytes) &&
+                    !Overlap(source, runBytes, w.Bitmap, blockBytes) && !Overlap(source, runBytes, w.Journal, blockBytes);
+                if (!AppendContiguousRun(ref p, ref w, ref run, first, index,
+                    out var handled, out var runStart, deferPayload)) return false;
+                if (handled)
+                {
+                    if (deferPayload)
+                    { pendingStart = runStart; pendingBlocks = runBytes / blockBytes; pendingSource = source; }
+                    if (first == 0) first = runStart;
+                    actual += runBytes; position += runBytes;
+                    searchKey = first; searchStart = 0; mappedBlocks = 0;
+                    appendProbe = true;
+                    continue;
+                }
+            }
+            uint diskBlock, lastLeaf = 0;
+            var lastOffset = 0;
+            if (index - searchStart < mappedBlocks)
+                diskBlock = searchKey + (index - searchStart);
+            else
+            {
+                if (!FileBlock(ref p, ref w, searchKey, index - searchStart,
+                    out diskBlock, out var key, out var countInExtent, out var start,
+                    out lastLeaf, out lastOffset)) return false;
+                if (key != 0) { searchKey = key; searchStart += start; }
+                mappedBlocks = countInExtent;
+            }
             var newlyAllocated = diskBlock == 0;
             if (newlyAllocated)
             {
-                var preferred = lastKey == 0 ? 0u : lastKey + lastSize;
+                var preferred = searchKey == 0 ? 0u : searchKey + mappedBlocks;
                 diskBlock = AllocateData(ref p, ref w, preferred);
                 if (diskBlock == 0) return false;
-                if (lastKey != 0 && diskBlock == preferred && lastSize < ushort.MaxValue)
+                if (searchKey != 0 && diskBlock == preferred && mappedBlocks < ushort.MaxValue)
                 {
-                    if (!GrowExtentAt(ref p, ref w, lastLeaf, lastOffset, lastSize + 1)) return false;
+                    if (!GrowExtentAt(ref p, ref w, lastLeaf, lastOffset, mappedBlocks + 1)) return false;
+                    mappedBlocks++;
                 }
                 else
                 {
-                    if (!InsertExtent(ref p, ref w, diskBlock, lastKey, r.Node)) return false;
-                    searchKey = diskBlock; searchStart = index;
+                    if (!InsertExtent(ref p, ref w, diskBlock, searchKey, r.Node)) return false;
+                    searchKey = diskBlock; searchStart = index; mappedBlocks = 1;
                 }
                 if (first == 0) first = diskBlock;
                 if (!direct) p.Clear(w.Data, blockBytes);
@@ -2114,7 +2216,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (first != p.ReadUInt32(objectImage, at + 12)) ReplaceWord(ref p, objectImage, at + 12, first);
         if (end > size) ReplaceWord(ref p, objectImage, at + 16, end);
         if (!PutSealed(ref p, ref w, objectBlock, objectImage)) return false;
-        return Finish(ref p, ref w);
+        if (!Finish(ref p, ref w)) return false;
+        return pendingBlocks == 0 || WriteNewDataRun(ref p, ref w, pendingStart, pendingBlocks, pendingSource);
     }
 
     private static bool ResizeOperation<T>(ref T p, ref Work w, uint node, uint newSize)

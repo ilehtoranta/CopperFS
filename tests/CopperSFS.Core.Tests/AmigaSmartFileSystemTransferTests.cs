@@ -5,6 +5,61 @@ namespace CopperSFS.Tests;
 
 public sealed partial class AmigaSmartFileSystemTests
 {
+    [Theory]
+    [InlineData(0u, 1024u)]
+    [InlineData(37u, 700u)]
+    public void InPlacePolicyChangesOnlyExistingPayloadAndHonorsFlush(uint position, uint length)
+    {
+        var initial = Image();
+        var leaf = Block(initial, 5);
+        U32(leaf, 24, 0x80000003); // Explicit first-extent owner for this opt-in policy.
+        Sum(leaf);
+        var disk = new Disk(initial.ToArray()) { Buffered = true };
+        var work = new AmigaSmartFileSystemWriteCore.Work
+        {
+            Meta = APTR.FromPointer(512), Data = APTR.FromPointer(1024),
+            Bitmap = APTR.FromPointer(1536), Journal = APTR.FromPointer(2048)
+        };
+        var source = APTR.FromPointer(4000);
+        Array.Fill(disk.Ram, (byte)0xD4, 4000, (int)length);
+        var request = new AmigaSmartFileSystemWriteCore.Request { Node = 3, Position = position, Length = length, Buffer = source };
+        Assert.True(AmigaSmartFileSystemWriteCore.TryInPlaceOverwrite(ref disk, ref work, ref request, APTR.Null, out var handled));
+        Assert.True(handled);
+        Assert.True(disk.Flush());
+        var expected = initial.ToArray();
+        Array.Fill(expected, (byte)0xD4, (int)(20 * 512 + position), (int)length);
+        Assert.Equal(expected, disk.Snapshot());
+
+        request.Position = 1300;
+        Assert.True(AmigaSmartFileSystemWriteCore.TryInPlaceOverwrite(ref disk, ref work, ref request, APTR.Null, out handled));
+        Assert.False(handled);
+        request.Position = 0;
+        request.Buffer = work.Meta;
+        Assert.True(AmigaSmartFileSystemWriteCore.TryInPlaceOverwrite(ref disk, ref work, ref request, APTR.Null, out handled));
+        Assert.False(handled);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OddBodyAfterPartialSectorUsesBulkTransferAndPreservesErrorPosition(bool failBody)
+    {
+        var disk = new Disk(Image()) { SupportsUnalignedDataReads = true, Copies = [] };
+        if (failBody) disk.FailReadBlock = 21;
+        var cursor = new AmigaSmartFileSystemCore.ReadCursor();
+        Array.Fill(disk.Ram, (byte)0xA7);
+        var count = AmigaSmartFileSystemCore.Read(ref disk, ref cursor, 3, 7, APTR.FromPointer(4000),
+            1280, APTR.FromPointer(512), APTR.FromPointer(1024), out var error);
+        Assert.Equal(failBody ? 505 : 1280, count);
+        Assert.Equal(failBody ? DOS.Error.DiskNotValidated : DOS.Error.None, error);
+        Assert.Equal(new[] { (21u, 1u) }, disk.DataReads);
+        var edges = disk.Copies!.Where(c => c.Destination >= 4000 && c.Destination < 5280)
+            .Select(c => (c.Destination, c.Length));
+        Assert.Equal(failBody ? [(4000u, 505u)] : new[] { (4000u, 505u), (5017u, 263u) }, edges);
+        if (failBody) Assert.Equal(0u, cursor.Node);
+        for (var i = -1; i <= 1280; i++)
+            Assert.Equal(i >= 0 && i < count ? (byte)((i + 7) * 17) : (byte)0xA7, disk.Ram[4000 + i]);
+    }
     [Fact]
     public void SequentialAlignedReadsUseTheSameExtentAndResetAfterFailure()
     {

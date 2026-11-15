@@ -15,11 +15,17 @@ internal static class Sfs2Layout
         AmigaSmartFileSystemReadOnlyCore.Mount(ref p, buffer, out var format) && format == Format;
     internal static bool Block<T>(ref T p, uint block, uint id, APTR buffer) where T : struct, IAmigaFileSystemPlatform =>
         AmigaSmartFileSystemReadOnlyCore.Header(ref p, block, id, buffer, Format);
+    // Consume before any subsequent platform call that can replace a cache image.
+    internal static APTR View<T>(ref T p, uint block, uint id, APTR scratch) where T : struct, IAmigaFileSystemPlatform =>
+        AmigaSmartFileSystemReadOnlyCore.HeaderView(ref p, block, id, scratch, Format);
     internal static bool ValidChecksum<T>(ref T p, APTR buffer) where T : struct, IAmigaFileSystemPlatform =>
         AmigaSmartFileSystemReadOnlyCore.Checksum(ref p, buffer, Format);
     internal static bool Object<T>(ref T p, uint node, APTR buffer, out int at) where T : struct, IAmigaFileSystemPlatform
     {
         at = 0;
+        if (p.Sfs2Context.IsNotNull)
+            return Sfs2MountContext.Volume(ref p, p.Sfs2Context, out var mounted) &&
+                AmigaSmartFileSystemReadOnlyCore.Object(ref p, mounted, node, buffer, out at);
         if (!Root(ref p, buffer)) return false;
         var volume = new AmigaSmartFileSystemReadOnlyCore.Volume
         {
@@ -31,15 +37,17 @@ internal static class Sfs2Layout
     internal static bool Extent<T>(ref T p, uint tree, uint key, APTR buffer, out uint count, out uint next)
         where T : struct, IAmigaFileSystemPlatform =>
         AmigaSmartFileSystemReadOnlyCore.Extent(ref p,
-            new AmigaSmartFileSystemReadOnlyCore.Volume { Format = Format, ExtentTree = tree }, key, buffer, out count, out next, out _);
+            new AmigaSmartFileSystemReadOnlyCore.Volume { Format = Format, ExtentTree = tree }, key, buffer, out count, out next, out _, p.Sfs2Context.IsNotNull);
     internal static uint Resolve<T>(ref T p, uint directory, APTR name, uint length, APTR metadata, out DOS.Error error)
         where T : struct, IAmigaFileSystemPlatform =>
-        AmigaSmartFileSystemReadOnlyCore.Resolve(ref p, directory, name, length, metadata, out error);
+        // Mutation callers consume only the node, never the scratch image.
+        p.Sfs2Context.IsNotNull ?
+            AmigaSmartFileSystemReadOnlyCore.ResolveInformation(ref p, directory, name, length, metadata, out _, out _, out _, out error) :
+            AmigaSmartFileSystemReadOnlyCore.Resolve(ref p, directory, name, length, metadata, out error);
     internal static bool Describe<T>(ref T p, uint node, APTR buffer, out ulong size, out bool directory, out uint parent)
         where T : struct, IAmigaFileSystemPlatform
     {
-        var ok = AmigaSmartFileSystemReadOnlyCore.Describe(ref p, node, buffer, out var entry);
-        size = entry.Size; directory = entry.Directory; parent = entry.Parent; return ok;
+        return AmigaSmartFileSystemReadOnlyCore.DescribeInformation(ref p, node, buffer, out size, out directory, out parent);
     }
 }
 

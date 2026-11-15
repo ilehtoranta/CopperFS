@@ -9,7 +9,10 @@ namespace CopperStart.Dos;
 /// <summary>Exec-owned DOS packet handler over an Exec block device.</summary>
 public static partial class NativeAmigaFileSystem
 {
-#if COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2
+#if COPPERFS_SFS2_OWNED
+    private const uint BaseStateBytes = 2332;
+    internal const int Sfs2ContextOffset = 2320, Sfs2ContextStorageOffset = 2324, Sfs2ContextBytesOffset = 2328;
+#elif COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2
     private const uint BaseStateBytes = 2452;
     // One bit and reference count for each hashed 64-block cache page. Hash
     // collisions only cause a normal cache scan, never a false absence result.
@@ -17,14 +20,31 @@ public static partial class NativeAmigaFileSystem
 #else
     private const uint BaseStateBytes = 2320;
 #endif
-#if COPPERFS_AUTOTRIM
-    public const uint StateBytes = BaseStateBytes + 44;
-    internal const int AutoTrimRecordOffset = (int)BaseStateBytes;
-    internal const int AutoTrimPendingOffset = (int)BaseStateBytes + 32;
-    internal const int AutoTrimCursorOffset = (int)BaseStateBytes + 36;
-    internal const int AutoTrimValidationOffset = (int)BaseStateBytes + 40;
+#if COPPERFS_FFS_HANDLER
+    internal const int FfsIndexOffset = (int)BaseStateBytes;
+    private const int FfsWriteGroupHandle = FfsIndexOffset + 4;
+    private const uint MountStateBytes = BaseStateBytes + 8;
+#if COPPERFS_FFS_INDEX64
+    internal const uint FfsIndexBytes = 64 * 1024;
+#elif COPPERFS_FFS_INDEX1024
+    internal const uint FfsIndexBytes = 1024 * 1024;
 #else
-    public const uint StateBytes = BaseStateBytes;
+    internal const uint FfsIndexBytes = 256 * 1024;
+#endif
+#else
+    private const uint MountStateBytes = BaseStateBytes;
+#endif
+#if COPPERFS_AUTOTRIM
+    public const uint StateBytes = MountStateBytes + 64 + AmigaFreedRangeQueue.Bytes + AmigaAutomaticTrimBatch.Bytes + 32;
+    internal const int AutoTrimRecordOffset = (int)MountStateBytes;
+    internal const int AutoTrimPendingOffset = (int)MountStateBytes + 32;
+    internal const int AutoTrimCursorOffset = (int)MountStateBytes + 36;
+    internal const int AutoTrimValidationOffset = (int)MountStateBytes + 40;
+    internal const int AutoTrimQueueOffset = (int)MountStateBytes + 64;
+    internal const int AutoTrimBatchOffset = AutoTrimQueueOffset + (int)AmigaFreedRangeQueue.Bytes;
+    internal const int AutoTrimRootsOffset = AutoTrimBatchOffset + (int)AmigaAutomaticTrimBatch.Bytes;
+#else
+    public const uint StateBytes = MountStateBytes;
 #endif
     internal const int SmartReservationsOffset = 2052;
 #if COPPERFS_NATIVE_FFS_READAHEAD
@@ -51,8 +71,20 @@ public static partial class NativeAmigaFileSystem
 #endif
     internal const int SmartDeviceDirtyOffset = 2040;
     internal const int SmartEnumerationCacheOffset = 2032;
-    internal const uint SmartEnumerationEntryBytes = 16 + FileInfoBlock.SizeInBytes;
-    internal const uint SmartEnumerationCacheBytes = 4 + 32 * SmartEnumerationEntryBytes;
+    internal const uint SmartEnumerationOriginalEntryBytes = 16 + FileInfoBlock.SizeInBytes;
+#if COPPERFS_SFS_POOL
+    // Cache short enumeration results in all 32 buckets. Longer strings use
+    // the ordinary directory cursor and are returned in full to the caller.
+    internal const uint SmartEnumerationEntryBytes = 16 + 96;
+#elif COPPERFS_SFS_GROUPED
+    // SFS FIBs have 32 zero reserved bytes and duplicate entry types. Pack the
+    // owner into that duplicate word; keep all 32 cache entries and full strings.
+    internal const uint SmartEnumerationEntryBytes = 16 + 224;
+#else
+    internal const uint SmartEnumerationEntryBytes = SmartEnumerationOriginalEntryBytes;
+#endif
+    internal const uint SmartEnumerationCapacity = 32;
+    internal const uint SmartEnumerationCacheBytes = 4 + SmartEnumerationCapacity * SmartEnumerationEntryBytes;
     internal const int SmartWriteBufferOffset = 2020, SmartTimerOffset = 2024, SmartTimerActiveOffset = 2028;
     public const int RequestOffset = 4, CacheOffset = 8, CacheTrackOffset = 12;
     public const int DosTypeOffset = 20, PortOffset = 24, VolumeOffset = 28;
@@ -76,6 +108,12 @@ public static partial class NativeAmigaFileSystem
     public const uint ScsiPayloadBypassControl = 0x43504302;
     internal const int PayloadCacheBypassOffset = GeometryOffset + 44;
     internal const int ExtensionScratchOffset = 1664;
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+    // The standalone extension request ends at +44. Its unused final 20
+    // bytes precede the notification chains at 1728.
+    internal const int SfsMountOffset = ExtensionScratchOffset + 44;
+    internal static void ForgetSfsMount(APTR state) => APTR.WriteUInt32(state, SfsMountOffset, 0);
+#endif
     internal const int InhibitedOffset = 1744;
     internal const int SmartJournalCursorOffset = 1748, SmartAllocationCursorOffset = 1752;
     internal const int SmartTransactionBufferOffset = 1756;
@@ -120,6 +158,16 @@ public static partial class NativeAmigaFileSystem
     public static AmigaVolumeGeometry ReadGeometry(APTR state) => new NativeFileSystemPlatform(state).Geometry;
     public static void SetGeometry(APTR state, AmigaVolumeGeometry g)
     {
+#if COPPERFS_FFS_HANDLER
+        new NativeFileSystemPlatform(state).ForgetFfsIndex();
+#endif
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+        ForgetSfsMount(state);
+        InvalidateDirectoryCursors(state);
+#endif
+#if COPPERFS_SFS2_OWNED
+        NativeSfs2Bridge.Suspend(state);
+#endif
 #if COPPERFS_AUTOTRIM
         NativeAutomaticTrim.Reset(state);
 #endif
@@ -332,7 +380,7 @@ public static partial class NativeAmigaFileSystem
                 // Standalone FFS never mounts or repairs foreign media. Return
                 // a non-FFS signature to the standalone entry
                 // so it can reply ObjectWrongType without mounting that volume.
-                if (type != 0 && type is not (0x444F5300 or 0x444F5301))
+                if (type != 0 && (type < 0x444F5300 || type > 0x444F5305))
                 {
                     APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
                     return s;
@@ -369,6 +417,14 @@ public static partial class NativeAmigaFileSystem
             // memory never grows with read or file length. Allocation failure
             // rolls back this optional cache and keeps ordinary track reads.
             MoreCache(s, 16, out _);
+#if COPPERFS_FFS_HANDLER
+            var workspace = APTR.FromPointer(global::Amiga.Exec.AllocMem(FfsIndexBytes, global::Amiga.Exec.MemoryFlags.Public));
+            if (workspace.IsNotNull)
+            {
+                AmigaFfsMountIndex.Initialize(ref p, workspace, FfsIndexBytes);
+                APTR.WriteUInt32(s, FfsIndexOffset, workspace.Raw);
+            }
+#endif
 #if COPPERFS_NATIVE_FFS_READAHEAD
             // Early IDE scsi.device versions do not implement TD_GETGEOMETRY.
             // Confirm fixed direct-access media through SCSI INQUIRY instead
@@ -457,6 +513,12 @@ public static partial class NativeAmigaFileSystem
             // Retain validated mount/recovery reads, including the transaction
             // marker, in the same cache subsequently used by DOS operations.
             if (!earlyCache && previousCacheCount < 32) MoreCache(s, 32 - (int)previousCacheCount, out _);
+#if COPPERFS_SFS_EXTRA_CACHE
+            // Exec rounds AllocMem to eight bytes. Include links, verification
+            // and padding in the budget. MoreCache rolls back a partial batch.
+            if (previousCacheCount == 0 && APTR.ReadUInt32(s, NativeFileSystemStateCodec.ExtraCacheCountOffset) == 32)
+                MoreCache(s, (int)(16384u / ((ExtraCacheBytes(s) + 7u) & ~7u)), out _);
+#endif
 #if COPPERSTART_NATIVE_SFS_WRITES
             // Recovery mutates media and belongs to the native SFS writer profile.
             var journal = global::Amiga.Exec.AllocMem(blockBytes,
@@ -464,6 +526,10 @@ public static partial class NativeAmigaFileSystem
             APTR.WriteUInt32(s, NativeFileSystemStateCodec.JournalScratchOffset, journal);
             if (journal == 0) { return false; }
 #if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_SFS_TRST_WRITES || COPPERSTART_NATIVE_SFS2
+#if COPPERFS_SFS2_OWNED
+            if (!NativeSfs2Bridge.IsSfs2(s))
+            {
+#endif
             // Initialize sets the visible slot count to zero. Each staged slot
             // receives its key and a complete block before the next packet.
             var batchFlags = NativeSfs2Bridge.IsSfs2(s) ? global::Amiga.Exec.MemoryFlags.Public :
@@ -477,6 +543,9 @@ public static partial class NativeAmigaFileSystem
             if (batch != 0 && !AmigaSmartFileSystemTransactionBuffer.Initialize(ref p,
                 APTR.FromPointer(batch), blockBytes, AmigaSmartFileSystemTransactionBuffer.MaximumCapacity))
             { return false; }
+#if COPPERFS_SFS2_OWNED
+            }
+#endif
 #endif
             // Standalone classic TRST uses its redo arena for every mutation.
             // Legacy CSUN recovery already supports an absent undo batch.
@@ -522,6 +591,11 @@ public static partial class NativeAmigaFileSystem
     public static void Destroy(APTR state)
     {
         if (state.IsNull) return;
+#if COPPERFS_FFS_HANDLER
+        var workspace = APTR.ReadUInt32(state, FfsIndexOffset);
+        if (workspace != 0) global::Amiga.Exec.FreeMem(workspace, FfsIndexBytes);
+        APTR.WriteUInt32(state, FfsIndexOffset, 0);
+#endif
         var recordPlatform = new NativeRecordLockPlatform();
         NativeRecordLockCore.Destroy(ref recordPlatform, state);
         ReleaseSmart(state);
@@ -548,8 +622,11 @@ public static partial class NativeAmigaFileSystem
 
     private static void ReleaseSmart(APTR state)
     {
+#if COPPERFS_SFS2_OWNED
+        NativeSfs2Bridge.ReleaseContext(state);
+#endif
 #if COPPERFS_AUTOTRIM
-        NativeAutomaticTrim.Reset(state);
+        NativeAutomaticTrim.Release(state);
 #endif
 #if COPPERFS_AUTOTRIM || COPPERFS_NATIVE_FFS_READAHEAD || COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
         var timer = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset));
@@ -745,11 +822,31 @@ public static partial class NativeAmigaFileSystem
 #if COPPERSTART_PACKED_EXTENSION
         var mediaSignal = NativeRemovableMedia.Start(state);
 #endif
-#if COPPERFS_AUTOTRIM || COPPERFS_NATIVE_FFS_READAHEAD || COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
+#if COPPERFS_AUTOTRIM && !COPPERFS_FFS_HANDLER || !COPPERFS_AUTOTRIM && (COPPERSTART_NATIVE_SFS_WRITES || COPPERFS_NATIVE_FFS_READAHEAD)
         InitializeWriteTimer(state, port);
+#endif
+#if COPPERFS_AUTOTRIM && !COPPERFS_FFS_HANDLER
+        NativeAutomaticTrim.Initialize(state);
 #endif
         while (true)
         {
+#if COPPERFS_AUTOTRIM
+#if COPPERSTART_PACKED_EXTENSION
+            if (mediaSignal != 0) NativeRemovableMedia.Refresh(state);
+#endif
+#if COPPERFS_FFS_HANDLER
+            if (APTR.ReadUInt32(state, AutoTrimRecordOffset + NativeAutomaticTrim.Eligible) != 0 &&
+                APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0 &&
+#else
+            if (NativeAutomaticTrim.Ready(state) &&
+#endif
+                APTR.ReadUInt32(port, NativeExecFieldCodec.PortHeadOffset) == port.Raw + NativeExecFieldCodec.PortMessageListOffset + 4)
+            {
+                NativeAutomaticTrim.Service(state);
+                ArmWriteTimer(state);
+                continue;
+            }
+#endif
 #if COPPERSTART_PACKED_EXTENSION
             if (mediaSignal == 0) mediaSignal = NativeRemovableMedia.Start(state);
             if (mediaSignal != 0) NativeRemovableMedia.Bind(state);
@@ -775,7 +872,7 @@ public static partial class NativeAmigaFileSystem
             // match. Nonempty chains still receive the core's record checks.
             if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RecordWaitersOffset) != 0 &&
                 ProcessRecordTimer(state, message)) continue;
-#if COPPERFS_AUTOTRIM || COPPERFS_NATIVE_FFS_READAHEAD || COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
+#if COPPERFS_AUTOTRIM || COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
             if (message.Raw == APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset))
             {
                 APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset, 0);
@@ -783,13 +880,13 @@ public static partial class NativeAmigaFileSystem
                 if (HasBufferedWrites(state))
                 {
 #if COPPERFS_AUTOTRIM
-                    APTR.WriteUInt32(state, AutoTrimValidationOffset, 0);
+                    NativeAutomaticTrim.BeforeOperation(state);
 #endif
                     FlushSmart(state);
                 }
 #endif
 #if COPPERFS_AUTOTRIM
-                NativeAutomaticTrim.Service(state);
+                NativeAutomaticTrim.MakeEligible(state);
 #endif
                 ArmWriteTimer(state);
                 continue;
@@ -801,11 +898,10 @@ public static partial class NativeAmigaFileSystem
             var replyPort = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.PortOffset));
             Dispatch(state, packet);
 #if COPPERFS_AUTOTRIM
-            if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset) == (uint)DosPacketAction.DeleteObject &&
-                APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result1Offset) != 0)
-                NativeAutomaticTrim.CompletedPacket(state, packet);
+            if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated)
+                NativeAutomaticTrim.Suspend(state);
 #endif
-#if COPPERFS_AUTOTRIM || COPPERFS_NATIVE_FFS_READAHEAD || COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
+#if !COPPERFS_FFS_HANDLER && (COPPERFS_AUTOTRIM || COPPERSTART_NATIVE_SFS_WRITES)
             ArmWriteTimer(state);
 #endif
             // Dispatch can create a waiter: read the head afresh here.
@@ -972,6 +1068,9 @@ public static partial class NativeAmigaFileSystem
         var data = meta.Raw + bytes;
         work = default;
         work.Meta = meta; work.Data = APTR.FromPointer(data); work.Bitmap = APTR.FromPointer(data + bytes);
+#if COPPERFS_FFS_HANDLER
+        work.Index = APTR.FromPointer(APTR.ReadUInt32(state, FfsIndexOffset));
+#endif
     }
     internal static AmigaSmartFileSystemWriteCore.Work SmartWriteWork(APTR state)
     {
@@ -993,8 +1092,16 @@ public static partial class NativeAmigaFileSystem
         work.AllocationCursor = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset);
     }
 
-    private static bool HasBufferedWrites(APTR state)
+    internal static bool HasBufferedWrites(APTR state)
     {
+#if COPPERSTART_SFS2_TRST_GROUPED
+        if (NativeSfs2Bridge.IsSfs2(state))
+        {
+            var p = new NativeFileSystemPlatform(state);
+            return AmigaSmartFileSystem2WriteCore.TrstGroupPending(ref p,
+                APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset)));
+        }
+#endif
 #if COPPERFS_FFS_HANDLER
         return false;
 #elif COPPERSTART_SFS_TRST_BUFFERED
@@ -1013,11 +1120,11 @@ public static partial class NativeAmigaFileSystem
         return success;
     }
 
-    private static void InitializeWriteTimer(APTR state, APTR port)
+    internal static void InitializeWriteTimer(APTR state, APTR port)
     {
 #if COPPERFS_AUTOTRIM
         // Automatic maintenance also needs a timer for FFS and strict mounts.
-#elif COPPERSTART_SFS_TRST_BUFFERED
+#elif COPPERSTART_SFS_TRST_BUFFERED || COPPERSTART_SFS2_TRST_GROUPED
 #if COPPERFS_NATIVE_FFS_READAHEAD
         // FFS owns a timer request for allocation-free stream cost sampling.
         // It is never armed; normal unmount cleanup closes it with the device.
@@ -1050,8 +1157,14 @@ public static partial class NativeAmigaFileSystem
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset) == 0) return;
 #endif
         var request = global::Amiga.Exec.CreateIORequest(port, TimerRequest.Size);
+#if COPPERFS_AUTOTRIM && COPPERFS_FFS_HANDLER
+        // A five-second eligibility deadline only needs the vertical-blank clock.
+        const TimerUnit unit = TimerUnit.VBlank;
+#else
+        const TimerUnit unit = TimerUnit.MicroHz;
+#endif
         if (request.IsNotNull && global::Amiga.Exec.OpenDevice(CString.FromPointer(CString.ToUInt32("timer.device")),
-            (uint)TimerUnit.MicroHz, request, 0) == 0)
+            (uint)unit, request, 0) == 0)
         { APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset, request.Raw); return; }
         if (request.IsNotNull) global::Amiga.Exec.DeleteIORequest(request);
 #if !COPPERSTART_SFS_TRST_BUFFERED
@@ -1063,20 +1176,25 @@ public static partial class NativeAmigaFileSystem
 #endif
     }
 
-    private static void ArmWriteTimer(APTR state)
+    internal static void ArmWriteTimer(APTR state)
     {
 #if COPPERFS_NATIVE_FFS_READAHEAD && !COPPERFS_AUTOTRIM
-        // The optional sampling timer is not a deferred-write timer.
+        // The optional FFS sampling request is never a deferred-write timer.
+        // Avoid walking SFS transaction state after every FFS packet.
         if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) return;
 #endif
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset) != 0) return;
-#if COPPERFS_AUTOTRIM
+#if COPPERFS_AUTOTRIM && COPPERFS_FFS_HANDLER
+        if (!NativeAutomaticTrim.Pending(state) || NativeAutomaticTrim.Ready(state)) return;
+#elif COPPERFS_AUTOTRIM
         if (!HasBufferedWrites(state) && !NativeAutomaticTrim.Pending(state)) return;
+        if (!HasBufferedWrites(state) && NativeAutomaticTrim.Ready(state)) return;
 #else
         if (!HasBufferedWrites(state)) return;
 #endif
         StartWriteTimer(state);
     }
+
     private static void StartWriteTimer(APTR state)
     {
         var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset));
@@ -1321,13 +1439,70 @@ public static partial class NativeAmigaFileSystem
         return SetSmartMetadata(state, packet, action, out error);
     }
 
+#if COPPERFS_FFS_HANDLER
+    private static int WriteFfsFile(APTR state, APTR file, APTR source, uint length, out DOS.Error error)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        error = DOS.Error.None;
+        InitializeWriteWork(state, out var work);
+        var write = new AmigaFfsWriteCore.Request { Header = APTR.ReadUInt32(file, 4), Position = APTR.ReadUInt32(file, 12), Buffer = source, Length = length };
+        work.GroupFileWrites = true;
+        var writeOk = AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written,
+            APTR.ReadUInt32(state, FixedHardDiskOffset) != 0);
+        APTR.WriteUInt32(state, FfsWriteGroupHandle, AmigaFfsWriteCore.HasFileWriteGroup(ref p, work.Index) ? file.Raw : 0);
+        if (!writeOk) { error = work.Error; return -1; }
+        APTR.WriteUInt32(file, 12, write.Position + written);
+        if (write.Position + written > APTR.ReadUInt32(file, 8)) APTR.WriteUInt32(file, 8, write.Position + written);
+        if (written != 0) APTR.WriteUInt32(file, 40, 1);
+        return (int)written;
+    }
+#endif
+
     public static void Dispatch(APTR state, APTR packet)
     {
+#if COPPERFS_AUTOTRIM
+#if COPPERFS_FFS_HANDLER
+        if (APTR.ReadUInt32(state, AutoTrimBatchOffset + AmigaAutomaticTrimBatch.Inputs) != 0)
+#endif
+            NativeAutomaticTrim.BeforeOperation(state);
+#endif
         // Read and enumeration packets need no mutation work area. Keep recovery
         // and inhibited-media handling in the full dispatcher below.
         // The FFS-only standalone entry reaches packet dispatch only after it
         // accepts an FFS/OFS mount.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+#if COPPERFS_FFS_HANDLER
+        var owner = APTR.ReadUInt32(state, FfsWriteGroupHandle);
+#if !COPPERSTART_PACKED_EXTENSION
+        // Every operation that can retire the object first closes its group.
+        if (owner != 0 && action == DosPacketAction.Write &&
+            APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset) == owner)
+        {
+            var result = WriteFfsFile(state, APTR.FromPointer(owner),
+                APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset)),
+                APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset), out var error);
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
+            APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
+            return;
+        }
+#endif
+        if (owner != 0 && (action != DosPacketAction.Write ||
+            APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset) != owner))
+        {
+            var platform = new NativeFileSystemPlatform(state);
+            InitializeWriteWork(state, out var work);
+            if (!AmigaFfsWriteCore.FinishFileWriteGroup(ref platform, ref work) ||
+                (action == DosPacketAction.End && !platform.Flush()))
+            {
+                APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+                APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset,
+                    action is DosPacketAction.Read or DosPacketAction.Write or DosPacketAction.Seek or DosPacketAction.SetFileSize ? uint.MaxValue : 0);
+                APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.DiskNotValidated);
+                return;
+            }
+            APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+        }
+#endif
 #if COPPERFS_NATIVE_FFS_READAHEAD
         if (action == DosPacketAction.Read)
         {
@@ -1482,15 +1657,21 @@ public static partial class NativeAmigaFileSystem
         var error = DOS.Error.InvalidLock;
         var result = file.IsNull ? -1 : WriteSmartFile(state, file,
             APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset)), APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset), out error);
-        if (error != DOS.Error.None) RecoverSmartWriteError(state);
+        if (error != DOS.Error.None) RecoverSmartWriteError(state, error);
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
     }
 
     // Recovery owns a full Work record. Keep its native local initialization
     // on the error path instead of paying for it before every successful Write.
-    private static void RecoverSmartWriteError(APTR state)
+    private static void RecoverSmartWriteError(APTR state, DOS.Error error)
     {
+#if COPPERFS_SFS_GROUPED
+        if (NativeSfsExtension.IsHarmlessRejection(state, error)) return;
+#endif
+#if COPPERFS_AUTOTRIM
+        NativeAutomaticTrim.Suspend(state);
+#endif
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset,
             TryRecoverSmart(state) ? 0u : 1u);
     }
@@ -1548,7 +1729,7 @@ public static partial class NativeAmigaFileSystem
             case FileSystemQueryAttribute.NumBlocks: value = p.BlockCount; break;
             case FileSystemQueryAttribute.NumBlocksUsed:
                 if (!((SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.CountUsed(state, out var countedUsed) :
-                    AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out countedUsed)))
+                    AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out countedUsed, p.FfsMountIndex)))
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 value = countedUsed;
                 break;
@@ -1644,10 +1825,10 @@ public static partial class NativeAmigaFileSystem
             else if (length != 0 && length <= 4096 && (length < 512 || (length & 511) == 0))
                 result = NativeFileSystemReadCore.ReadFfsAligned(ref p, file, APTR.ReadUInt32(file, 4),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
-                    target, length, Metadata(state), Data(state), out error);
+                    target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
             else result = NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
-                    target, length, Metadata(state), Data(state), out error);
+                    target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
             if (result > 0) SetFilePosition(file, position + (uint)result);
 #if COPPERFS_NATIVE_FFS_READAHEAD
             // Metadata speculation is worthwhile on direct large reads.
@@ -1703,6 +1884,9 @@ public static partial class NativeAmigaFileSystem
                 { error = DOS.Error.BadNumber; break; }
                 ulong foundSize = 0;
                 uint found;
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+                uint firstExtent = 0;
+#endif
                 if (smart)
                 {
                     bool foundDirectory;
@@ -1712,8 +1896,13 @@ public static partial class NativeAmigaFileSystem
                             out foundSize, out foundDirectory, out error);
                     else
 #endif
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+                        found = NativeSfsExtension.ResolveFileInformation(state, directory, APTR.FromPointer(name.Raw + 1), length,
+                            out foundSize, out foundDirectory, out _, out firstExtent, out error);
+#else
                         found = NativeSfsExtension.ResolveInformation(state, directory, APTR.FromPointer(name.Raw + 1), length,
                             out foundSize, out foundDirectory, out _, out error);
+#endif
                     if (found == 0) break;
                     if (input && foundDirectory)
                     { error = DOS.Error.ObjectWrongType; break; }
@@ -1738,6 +1927,18 @@ public static partial class NativeAmigaFileSystem
                 if (!input) result = unchecked((int)((obj.Raw + 20) >> 2));
                 else
                 {
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+                    if (firstExtent != 0 && APTR.ReadUInt32(state, SfsMountOffset) != 0)
+                    {
+                        // Resolve already verified the file record. The first read
+                        // still validates the extent itself before transferring data.
+                        APTR.WriteUInt32(obj, SmartReadCursorOffset, found);
+                        APTR.WriteUInt32(obj, SmartReadCursorOffset + 4, (uint)foundSize);
+                        APTR.WriteUInt32(obj, SmartReadCursorOffset + 8, firstExtent);
+                        APTR.WriteUInt32(obj, SmartReadCursorOffset + 12, APTR.ReadUInt32(state, SfsMountOffset + 8));
+                        APTR.WriteUInt32(obj, SmartReadCursorOffset + 16, firstExtent);
+                    }
+#endif
                     var handle = APTR.FromPointer(a << 2);
                     APTR.WriteUInt32(handle, NativeDosFileHandleFieldCodec.PortOffset, APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset));
                     APTR.WriteUInt32(handle, NativeDosFileHandleFieldCodec.Argument1Offset, obj.Raw);
@@ -1749,8 +1950,15 @@ public static partial class NativeAmigaFileSystem
                 var retired = Object(state, a, action == DosPacketAction.End);
                 if (retired.IsNull && a != 0) { error = DOS.Error.InvalidLock; break; }
                 var changedKey = retired.IsNotNull && action == DosPacketAction.End && APTR.ReadUInt32(retired, 40) != 0 ? APTR.ReadUInt32(retired, 4) : 0;
-#if COPPERSTART_SFS_TRST_BUFFERED
-                if (changedKey != 0 && (SpecializeFormat ? FormatIsSmart : Smart(state)) && !FlushSmart(state))
+#if COPPERSTART_SFS_TRST_BUFFERED || COPPERSTART_SFS2_TRST_GROUPED
+                if (changedKey != 0 && (SpecializeFormat ? FormatIsSmart : Smart(state)) &&
+#if COPPERFS_SFS_GROUPED
+                    !NativeSfsExtension.CanDeferClose(state) &&
+#endif
+#if COPPERFS_SFS2_OWNED && COPPERSTART_SFS2_TRST_GROUPED
+                    !NativeSfs2Bridge.CanDeferClose(state) &&
+#endif
+                    !FlushSmart(state))
                 { error = DOS.Error.DiskNotValidated; break; }
 #endif
                 if (retired.IsNotNull && action == DosPacketAction.End && (SpecializeFormat ? FormatIsSmart : Smart(state)) &&
@@ -1769,6 +1977,12 @@ public static partial class NativeAmigaFileSystem
 
     private static int SetInhibited(ref NativeFileSystemPlatform p, APTR state, bool inhibit, out DOS.Error error)
     {
+#if COPPERFS_FFS_HANDLER
+        p.ForgetFfsIndex();
+#endif
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+        ForgetSfsMount(state);
+#endif
         error = DOS.Error.None;
 #if COPPERFS_AUTOTRIM
         NativeAutomaticTrim.Reset(state);
@@ -1777,6 +1991,9 @@ public static partial class NativeAmigaFileSystem
         if (inhibit)
         {
             if (!((SpecializeFormat ? FormatIsSmart : Smart(state)) ? FlushSmart(state) : p.Flush())) { error = DOS.Error.DiskNotValidated; return 0; }
+#if COPPERFS_SFS2_OWNED
+            NativeSfs2Bridge.Suspend(state);
+#endif
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 1);
         }
         else if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0)
@@ -1956,7 +2173,7 @@ public static partial class NativeAmigaFileSystem
                 result = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, APTR.FromPointer(b), c, out error)
                     : NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4), APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
-                        APTR.FromPointer(b), c, metadata, data, out error);
+                        APTR.FromPointer(b), c, metadata, data, out error, p.FfsMountIndex);
                 if (result > 0) SetFilePosition(file, position + (uint)result);
                 break;
             case DosPacketAction.Seek:
@@ -2140,7 +2357,7 @@ public static partial class NativeAmigaFileSystem
                 if (!p.IsMapped(info, 36)) { error = DOS.Error.BadNumber; break; }
                 var counted = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.CountUsed(state, out var smartUsed)
-                    : AmigaDiskFileSystemCore.CountUsed(ref p, metadata, data, out smartUsed);
+                    : AmigaDiskFileSystemCore.CountUsed(ref p, metadata, data, out smartUsed, p.FfsMountIndex);
                 var usedBlocks = smartUsed;
                 if (!counted || (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && !AmigaDiskFileSystemCore.Header(ref p, p.Geometry.RootBlock, metadata)))
                 { error = DOS.Error.DiskNotValidated; break; }
@@ -2178,14 +2395,19 @@ public static partial class NativeAmigaFileSystem
                     result = WriteSmartFile(state, file, APTR.FromPointer(b), c, out error); break;
                 }
 #endif
+#if COPPERFS_FFS_HANDLER
+                result = WriteFfsFile(state, file, APTR.FromPointer(b), c, out error);
+#else
                 InitializeWriteWork(state, out var work);
                 var write = new AmigaFfsWriteCore.Request { Header = APTR.ReadUInt32(file, 4), Position = APTR.ReadUInt32(file, 12), Buffer = APTR.FromPointer(b), Length = c };
-                if (!AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written,
-                    APTR.ReadUInt32(state, FixedHardDiskOffset) != 0)) { error = work.Error; break; }
+                var writeOk = AmigaFfsWriteCore.Write(ref p, ref work, ref write, out var written,
+                    APTR.ReadUInt32(state, FixedHardDiskOffset) != 0);
+                if (!writeOk) { error = work.Error; break; }
                 APTR.WriteUInt32(file, 12, write.Position + written);
                 if (write.Position + written > APTR.ReadUInt32(file, 8)) APTR.WriteUInt32(file, 8, write.Position + written);
                 if (written != 0) APTR.WriteUInt32(file, 40, 1);
                 result = (int)written;
+#endif
                 break;
 #endif
             case DosPacketAction.DeleteObject:
@@ -2275,10 +2497,10 @@ public static partial class NativeAmigaFileSystem
                     error = DOS.Error.ActionNotKnown;
                 break;
         }
-#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
         if ((SpecializeFormat ? FormatIsSmart : Smart(state)) && error != DOS.Error.None && SmartMutation(action))
         {
-            RecoverSmartWriteError(state);
+            RecoverSmartWriteError(state, error);
         }
 #endif
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
@@ -2292,17 +2514,45 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     IAmigaFormatFileSystemPlatform,
 #endif
     IAmigaFileSystemDevicePlatform,
-    IAmigaDiscardFileSystemPlatform, IAmigaScsiDirectPlatform
+    IAmigaBatchDiscardFileSystemPlatform, IAmigaScsiDirectPlatform
 {
     private APTR state;
     public NativeFileSystemPlatform(APTR state)
     {
         this.state = state;
     }
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+    public APTR SfsMountStorage => APTR.FromPointer(state.Raw + NativeAmigaFileSystem.SfsMountOffset);
+#else
+    public APTR SfsMountStorage => APTR.Null;
+#endif
+#if COPPERFS_FFS_HANDLER
+    public APTR FfsMountIndex => APTR.FromPointer(APTR.ReadUInt32(state, NativeAmigaFileSystem.FfsIndexOffset));
+    internal void ForgetFfsIndex() => AmigaFfsMountIndex.Forget(ref this, FfsMountIndex);
+    private void BeforeFfsWrite()
+    {
+        var index = FfsMountIndex;
+        if (index.IsNotNull && APTR.ReadUInt32(index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean)
+            AmigaFfsMountIndex.Forget(ref this, index);
+    }
+#else
+    public APTR FfsMountIndex => APTR.Null;
+#endif
     public uint BlockCount { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset); }
     public uint BlockBytes { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset); }
     public uint ReservedBlocks { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => APTR.ReadUInt32(state, NativeFileSystemStateCodec.ReservedBlocksOffset); }
     public uint TrackBlocks { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => APTR.ReadUInt32(state, NativeFileSystemStateCodec.TrackBlocksOffset); }
+    public ulong StartByte => ((ulong)APTR.ReadUInt32(state, NativeFileSystemStateCodec.StartByteHighOffset) << 32) |
+        APTR.ReadUInt32(state, NativeFileSystemStateCodec.StartByteLowOffset);
+#if COPPERFS_SFS2_OWNED
+    public APTR Sfs2Context
+    {
+        get => APTR.FromPointer(APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextOffset));
+        set => APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2ContextOffset, value.Raw);
+    }
+#else
+    public APTR Sfs2Context { get => APTR.Null; set { } }
+#endif
 
     // Device I/O also needs byte offsets, DMA restrictions and transfer limits.
     // Filesystem traversal uses the scalar getters above.
@@ -2319,12 +2569,47 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         BufferMemoryType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BufferMemoryTypeOffset),
         Mask = APTR.ReadUInt32(state, NativeFileSystemStateCodec.MaskOffset),
     };
-    public bool Transfer(ushort command, ulong byteOffset, uint bytes, APTR buffer)
+    public bool TracksFreedRanges
+    {
+        get
+        {
+#if COPPERFS_AUTOTRIM && COPPERFS_FFS_HANDLER
+            return APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is 0x444F5300 or 0x444F5301 &&
+                APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
+#elif COPPERFS_AUTOTRIM
+            return APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
+#else
+            return false;
+#endif
+        }
+    }
+
+    public void ObserveFreedRange(uint first, uint count)
     {
 #if COPPERFS_AUTOTRIM
-        // Clear before I/O: a failed write may have changed a prefix.
-        if (command is 3 or 25) APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimValidationOffset, 0);
+        var pending = APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset);
+        if (pending == 2) return;
+        if (AmigaFreedRangeQueue.Add(ref this,
+            APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimQueueOffset), first, count))
+        {
+            APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, 1);
+#if COPPERFS_FFS_HANDLER
+            if (pending == 0)
+            {
+                if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) == 0)
+                    NativeAmigaFileSystem.InitializeWriteTimer(state,
+                        APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset)));
+                if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0)
+                    NativeAmigaFileSystem.ArmWriteTimer(state);
+                else NativeAutomaticTrim.Suspend(state);
+            }
 #endif
+        }
+#endif
+    }
+
+    public bool Transfer(ushort command, ulong byteOffset, uint bytes, APTR buffer)
+    {
         var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, command);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoDataOffset, buffer.Raw);
@@ -2332,7 +2617,14 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoByteOffset, (uint)byteOffset);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, (uint)(byteOffset >> 32));
         global::Amiga.Exec.DoIO(request);
-        return APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 && APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes;
+        if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 && APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes) return true;
+#if COPPERFS_FFS_HANDLER
+        ForgetFfsIndex();
+#endif
+#if COPPERFS_AUTOTRIM
+        NativeAutomaticTrim.TransportFailed(state);
+#endif
+        return false;
     }
 
     public bool ScsiDirect(APTR command)
@@ -2346,7 +2638,14 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoByteOffset, 0);
         global::Amiga.Exec.DoIO(request);
-        return APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0;
+        if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0) return true;
+#if COPPERFS_FFS_HANDLER
+        ForgetFfsIndex();
+#endif
+#if COPPERFS_AUTOTRIM
+        NativeAutomaticTrim.TransportFailed(state);
+#endif
+        return false;
     }
 
     public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits) =>
@@ -2357,6 +2656,15 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         var success = AmigaScsiUnmap.Discard(ref this, Geometry, control, block, count);
         // Failure may follow partial deallocation, so invalidate on either result.
         InvalidateBlocks(block, count);
+        return success;
+    }
+
+    public bool DiscardRanges(APTR control, APTR ranges, uint count)
+    {
+        var success = AmigaScsiUnmap.DiscardRanges(ref this, Geometry, control, ranges, count);
+        // Any subset may have completed on failure. Invalidate the whole vector.
+        for (var i = 0u; i < count; i++)
+            InvalidateBlocks(APTR.ReadUInt32(ranges, (int)i * 8), APTR.ReadUInt32(ranges, (int)i * 8 + 4));
         return success;
     }
 
@@ -2659,6 +2967,12 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     public bool Flush() => APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0 ||
         Transfer(4, 0, 0, APTR.Null);
 #endif
+#if COPPERFS_SFS_POOL
+    public bool SupportsUnalignedDataReads => true;
+#else
+    public bool SupportsUnalignedDataReads => false;
+#endif
+
     public uint ReadDataBlocks(uint block, uint count, APTR destination) =>
         ReadDataBlocks(block,count,destination,true);
 
@@ -3107,9 +3421,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 
     public bool WriteDataBlocks(uint block, uint count, APTR source)
     {
-#if COPPERFS_AUTOTRIM
-        // Invalidate before staging overlays or queues, not just device I/O.
-        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimValidationOffset, 0);
+#if COPPERFS_FFS_HANDLER
+        BeforeFfsWrite();
 #endif
         if (RedoOverlay.IsNotNull) return AmigaFileSystemBlockIo.Write(ref this, block, count, source);
         if (block < APTR.ReadUInt32(state, NativeFileSystemStateCodec.ReservedBlocksOffset)) return false;
@@ -3154,10 +3467,6 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     public bool UnpublishedDataWritesEnforceProtection { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => true; }
     public bool WriteUnpublishedDataBlocks(uint block, uint count, APTR source)
     {
-#if COPPERFS_AUTOTRIM
-        // Invalidate before staging overlays or queues, not just device I/O.
-        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimValidationOffset, 0);
-#endif
         if (RedoOverlay.IsNotNull || count == 0 ||
             block < APTR.ReadUInt32(state, NativeFileSystemStateCodec.ReservedBlocksOffset)) return false;
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0)
@@ -3174,11 +3483,94 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     }
 
     public bool SupportsRetainedBlockWrites => true;
+#if COPPERFS_SFS_POOL
+    public bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success)
+    {
+        success = false;
+        if (!CanReadPhysicalCache(block, out _)) return false;
+        if (count == 0 || count > BlockCount - block || (count > 1 &&
+            AmigaFileSystemWriteCombiner.Intersects(ref this, WriteQueue, block, count))) return false;
+        success = TransferData(false, block, count, scratch) == count;
+        return true;
+    }
+
+    public APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity)
+    {
+        var cache = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset);
+        capacity = 0;
+        if (cache == 0 || APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0 ||
+            blockBytes > (NativeAmigaFileSystem.SmartEnumerationCacheBytes - 4) / 2) return APTR.Null;
+        // Single-owner SFS commit. Detaching the optional cache also protects
+        // the borrowed pages against a directory-generation wrap during I/O.
+        capacity = (NativeAmigaFileSystem.SmartEnumerationCacheBytes - 4) / blockBytes;
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, 0);
+        return APTR.FromPointer(cache + 4);
+    }
+
+    public void ReleaseSfsJournalPages(APTR pages)
+    {
+        // Directory zero always bypasses this cache. Clear every lookup key
+        // before restoring access; the generation header was never borrowed.
+        var entry = pages.Raw;
+        for (var i = 0u; i < NativeAmigaFileSystem.SmartEnumerationCapacity; i++, entry += NativeAmigaFileSystem.SmartEnumerationEntryBytes)
+            APTR.WriteUInt32(APTR.FromPointer(entry), NativeSfsEnumerationEntryCodec.DirectoryOffset, 0);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset, pages.Raw - 4);
+    }
+
+    public uint RetainedRunCapacity => APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) == 0
+        ? APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset) : 1;
+
+    public bool WriteRetainedRun(uint first, uint count, APTR slots)
+    {
+        if (RedoOverlay.IsNotNull || first < ReservedBlocks || first >= BlockCount || count > BlockCount - first ||
+            count < 2 || count > RetainedRunCapacity) return false;
+        if (AmigaFileSystemWriteCombiner.Intersects(ref this, WriteQueue, first, count) && !DrainWrites()) return false;
+        var bytes = BlockBytes;
+        var buffer = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset));
+        // The mount owns this DMA workspace through completion. Invalidate its
+        // track identity before gathering. Individual LRU images are refreshed
+        // from the immutable slots only after a complete successful transfer.
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+        NativeAmigaFileSystem.InvalidateDirectoryCursors(state);
+        var destination = buffer.Raw;
+        for (var i = 0u; i < count; i++, destination += bytes)
+            CopyBlock(APTR.FromPointer(ReadUInt32(slots, (int)i * 4) + AmigaSmartFileSystemRedoArena.SlotHeaderBytes),
+                APTR.FromPointer(destination), bytes);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartDeviceDirtyOffset, 1);
+        if (TransferData(true, first, count, buffer) != count)
+        {
+            InvalidateBlockImages(first, count);
+            return false;
+        }
+        for (var i = 0u; i < count; i++)
+            RetainWrittenImage(first + i,
+                APTR.FromPointer(ReadUInt32(slots, (int)i * 4) + AmigaSmartFileSystemRedoArena.SlotHeaderBytes),
+                FindCached(first + i), bytes);
+        return true;
+    }
+#else
+    // Bind these optional journal operations directly on the native value type.
+    // The non-pool handler uses the ordinary one-block read and write paths.
+    public bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success)
+    {
+        success = false;
+        return false;
+    }
+
+    public APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity)
+    {
+        capacity = 0;
+        return APTR.Null;
+    }
+
+    public void ReleaseSfsJournalPages(APTR pages) { }
+    public uint RetainedRunCapacity => 1;
+    public bool WriteRetainedRun(uint first, uint count, APTR slots) => false;
+#endif
     public bool WriteRetainedBlock(uint block, APTR source)
     {
-#if COPPERFS_AUTOTRIM
-        // Invalidate before staging overlays or queues, not just device I/O.
-        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimValidationOffset, 0);
+#if COPPERFS_FFS_HANDLER
+        BeforeFfsWrite();
 #endif
         if (RedoOverlay.IsNotNull || block < ReservedBlocks || block >= BlockCount) return false;
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0)
@@ -3206,6 +3598,12 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             if (cached.IsNotNull) ForgetCached(cached);
             return false;
         }
+        RetainWrittenImage(block, source, cached, bytes);
+        return true;
+    }
+
+    private void RetainWrittenImage(uint block, APTR source, APTR cached, uint bytes)
+    {
         if (cached.IsNotNull)
         {
             CopyBlock(source, APTR.FromPointer(cached.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes), bytes);
@@ -3213,7 +3611,6 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             TouchCached(cached);
         }
         else CacheBlock(block, 0, source, bytes);
-        return true;
     }
 
     // Streaming data bypasses the metadata LRU. Preserve the DMA bounce path,
@@ -3259,8 +3656,15 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoByteOffset, offset);
         APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
         global::Amiga.Exec.DoIO(request);
-        return APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
-            APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes;
+        if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
+            APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes) return true;
+#if COPPERFS_FFS_HANDLER
+        ForgetFfsIndex();
+#endif
+#if COPPERFS_AUTOTRIM
+        NativeAutomaticTrim.TransportFailed(state);
+#endif
+        return false;
     }
 
     // Keep the split/bounce/TD64 path outside the common request's register
@@ -3311,10 +3715,26 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         InvalidateBlockImages(block, count);
     }
 
-    internal void InvalidateMedia() => InvalidateBlocks(0, uint.MaxValue);
+    internal void InvalidateMedia()
+    {
+#if COPPERFS_FFS_HANDLER
+        ForgetFfsIndex();
+#endif
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+        NativeAmigaFileSystem.ForgetSfsMount(state);
+#endif
+#if COPPERFS_SFS2_OWNED
+        NativeSfs2Bridge.Suspend(state);
+#endif
+        InvalidateBlocks(0, uint.MaxValue);
+    }
 
     private void InvalidateBlockImages(uint block, uint count)
     {
+#if COPPERFS_SFS2_OWNED
+        if (!Sfs2MetadataStore.Invalidate(ref this, Sfs2MountContext.Cache(ref this, Sfs2Context), block, count))
+            Sfs2MountContext.Suspend(ref this, Sfs2Context);
+#endif
 #if COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2
         // A short range occupies at most two 64-block pages. The reference
         // counts track every hashed entry, including unverified prefetches,
@@ -3376,9 +3796,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 
     public bool WriteBlock(uint block, APTR source)
     {
-#if COPPERFS_AUTOTRIM
-        // Invalidate before staging overlays or queues, not just device I/O.
-        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimValidationOffset, 0);
+#if COPPERFS_FFS_HANDLER
+        BeforeFfsWrite();
 #endif
 #if COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
         // Redo overlays exist only when this platform can stage SFS writes.
@@ -3618,8 +4037,20 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     private bool ReadSfs2MetadataView(uint block, uint id, APTR scratch, bool fill, out APTR view)
     {
         view = APTR.Null;
-        if (scratch != NativeAmigaFileSystem.Metadata(state) || id == 0 || (id & 0x80000000) != 0 ||
-            !CanReadPhysicalCache(block, out _)) return false;
+        if (id == 0 || (id & 0x80000000) != 0) return false;
+        if (!CanReadPhysicalCache(block, out var queued))
+        {
+#if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
+            // CanReadPhysicalCache resolves logical overlays before the physical
+            // write queue. A queued image supersedes the old on-disk/cache image.
+            if (queued.IsNotNull)
+            {
+                view = AmigaFileSystemWriteCombiner.ReadSfs2MetadataView(ref this, WriteQueue, block, id);
+                return true;
+            }
+#endif
+            return false;
+        }
         var entry = FindCached(block);
         APTR image;
         if (entry.IsNotNull)
@@ -3632,7 +4063,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             // Substitute the slot only for a read which would already transfer
             // one sector group into private metadata scratch. Preserve the track
             // refill path when the scratch or slot requires a bounce buffer.
-            if (!fill || APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) != NativeSfs2Bridge.DosType ||
+            if (!fill || scratch != NativeAmigaFileSystem.Metadata(state) ||
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) != NativeSfs2Bridge.DosType ||
                 !CanTransferDirect(scratch, BlockBytes) || !MetadataViewDisjoint(scratch, BlockBytes,
                     APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheOffset)),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBytesOffset))) return false;
@@ -3733,6 +4165,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             }
         }
 #endif
+#if COPPERFS_SFS2_OWNED
+        if (Sfs2Context.IsNotNull) return ReadOwnedPhysical(block, id, destination);
+#endif
 // Classic standalone TRST never allocates the legacy dirty or undo
         // buffers (including during CSUN recovery). Match their construction
         // guard here; other handler configurations retain both overlays.
@@ -3772,6 +4207,40 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (image != destination) CopyBlock(image, destination, blockBytes);
         return true;
     }
+
+#if COPPERFS_SFS2_OWNED
+    private bool ReadOwnedPhysical(uint block, uint id, APTR destination)
+    {
+        var queued = AmigaFileSystemWriteCombiner.ReadMetadataView(ref this, WriteQueue, block, id, out var found);
+        if (found)
+        {
+            if (queued.IsNull) return false;
+            CopyBlock(queued, destination, BlockBytes); return true;
+        }
+        var image = ReadPhysicalCached(block, id, destination);
+        if (image.IsNull) return false;
+        if (image != destination) CopyBlock(image, destination, BlockBytes);
+        return true;
+    }
+
+    public bool ReadSfs2PhysicalMetadata(uint block, APTR destination)
+    {
+        if (block >= BlockCount) return false;
+        var queued = AmigaFileSystemWriteCombiner.ReadView(ref this, WriteQueue, block);
+        if (queued.IsNotNull) { CopyBlock(queued, destination, BlockBytes); return true; }
+        var cached = FindCached(block);
+        if (cached.IsNotNull)
+        {
+            CopyBlock(APTR.FromPointer(cached.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes), destination, BlockBytes);
+            TouchCached(cached); return true;
+        }
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) == 0 && CanTransferDirect(destination, BlockBytes))
+            return TransferBlock(false, block, destination);
+        return ReadOwnedPhysical(block, 0, destination);
+    }
+#else
+    public bool ReadSfs2PhysicalMetadata(uint block, APTR destination) => ReadBlock(block, destination);
+#endif
 
     // Logical overlays and queued writes have already been resolved. Return a
     // borrowed physical image when possible; a copying caller consumes it

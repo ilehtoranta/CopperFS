@@ -4,9 +4,9 @@ namespace CopperSFS.Tests;
 
 public sealed partial class AmigaSmartFileSystemTests
 {
-    private static Disk StageTrstProof(byte[] image, byte[] expected, int packetBytes = 1024, bool scratchView = false)
+    private static Disk StageTrstProof(byte[] image, byte[] expected, int packetBytes = 1024, bool scratchView = false, bool shared = false)
     {
-        var disk = StageContinuation(image, expected, packetBytes, scratchView);
+        var disk = StageContinuation(image, expected, packetBytes, scratchView, shared);
         var payload = Enumerable.Repeat((byte)0xB7, packetBytes).ToArray();
         Assert.True(GroupWrite(ref disk, 3, (uint)(packetBytes * 2), payload));
         payload.CopyTo(expected, packetBytes * 2);

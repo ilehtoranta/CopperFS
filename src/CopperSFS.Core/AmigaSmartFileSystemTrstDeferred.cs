@@ -48,6 +48,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         sum = unchecked(sum + p.ReadUInt32(arena, 8)); weighted = unchecked(weighted + sum);
         sum = unchecked(sum + p.ReadUInt32(arena, 16)); weighted = unchecked(weighted + sum);
         sum = unchecked(sum + p.ReadUInt32(arena, 20)); weighted = unchecked(weighted + sum);
+        if (SfsSharedImagePool.IsPool(ref p, arena))
+            for (var at = 224; at <= 240; at += 4) { sum = unchecked(sum + p.ReadUInt32(group, at)); weighted = unchecked(weighted + sum); }
         return weighted;
     }
 
@@ -80,8 +82,18 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (group.Raw <= 1 || span < TrstGroupHeaderBytes || group.Raw > uint.MaxValue - span ||
             (!spanMapped && !p.IsMapped(group, span)) || p.ReadUInt32(group) != TrstGroupMagic ||
             p.ReadUInt32(group, 4) != 1 || p.ReadUInt32(group, 8) != span) return false;
-        var arenaBytes = p.ReadUInt32(group, 12);
         var bytes = p.ReadUInt32(group, 52);
+        if (p.ReadUInt32(group, 12) == 0)
+        {
+            if (!SfsSharedImagePool.ValidLayout(ref p, group, arena, span, bytes) ||
+                p.ReadUInt32(group, 16) != arena.Raw || p.ReadUInt32(arena, 12) != group.Raw ||
+                p.ReadUInt32(arena, 8) != (bytes | SfsSharedImagePool.Format | AmigaSmartFileSystemRedoArena.Deferred) ||
+                !TrstPoolProofOwned(ref p, group, arena)) return false;
+        }
+        else
+        {
+        var arenaBytes = p.ReadUInt32(group, 12);
+
         if (bytes < 512 || bytes > 32768 || arenaBytes < bytes + 40 ||
             arenaBytes > (uint.MaxValue - TrstGroupHeaderBytes) / 2 ||
             span != TrstGroupHeaderBytes + arenaBytes * 2) return false;
@@ -105,6 +117,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (capacity > (available >> 9) || (capacity << 9) + (capacity << 3) > available) return false;
         }
         else if (capacity > available / (bytes + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)) return false;
+        }
         var count = p.ReadUInt32(group, TrstDeferredCount); var limit = p.ReadUInt32(group, TrstDeferredLimit);
         if (count == 0 || count > limit || limit > ushort.MaxValue ||
             p.ReadUInt32(group, TrstDeferredInverse) != ~count ||
@@ -133,26 +146,24 @@ public static partial class AmigaSmartFileSystemWriteCore
         var tail = p.ReadUInt32(hint, 8); var destination = p.ReadUInt32(hint, 16) + p.ReadUInt32(hint, 20);
         if (p.ReadUInt32(proof) != arena.Raw || p.ReadUInt32(hint, 44) != arena.Raw ||
             tail < p.ReadUInt32(proof, 12) || destination < p.ReadUInt32(proof, 16) ||
-            count >= p.ReadUInt32(hint, 12) || p.ReadUInt32(hint, 20) > ushort.MaxValue - count) return false;
+            count > p.ReadUInt32(hint, 12) || p.ReadUInt32(hint, 20) > ushort.MaxValue - count ||
+            (count == p.ReadUInt32(hint, 12) && (p.ReadUInt32(hint, 24) != 0 || !SfsSharedImagePool.IsPool(ref p, arena)))) return false;
         var progress = tail - p.ReadUInt32(proof, 12);
         var limit = p.ReadUInt32(proof, 20);
         if (progress != destination - p.ReadUInt32(proof, 16) || progress > limit || count > limit - progress) return false;
-        var leaf = AmigaSmartFileSystemRedoArena.OwnedMetadataAtRaw(ref p, arena,
-            p.ReadUInt32(proof, 24), p.ReadUInt32(hint, 28), TreeId);
+        var leaf = TrstProofImage(ref p, group, arena, 24, p.ReadUInt32(hint, 28), TreeId, true);
         if (leaf.IsNull || !TrstContinuationLeaf(ref p, bytes, hint, leaf, proof)) return false;
-        var oldBitmap = AmigaSmartFileSystemRedoArena.OwnedMetadataAtRaw(ref p, arena,
-            p.ReadUInt32(proof, 28), p.ReadUInt32(proof, 56), BitmapId);
+        var oldBitmap = TrstProofImage(ref p, group, arena, 28, p.ReadUInt32(proof, 56), BitmapId, true);
         var newBitmap = p.ReadUInt32(proof, 56) == p.ReadUInt32(proof, 60) ? oldBitmap :
-            AmigaSmartFileSystemRedoArena.OwnedMetadataAtRaw(ref p, arena,
-                p.ReadUInt32(proof, 32), p.ReadUInt32(proof, 60), BitmapId);
+            TrstProofImage(ref p, group, arena, 32, p.ReadUInt32(proof, 60), BitmapId, true);
         if (oldBitmap.IsNull || newBitmap.IsNull) return false;
         var oldAt = 12 + (int)((p.ReadUInt32(proof, 64) + progress) >> 5) * 4;
         var newAt = 12 + (int)((p.ReadUInt32(proof, 68) + progress) >> 5) * 4;
         if (!TrstBitmapRange(ref p, oldBitmap, oldAt, tail & 31, count, false) ||
             !TrstBitmapRange(ref p, newBitmap, newAt, destination & 31, count, true)) return false;
-        p.WriteUInt32(arena, 8, bytes | 0x80000000); p.WriteUInt32(arena, 12, 0);
+        p.WriteUInt32(arena, 8, p.ReadUInt32(arena, 8) & ~AmigaSmartFileSystemRedoArena.Deferred); p.WriteUInt32(arena, 12, 0);
         ApplyTrstContinuation(ref p, hint, leaf, oldBitmap, newBitmap, count, oldAt, newAt,
-            bytes == 512 ? count << 9 : count * bytes);
+            bytes == 512 ? count << 9 : count * bytes, bytes);
         for (var at = TrstDeferredCount; at <= TrstDeferredSeal; at += 4) p.WriteUInt32(group, at, 0);
         return true;
     }
