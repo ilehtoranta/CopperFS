@@ -52,3 +52,42 @@ The ordinary trials, native replay logs and full-ROM recovery results are under 
 The Release solution built and the host test run passed 2,171 tests with five conditional skips and zero failures. The default and grouped M68000 standalone handlers built. All 186 CopperStart cache, transfer, buffer and geometry replays and all 77 link and size replays passed.
 
 On Kickstart 3.1, both CopperSFS and original SFS recovered the entire old or new 96 KiB payload at all nine tested cuts. Original SFS remounted 43 candidate sector prefixes, including payload-write and flush failures, with intact neighbors and allocation counts. Group pressure, partial journal and home writes, journal-read retry, close/flush/timer ordering, handoff, foreign startup and automatic TRIM tests passed. All five sequential-read fixtures passed. All three handlers issued 64 reads per 1 MiB in the 20 cold/warm and Fast/Chip comparisons; revised CopperSFS used 0.43–0.52% fewer cycles than original SFS. Physical Amiga and storage devices were not exercised.
+
+## Growth commit profile after the full-workload changes
+
+The reference for this pass is commit `259f645`. On the growth instruction trace its handler used 1,100,216 cycles versus 789,501 in original SFS 1.279. The reference issued one read, nine writes and four flushes during growth. The first original Fast RAM trial issued zero reads, eight writes and four flushes. Command count alone does not explain the cycle difference.
+
+One reference commit took 519,848 inclusive cycles in `CommitTrstStream`. Planning eleven compressed records took 134,229 cycles, emission 245,264 and home writes 79,703. These times are inside the commit. Emission made 141 calls to the byte-stream helper and 63 to the literal-span helper. A record crossing a journal page used these helpers for every run, even when the current code byte and literal both fit. Original SFS has no symbol map in this trace, so its handler time cannot be split into comparable named routines.
+
+A separate fixed-displacement planner experiment retained one read per input word but took 134,355 cycles in the planner and 1,273,750 for instrumented growth, up from 1,268,130. It was discarded.
+
+The SFS emission change writes each run code and fitting literal directly into the existing journal page. At an exact page boundary, or when literal data crosses the boundary, the existing transition code still allocates, seals and links pages. Scratch ownership, wire encoding, publication and the four flush barriers stay the same.
+
+The retained emitter keeps the current output pointer and page end in locals. Instrumented growth commit fell to 456,641 cycles (−12.2%). Emission fell to 184,528 cycles (−24.8%), with 12 byte-helper and three literal-helper calls. Planning still cost 129,623 cycles and the home-write pass cost 84,629. Across the entire growth phase 191 block-copy calls took 201,708 cycles, some within commit. CopperSFS still executed 1,038,744 handler cycles during growth versus original SFS's 789,501. The final growth/overwrite/verify disk image had the same SHA-256 as the reference.
+
+| Mean ordinary guest cycles, three trials | Original SFS 1.279 | Pushed reference | Revised CopperSFS |
+|---|---:|---:|---:|
+| Fast growth and explicit flush | 1,036,740 | 1,268,247 | 1,197,993 |
+| Fast overwrite and explicit flush | 324,637 | 736,873 | 753,383 |
+| Fast verification | 4,070,357 | 4,000,360 | 4,004,980 |
+| Fast total | 5,756,657 | 6,327,000 | 6,266,277 |
+| Chip growth and explicit flush | 1,039,397 | 1,268,417 | 1,198,090 |
+| Chip overwrite and explicit flush | 348,000 | 738,853 | 759,873 |
+| Chip verification | 4,073,017 | 4,004,143 | 4,004,107 |
+| Chip total | 5,785,337 | 6,332,927 | 6,271,957 |
+
+Both placements saved approximately 0.96% on the complete workload and 5.54% on growth against the pushed reference. The 96 KiB overwrite regressed 2.24% Fast and 2.84% Chip. In the Fast instruction trace the overwrite commit itself fell from 87,116 to 83,743 cycles. Of the 16,470-cycle increase across the overwrite phase, Kickstart accounted for 14,383 and handler code for 1,645. The trace does not identify a specific cause for the extra ROM execution. Fast verification regressed 0.12% and Chip verification was effectively unchanged. A separate emitter with parallel fitting-record and spanning-record loops took 6,277,037 Fast and 6,281,577 Chip total cycles, both slower than the retained version.
+
+Both CopperSFS handlers used 13 reads, 26 writes and eight flushes over the complete workload in every trial. During growth original SFS used eight writes and four flushes and CopperSFS used nine writes and four flushes. Original SFS's overwrite used 12 writes and one flush in every Fast trial and two Chip trials, and 15 writes and four flushes in the remaining Chip trial. Both CopperSFS handlers used 17 writes and four flushes for overwrite. The paired ordinary timings include these differences.
+
+The revised M68000 binary is 168,656 bytes, 16 bytes larger than the pushed reference. The new loop uses existing journal storage and requests no additional mount or heap memory. The compiler map reports a four-byte local spill in the emitter and one fewer function argument. CILica scalar replacement was enabled and inlining disabled. The retained binary, phase profiles, paired measurements and qualification logs are under `artifacts/sfs-growth-commit-cursor`; its SHA-256 is B5D3E3D3AAAC3073F8DEFF6781532E5C833C12BA054C55E3266909ADC15DF294.
+
+The warm mixed mutation phase saved 19,517 cycles Fast (0.11%) and 16,867 Chip (0.095%) versus the pushed reference. Warm verification cost an additional 5,274 Fast and 6,164 Chip (0.026% and 0.030%). Both CopperSFS arms retained 126,008 bytes at mount and 138,888 after mutation. Original SFS retained 156,480 and 172,904 bytes in the same Fast RAM probe with 32 DOS buffers.
+
+The separate original-handler gate measured +3.547% Fast mutation, +2.957% Fast verification, +3.410% Chip mutation and +3.191% Chip verification against original SFS. Each exceeds the +0.1% threshold. The grouped profile remains opt-in.
+
+On Kickstart 3.1 both handlers recovered the complete old or new payload at all nine continuation cuts. Original SFS remounted 43 candidate sector prefixes across aligned and partial overwrites, including injected write and flush failures. Group pressure, partial journal and home writes, retry after a partial journal read, rejected packets, close/flush/timer boundaries, handoff, foreign startup and automatic TRIM after reallocation all passed. The default and grouped M68000 handlers built, and all 186 CopperStart cache, transfer, buffer and geometry replays and all 77 link and size replays passed. Physical hardware was not exercised.
+
+The five sequential-read fixtures passed. Across 20 cold/warm and Fast/Chip comparisons the revised and original handlers both issued 64 reads per MiB, and revised CopperSFS used 0.43–0.52% fewer cycles than original SFS.
+
+The Release solution build completed with one nullable-reference warning in the CopperSharp compiler dependency. The Release solution test run passed 2,171 tests with five conditional skips and zero failures.
