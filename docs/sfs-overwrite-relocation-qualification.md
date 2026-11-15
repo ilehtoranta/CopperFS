@@ -90,8 +90,8 @@ On the relocation-remount branch, the grouped writer also requires the grouped
 SFS checkpoint and checked extent-leaf changes through commit `f61bc65`.
 Building this branch with `Build-Handler.ps1 -GroupedSfsTrst` produced a
 157,704-byte MC68000 HUNK with SHA-256
-`12CBB336A58562F66D40E7724816308136F7AACE31E5D8EA1A9869FD39CC3976`.
+`E4CAFA61E5ECFAAFBD2AA32A4B37F6E43121F832BB3203862C7AB8B66795DD23`.
 All 13 selected Kickstart tests and 141 native replay tests passed. The
 relocation writer finished in 886 frames with four device flushes. Cold
 remount verified the file through EOF in 910 frames and issued zero writes.
-Branch-build receipts are under `artifacts/sfs-writer-push`.
+The final rerun after the FFS table-read and OFS fixture corrections is under `artifacts/sfs-writer-push/final`.
