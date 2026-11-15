@@ -30,6 +30,7 @@ internal sealed class ReadCpuProfile
     private uint dosReturn, dosStack, dosBase;
     private int dosVector;
     private long dosStart, dosHandler, dosRom;
+    private readonly Dictionary<uint, long> dosHandlerPcs = [];
 
     // Observe library-vector entry and the matching guest RTS. No guest
     // instruction, timer, DMA request or packet is added to either handler.
@@ -39,7 +40,7 @@ internal sealed class ReadCpuProfile
         {
             if (pc != dosReturn || core.State.A[7] != dosStack) return;
             dosCalls.Add(new { Vector = dosVector, Start = dosStart - start, Cycles = cycle - dosStart,
-                Handler = dosHandler, Kickstart = dosRom, Result = core.State.D[0] });
+                Handler = dosHandler, Kickstart = dosRom, Result = core.State.D[0], Methods = DosHandlerMethods() });
             dosReturn = 0;
         }
         var library = core.State.A[6];
@@ -52,8 +53,15 @@ internal sealed class ReadCpuProfile
         }
         if (library != dosBase || Memory(core.State.A[7], 4).Length != 4) return;
         dosReturn = ReadLong(core.State.A[7]); dosStack = core.State.A[7] + 4;
-        dosStart = cycle; dosHandler = dosRom = 0; dosVector = vector;
+        dosStart = cycle; dosHandler = dosRom = 0; dosVector = vector; dosHandlerPcs.Clear();
     }
+    private object DosHandlerMethods() => dosHandlerPcs.GroupBy(pair =>
+    {
+        var offset = pair.Key - codeBase;
+        return symbols.FirstOrDefault(s => offset >= s.Offset && offset - s.Offset < s.Size).Name ?? "<unmapped-handler>";
+    }).Select(group => new { Name = group.Key, Cycles = group.Sum(pair => pair.Value) })
+      .OrderByDescending(method => method.Cycles).ToArray();
+
     private readonly List<object> copyEntries = [];
     private uint copyEntry;
     private uint blockCopyEntry, blockCopyBytes, blockCopyCaller;
@@ -406,7 +414,12 @@ internal sealed class ReadCpuProfile
                     if (measureRom) romCycles[context] = romCycles.GetValueOrDefault(context) + cpu.Cycles - before;
                     if (dosReturn != 0)
                     {
-                        if (pc >= codeBase && pc - codeBase < codeBytes) dosHandler += cpu.Cycles - before;
+                        if (pc >= codeBase && pc - codeBase < codeBytes)
+                        {
+                            var elapsed = cpu.Cycles - before;
+                            dosHandler += elapsed;
+                            dosHandlerPcs[pc] = dosHandlerPcs.GetValueOrDefault(pc) + elapsed;
+                        }
                         else if (pc >= 0xF80000 && pc < 0x1000000) dosRom += cpu.Cycles - before;
                     }
                     var value = counts.GetValueOrDefault(pc);
