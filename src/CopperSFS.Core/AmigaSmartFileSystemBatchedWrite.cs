@@ -405,7 +405,14 @@ public static partial class AmigaSmartFileSystemWriteCore
                     first = count = 0;
                     if (onlyPrefix) return true;
                 }
-                bitmap = durable ? TrstFreeSearchMap(ref p, ref w, map) : FreeSearchMapView(ref p, ref w, map);
+                if (durable)
+                {
+                    var length = count == 0 && minimum == maximum && maximum <= bits - index &&
+                        maximum <= high - block ? maximum : 0;
+                    bitmap = TrstFreeSearchMap(ref p, ref w, map, index, length, out var exact);
+                    if (exact) { first = block; count = length; return true; }
+                }
+                else bitmap = FreeSearchMapView(ref p, ref w, map);
                 if (bitmap.IsNull) return false;
                 loaded = map;
             }
@@ -493,17 +500,8 @@ public static partial class AmigaSmartFileSystemWriteCore
             var withinWord = first & 31;
             var take = (w.BlockBytes - (uint)offset) * 8 - withinWord;
             if (take > count) take = count;
-            var remaining = take;
-            while (remaining != 0)
-            {
-                var span = 32u - withinWord;
-                if (span > remaining) span = remaining;
-                var runMask = (uint.MaxValue >> (int)withinWord) & (uint.MaxValue << (int)(32 - withinWord - span));
-                var word = p.ReadUInt32(bitmap, offset);
-                if ((word & runMask) != runMask) return Fail(ref w, DOS.Error.DiskNotValidated);
-                ReplaceWord(ref p, bitmap, offset, word & ~runMask);
-                remaining -= span; offset += 4; withinWord = 0;
-            }
+            if (!TrstBitmapRange(ref p, bitmap, offset, withinWord, take, true)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            UpdateTrstBitmapRange(ref p, bitmap, offset, withinWord, take, false);
             // Cross-bitmap runs are protected by the still-live reservation.
             if (!PutSealed(ref p, ref w, map, bitmap)) return false;
             w.FreeDelta -= (int)take; first += take; count -= take;

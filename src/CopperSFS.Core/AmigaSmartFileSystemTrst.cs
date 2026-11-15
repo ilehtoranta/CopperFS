@@ -231,42 +231,68 @@ public static partial class AmigaSmartFileSystemWriteCore
     // existing Bitmap scratch. Journal allocation uses Meta, so page crossings
     // cannot clobber the plan. Old/final words are never classified a second time.
     private static bool TrstEmit<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
-        ref RedoStream stream, APTR image, uint runs, uint length)
+        ref RedoStream stream, APTR image, uint runs)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        // Plan already computed the complete payload length. When it fits,
-        // emit into the bounded current page without a page-transition call
-        // for every run. This path performs no I/O and changes no publication
-        // barrier; spanning payloads retain the streaming path below.
-        if (stream.Offset <= w.BlockBytes && length <= w.BlockBytes - stream.Offset)
-        {
-            var source = image.Raw;
-            var destination = w.Journal.Raw + stream.Offset;
-            for (var run = 0u; run < runs; run++)
-            {
-                var code = p.ReadUInt8(w.Bitmap, (int)run);
-                var bytes = ((uint)(code & 63) + 1) * 4;
-                p.WriteUInt8(APTR.FromPointer(destination++), 0, code);
-                if ((code >> 6) == 3)
-                {
-                    p.Copy(APTR.FromPointer(source), APTR.FromPointer(destination), bytes);
-                    destination += bytes;
-                }
-                source += bytes;
-            }
-            stream.Offset += length;
-            return true;
-        }
+        // Keep the output cursor local while a run fits. Publish its offset
+        // to the page-transition helpers only when crossing or finishing.
         var pointer = image.Raw;
+        var destination = w.Journal.Raw + stream.Offset;
+        var end = w.Journal.Raw + w.BlockBytes;
         for (var run = 0u; run < runs; run++)
         {
             var code = p.ReadUInt8(w.Bitmap, (int)run);
             var bytes = ((uint)(code & 63) + 1) * 4;
-            if (!TrstByte(ref p, ref w, ref staged, ref stream, code)) return false;
-            if ((code >> 6) == 3 && !TrstLiteral(ref p, ref w, ref staged, ref stream,
-                APTR.FromPointer(pointer), bytes)) return false;
+            if (destination == end)
+            {
+                stream.Offset = w.BlockBytes;
+                if (!TrstByte(ref p, ref w, ref staged, ref stream, code)) return false;
+                destination = w.Journal.Raw + stream.Offset;
+                end = w.Journal.Raw + w.BlockBytes;
+            }
+            else p.WriteUInt8(APTR.FromPointer(destination++), 0, code);
+            if ((code >> 6) == 3)
+            {
+                if (bytes <= end - destination)
+                {
+                    // Each literal is a whole number of longwords, and both
+                    // spans have already been bounded by the plan and page.
+                    // Odd journal offsets need byte accesses on the 68000.
+                    var from = pointer;
+                    var until = destination + bytes;
+                    if (((from | destination) & 1) == 0)
+                    {
+                        do
+                        {
+                            p.WriteUInt32(APTR.FromPointer(destination), 0, p.ReadUInt32(APTR.FromPointer(from)));
+                            destination += 4; from += 4;
+                        } while (destination != until);
+                    }
+                    else
+                    {
+                        do
+                        {
+                            var src = APTR.FromPointer(from);
+                            var dst = APTR.FromPointer(destination);
+                            p.WriteUInt8(dst, 0, p.ReadUInt8(src, 0));
+                            p.WriteUInt8(dst, 1, p.ReadUInt8(src, 1));
+                            p.WriteUInt8(dst, 2, p.ReadUInt8(src, 2));
+                            p.WriteUInt8(dst, 3, p.ReadUInt8(src, 3));
+                            destination += 4; from += 4;
+                        } while (destination != until);
+                    }
+                }
+                else
+                {
+                    stream.Offset = destination - w.Journal.Raw;
+                    if (!TrstLiteral(ref p, ref w, ref staged, ref stream, APTR.FromPointer(pointer), bytes)) return false;
+                    destination = w.Journal.Raw + stream.Offset;
+                    end = w.Journal.Raw + w.BlockBytes;
+                }
+            }
             pointer += bytes;
         }
+        stream.Offset = destination - w.Journal.Raw;
         return true;
     }
 
@@ -367,7 +393,7 @@ public static partial class AmigaSmartFileSystemWriteCore
                     if (!TrstByte(ref p, ref w, ref staged, ref stream, (byte)(target >> shift))) return false;
                 if (!TrstByte(ref p, ref w, ref staged, ref stream, 0)) return false;
             }
-            if (!TrstEmit(ref p, ref w, ref staged, ref stream, image, runs, length)) return false;
+            if (!TrstEmit(ref p, ref w, ref staged, ref stream, image, runs)) return false;
             // Native OperationInformation uses 68k word alignment (7-byte header).
             if ((length & 1) == 0 && !TrstByte(ref p, ref w, ref staged, ref stream, 0)) return false;
         }

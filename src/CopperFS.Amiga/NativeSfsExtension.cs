@@ -691,7 +691,9 @@ public static partial class NativeSfsExtension
                         var diskBlock = extent + offset;
                         if (blocks <= blockCount - diskBlock)
                         {
-                            var read = p.ReadDataBlocks(diskBlock, blocks, destination);
+                            // Requests larger than the 4 KiB read-ahead window can go directly
+                            // through the pending-image checks to the device.
+                            var read = p.ReadDataBlocks(diskBlock, blocks, destination, readAhead: length <= 4096);
                             if (read == blocks) { error = DOS.Error.None; return (int)length; }
                             APTR.WriteUInt32(owned, 0, 0);
                             error = DOS.Error.DiskNotValidated;
