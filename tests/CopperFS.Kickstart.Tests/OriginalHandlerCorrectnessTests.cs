@@ -229,6 +229,10 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                     if (value == 231) writeProfiler!.SetCallStage("warm");
                     if (value == 222) writeProfiler!.StopTrimCalls();
                 }
+                if (overwriteProfile && value == 220) writeProfiler!.Begin("growth", busCycle);
+                if (overwriteProfile && value == 221) writeProfiler!.End(directory, busCycle);
+                if (overwriteProfile && value == 224) writeProfiler!.Begin("verification", busCycle);
+                if (overwriteProfile && value == 225) writeProfiler!.End(directory, busCycle);
                 if (overwriteProfile && value == 222) writeProfiler!.Begin("overwrite", busCycle);
                 if (overwriteProfile && value == 223) writeProfiler!.End(directory, busCycle);
                 if (!trimProfile && !overwriteProfile && value == 220) writeProfiler?.Begin(benchmarkProfile ? "mutate" : "write", busCycle);

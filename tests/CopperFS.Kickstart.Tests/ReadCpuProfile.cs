@@ -299,6 +299,10 @@ internal sealed class ReadCpuProfile
                     {
                         activeCalls.Pop(); var total = inclusiveCalls.GetValueOrDefault(frame.Name);
                         inclusiveCalls[frame.Name] = (total.Cycles + before - frame.Start, total.Calls + 1);
+                        if (phase == "overwrite" && (frame.Name.Contains("::RelocateOverwrite<") ||
+                            activeCalls.Any(f => f.Name.Contains("::RelocateOverwrite<"))))
+                            transactionCalls.Add(new { Method = frame.Name, Start = frame.Start - start, Cycles = before - frame.Start,
+                                Caller = activeCalls.TryPeek(out var parentFrame) ? parentFrame.Name : null });
                         if (frame.Name == "CopperStart.Dos.NativeFileSystemPlatform::Transfer")
                             deviceCalls.Add(new { Start = frame.Start - start, Cycles = before - frame.Start,
                                 Caller = activeCalls.TryPeek(out var caller) ? caller.Name : null });

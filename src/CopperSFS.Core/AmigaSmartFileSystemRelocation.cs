@@ -163,7 +163,23 @@ public static partial class AmigaSmartFileSystemWriteCore
             }
             if (w.RedoStaging && w.RedoCheckpoint.IsNotNull &&
                 !FindTrstFreeRun(ref p, ref w, preferred, count, out replacement, out found)) return false;
-            if (found == 0 && !FindFreeRun(ref p, ref w, preferred, count, count, true, out replacement, out found)) return false;
+            if (found == 0)
+            {
+                // For the first packet of a non-root extent, measure the rest
+                // of this hole while its bitmap is already in hand. Only the
+                // packet is allocated; a short hole keeps normal look-ahead.
+                var probe = count;
+                if (preferred == 0 && advanceTail && sourceLeaf != w.ExtentRoot &&
+                    w.TrstContinuation.IsNotNull && w.RedoCheckpoint.IsNull &&
+                    sourceLength <= (w.BlockBytes - 12) * 8)
+                    probe = sourceLength;
+                if (!FindFreeRun(ref p, ref w, preferred, count, probe, true, out replacement, out found)) return false;
+                if (probe > count && found >= count)
+                {
+                    placedLong = found == probe;
+                    found = count;
+                }
+            }
             if (found == 0) return true;
             if (found != count) return Fail(ref w, DOS.Error.DiskNotValidated);
             // The first buffered relocation can seed many subsequent Writes.
@@ -263,7 +279,10 @@ public static partial class AmigaSmartFileSystemWriteCore
                 RemoveLeafRecord(ref p, record, sourceAt, (int)records, (int)stride);
                 if (!Put(ref p, ref w, sourceLeaf, record) || !ReleaseDataRun(ref p, ref w, start, count))
                     return false;
-                if (sourceNext != 0 && !RememberTrstRelocation(ref p, ref w, node, previous, sourceNext))
+                if (beforeAt > sourceAt) beforeAt -= (int)stride;
+                if (afterAt > sourceAt) afterAt -= (int)stride;
+                if (sourceNext != 0 && !RememberTrstRelocation(ref p, ref w, node, previous, sourceNext,
+                    sourceLeaf, beforeAt, afterAt))
                     return false;
                 moved = true; return true;
             }
@@ -380,7 +399,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         }
         if (installed == replacement)
         {
-            if (!InsertBnode(ref p, ref w, w.ExtentRoot, replacement, 0, previous, 0, out _, out _) ||
+            if (!InsertBnode(ref p, ref w, w.ExtentRoot, replacement, 1, previous, 0, out _, out _) ||
                 !SetExtentRecord(ref p, ref w, replacement, count, next, previous)) return false;
             if ((previous & 0x80000000) == 0)
             {
@@ -405,20 +424,27 @@ public static partial class AmigaSmartFileSystemWriteCore
     // image. A shared leaf is enough to describe the next consecutive Write;
     // the ordinary continuation entry still validates it and proves durable
     // free space before writing. Other layouts keep the general fallback.
-    private static bool RememberTrstRelocation<T>(ref T p, ref Work w, uint node, uint before, uint tail)
+    private static bool RememberTrstRelocation<T>(ref T p, ref Work w, uint node, uint before, uint tail, uint block = 0, int beforeAt = 0, int tailAt = 0)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var leaf = AmigaSmartFileSystemCore.ExtentRecordView(ref p, w.ExtentRoot, before,
-            w.Meta, w.BlockCount, w.BlockBytes, out var block, out var beforeAt);
+        var leaf = block != 0 ? View(ref p, ref w, block, TreeId, w.Meta) :
+            AmigaSmartFileSystemCore.ExtentRecordView(ref p, w.ExtentRoot, before,
+            w.Meta, w.BlockCount, w.BlockBytes, out block, out beforeAt);
         if (leaf.IsNull) return FailUnlessSet(ref w);
         TrstLeafLayout(ref p, leaf, out var stride, out var records);
         if (p.ReadUInt8(leaf, 14) != 1 || stride < 14 || (stride & 1) != 0 ||
             records > (w.BlockBytes - 16) / stride) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (!TrstRecordOffset(beforeAt, records, stride) || p.ReadUInt32(leaf, beforeAt) != before ||
+            (tailAt != 0 && (!TrstRecordOffset(tailAt, records, stride) || p.ReadUInt32(leaf, tailAt) != tail)))
+            return Fail(ref w, DOS.Error.DiskNotValidated);
         var beforeLength = (uint)p.ReadUInt16(leaf, beforeAt + 12);
         if (beforeLength == 0 || beforeLength == ushort.MaxValue || p.ReadUInt32(leaf, beforeAt + 4) != tail) return true;
-        var end = 16 + (int)(records * stride); var tailAt = 0;
-        for (var at = 16; at < end; at += (int)stride)
-            if (p.ReadUInt32(leaf, at) == tail) { tailAt = at; break; }
+        var end = 16 + (int)(records * stride);
+        if (tailAt == 0)
+        {
+            for (var at = 16; at < end; at += (int)stride)
+                if (p.ReadUInt32(leaf, at) == tail) { tailAt = at; break; }
+        }
         if (tailAt == 0) return true;
         var tailLength = (uint)p.ReadUInt16(leaf, tailAt + 12);
         if (tailLength <= 1) return true;
@@ -511,7 +537,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (leftLength == 0 || leftLength >= length) return Fail(ref w, DOS.Error.DiskNotValidated);
         right = key + leftLength;
         if (!SetExtentRecord(ref p, ref w, key, leftLength, right, previous) ||
-            !InsertBnode(ref p, ref w, w.ExtentRoot, right, 0, key, 0, out _, out _) ||
+            !InsertBnode(ref p, ref w, w.ExtentRoot, right, 1, key, 0, out _, out _) ||
             !SetExtentRecord(ref p, ref w, right, length - leftLength, next, key)) return false;
         if (next == 0) return true;
         return ExtentRecord(ref p, ref w, next, out length, out var after, out _) &&
@@ -530,17 +556,8 @@ public static partial class AmigaSmartFileSystemWriteCore
             var withinWord = first & 31;
             var take = (w.BlockBytes - (uint)offset) * 8 - withinWord;
             if (take > count) take = count;
-            var remaining = take;
-            while (remaining != 0)
-            {
-                var span = 32u - withinWord;
-                if (span > remaining) span = remaining;
-                var runMask = (uint.MaxValue >> (int)withinWord) & (uint.MaxValue << (int)(32 - withinWord - span));
-                var word = p.ReadUInt32(bitmap, offset);
-                if ((word & runMask) != 0) return Fail(ref w, DOS.Error.DiskNotValidated);
-                ReplaceWord(ref p, bitmap, offset, word | runMask);
-                remaining -= span; offset += 4; withinWord = 0;
-            }
+            if (!TrstBitmapRange(ref p, bitmap, offset, withinWord, take, false)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            UpdateTrstBitmapRange(ref p, bitmap, offset, withinWord, take, true);
             // OriginallyFree/FreeSearchMap exclude these retired blocks until
             // commit, even though the transaction's current bitmap frees them.
             if (!PutSealed(ref p, ref w, map, bitmap)) return false;
