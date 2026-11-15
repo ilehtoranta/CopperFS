@@ -5,7 +5,13 @@ public static partial class CpxBootProbe
     private static int FormatWork(APTR control,APTR port,APTR data)
     {
         APTR.WriteUInt32(control,36,700); APTR.WriteUInt32(control,20,700);
-        if(DOS.DoPkt(port,25,(int)(data.Raw>>2),0,0,0,0)==0||APTR.ReadUInt32(data,24)!=uint.MaxValue) return Fail(control,701);
+        if((APTR.ReadUInt32(control,60)&4096)!=0)
+        {
+            var pending=DOS.Open("CPX0:Pending",DOS.FileMode.NewFile); if(!pending.HasValue) return Fail(control,723);
+            APTR.WriteUInt32(data,0,0x12345678);
+            if(DOS.Write(pending.Value,data,4)!=4||DOS.Close(pending.Value)==0) return Fail(control,724);
+        }
+        else if(DOS.DoPkt(port,25,(int)(data.Raw>>2),0,0,0,0)==0||APTR.ReadUInt32(data,24)!=uint.MaxValue) return Fail(control,701);
         if(DOS.Format(CString.FromLiteral("CPX0:"),CString.FromLiteral("Wrong"),0x444f5301)!=0||(uint)DOS.IoErr()!=115) return Fail(control,702);
         // Actual DOS passes Latin-1 bytes, not a UTF-8 C string.
         APTR label=APTR.FromPointer(control.Raw+1600);

@@ -1,9 +1,44 @@
 using CopperCPX;
 using CopperFS.Cpx4.Reference;
+using CopperCPX.Reference.Tests;
 namespace CopperCPX.Tests;
 
 public class TrimTests
 {
+    [Fact] public void TimerScanRechecksAReleasedUnitAfterItIsAllocatedToAnotherFile()
+    {
+        var disk=EngineTests.Fresh(512); var volume=new Cpx4Volume<Disk>(disk,new byte[36864]);
+        volume.Create("old"u8,out ulong oldId); volume.Create("kept"u8,out ulong keptId);
+        byte[] expected=Enumerable.Repeat((byte)0x57,512).ToArray();
+        volume.Write(oldId,0,expected,out _);
+        var before=new IndependentImage(disk.Bytes);
+        ulong released=IndependentImage.L(before.Objects[oldId],104);
+        var ram=new Ram(new byte[110000]); var engine=FileMutationTests.Mount(disk,ram);
+        Assert.Equal(CpxError.None,engine.BeginResize(Wide.From((uint)oldId),default)); EngineTests.Drive(ref engine,ram,disk);
+        Assert.False(new IndependentImage(disk.Bytes).IsOwned(released));
+        expected.CopyTo(ram.Bytes,90000);
+        Assert.Equal(CpxError.None,engine.BeginMappedWrite(Wide.From((uint)keptId),default,90000,512)); EngineTests.Drive(ref engine,ram,disk);
+        var current=new IndependentImage(disk.Bytes); Assert.Equal(released,IndependentImage.L(current.Objects[keptId],104));
+        // The saved cursor is deliberately stale. A tick must verify today's bitmap.
+        ram.Write32(engine.Arena+424,0); ram.Write32(engine.Arena+428,(uint)released);
+        var dispatcher=new CpxDosDispatcher<Ram>(ram,engine.Arena); dispatcher.Initialize(1,2);
+        Assert.True(dispatcher.TryBeginMaintenance()); int discards=0;
+        for(int step=0;dispatcher.Busy&&step<30;step++)
+        {
+            Assert.Equal(CpxError.Busy,dispatcher.BeginPacket(95000));
+            if(dispatcher.Step()!=StepResult.NeedIo) continue;
+            var io=dispatcher.Request;
+            if(io.Kind==IoKind.Read) disk.Read(io.Sector.Low,ram.Bytes.AsSpan((int)io.Buffer,(int)io.Bytes));
+            else
+            {
+                Assert.Equal(IoKind.Discard,io.Kind); Assert.False(current.IsOwned(io.Sector.Low));
+                Assert.Equal(512u,io.Bytes); discards++; disk.Bytes.AsSpan((int)io.Sector.Low*512,512).Fill(0xe1);
+                Assert.Equal(CpxError.Busy,engine.BeginResize(Wide.From((uint)keptId),default));
+            }
+            Assert.Equal(CpxError.None,dispatcher.CompleteIo(io.Token,io.Bytes,true));
+        }
+        Assert.False(dispatcher.Busy); Assert.Equal(1,discards); Assert.Equal(expected,new IndependentImage(disk.Bytes).Read(keptId));
+    }
     [Fact] public void MaintenanceVisitsOneWindowAndIssuesOneDiscard()
     {
         var disk=EngineTests.Fresh(512); var ram=new Ram(new byte[100000]); var e=FileMutationTests.Mount(disk,ram);

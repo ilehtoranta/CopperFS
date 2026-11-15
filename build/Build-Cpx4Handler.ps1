@@ -27,6 +27,8 @@ $arguments = @((Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net1
     (Join-Path $inputs 'CopperFS.Amiga.dll'), '--entry', 'CopperCPX.Amiga.NativeCpxHandler::Entry',
     '--platform','amiga','--cpu',$Cpu,'--clr','always','--peephole','fixed-point',
     '--fpu','disabled','--exceptions','yolo','--format','hunk','--runtime','freestanding',
+    '--code-size-optimizations','on',
+    '--code-size-passes','ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis',
     '--memory','none','--exports','none','--symbols','off','--output',$output,
     '--compatibility-report',(Join-Path $ArtifactRoot 'CopperCPX4.compatibility.json'))
 foreach ($assembly in @('CopperCPX.Core.dll','CopperSharp.Sdk.Amiga.dll','CopperSharp.Compiler.dll')) {

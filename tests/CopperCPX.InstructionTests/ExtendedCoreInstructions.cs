@@ -11,7 +11,7 @@ public static class ExtendedCoreProbe
 {
     public static uint Entry()
     {
-        var m=new GuestMemory(); var e=new CpxEngine<GuestMemory>(m,0x40000);
+        var m=new GuestMemory(); var e=new CpxEngine<GuestMemory>(m,0x70000);
         if(e.BeginFormat(512,512,Wide.From(8192),Wide.From(12345),1)!=CpxError.None) return 1;
         m.Write8(0x9000,102); m.Write8(0x9010,108); m.Write8(0x9020,104);
         for(uint n=0;n<200;n++) m.Write8(0x9100+n,0xe9);

@@ -52,9 +52,9 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
         if(key==uint.MaxValue) return Finish(0,232);
         if(key==0)
         {
-            if(R(EnumSerial)>=uint.MaxValue-1||pools.Take(ResourceKind.Enumeration,out slot,out _)!=CpxError.None) return Finish(0,103);
-            W(EnumSerial,R(EnumSerial)+1); Put(slot,id); memory.Write32(slot+28,R(EnumSerial));
-            memory.Write32(slot+32,fib); memory.Write32(slot+36,Arg(0)); W(EnumNew,1);
+            if(memory.Read32(arena+512+(EnumSerial))>=uint.MaxValue-1||pools.Take(ResourceKind.Enumeration,out slot,out _)!=CpxError.None) return Finish(0,103);
+            memory.Write32(arena+512+(EnumSerial),memory.Read32(arena+512+(EnumSerial))+1); Put(slot,id); memory.Write32(slot+28,memory.Read32(arena+512+(EnumSerial)));
+            memory.Write32(slot+32,fib); memory.Write32(slot+36,Arg(0)); memory.Write32(arena+512+(EnumNew),1);
         }
         else
         {
@@ -66,13 +66,13 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
             }
             if(slot==0) return Finish(0,211);
         }
-        W(EnumSlot,slot); W(FibAddress,fib); W(InfoMode,1); Put(State+Object,id);
+        memory.Write32(arena+512+(EnumSlot),slot); memory.Write32(arena+512+(FibAddress),fib); memory.Write32(arena+512+(InfoMode),1); Put(State+Object,id);
         return Start(engine.BeginOperation(CpxOperation.ReadObject,id),40);
     }
     private StepResult Examine()
     {
         if(Arg(1)>0x3fffffff||!Buffer(Arg(1)<<2,260)) return Finish(0,115);
-        W(FibAddress,Arg(1)<<2); W(InfoMode,0); PrepareFib();
+        memory.Write32(arena+512+(FibAddress),Arg(1)<<2); memory.Write32(arena+512+(InfoMode),0); PrepareFib();
         if(Wide.Equal(G(State+Object),Wide.From(1)))
         {
             CopyInfo(InfoFib+8,engine.VolumeLabelAddress,32);
@@ -95,7 +95,7 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
         Put(InfoFib+228,size); Put(InfoFib+236,allocated);
     }
     private StepResult FindEntry(bool first,uint next)
-        =>Start(engine.BeginTreeRead(CpxTreeKind.Directory,G(State+InfoRoot),R(InfoMode)==1?G(State+Object):G(State+ParentId),
+        =>Start(engine.BeginTreeRead(CpxTreeKind.Directory,G(State+InfoRoot),memory.Read32(arena+512+(InfoMode))==1?G(State+Object):G(State+ParentId),
             G(State+InfoHigh),G(State+InfoLow),first?CpxSeek.Next:CpxSeek.After),next);
     private StepResult EntryName()
     {
@@ -107,13 +107,13 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     }
     private StepResult DecodeName(uint source,uint bytes,bool comment)
     {
-        W(NameSource,source); W(NameBytes,bytes); W(NameScan,0); W(NameCount,0); W(NameAlias,0); W(NameComment,comment?1u:0u); W(Phase,60);
+        memory.Write32(arena+512+(NameSource),source); memory.Write32(arena+512+(NameBytes),bytes); memory.Write32(arena+512+(NameScan),0); memory.Write32(arena+512+(NameCount),0); memory.Write32(arena+512+(NameAlias),0); memory.Write32(arena+512+(NameComment),comment?1u:0u); memory.Write32(arena+512+(Phase),60);
         return StepResult.Pending;
     }
     private StepResult DecodeStep()
     {
-        uint at=R(NameScan),count=R(NameCount),source=R(NameSource),limit=R(NameComment)==0?107u:79u;
-        for(uint work=0;work<64&&at<R(NameBytes);work++)
+        uint at=memory.Read32(arena+512+(NameScan)),count=memory.Read32(arena+512+(NameCount)),source=memory.Read32(arena+512+(NameSource)),limit=memory.Read32(arena+512+(NameComment))==0?107u:79u;
+        for(uint work=0;work<64&&at<memory.Read32(arena+512+(NameBytes));work++)
         {
             uint c=memory.Read8(source+at++),extra=0,minimum=0;
             if(c>=128)
@@ -122,22 +122,22 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 else if(c is >=224 and <=239) { c&=15; extra=2; minimum=2048; }
                 else if(c is >=240 and <=244) { c&=7; extra=3; minimum=65536; }
                 else return Finish(0,213);
-                if(extra>R(NameBytes)-at) return Finish(0,213);
+                if(extra>memory.Read32(arena+512+(NameBytes))-at) return Finish(0,213);
                 for(uint n=0;n<extra;n++) { uint b=memory.Read8(source+at++); if((b&192)!=128) return Finish(0,213); c=(c<<6)|(b&63); }
                 if(c<minimum||c>0x10ffff||c is >=0xd800 and <=0xdfff) return Finish(0,213);
             }
-            if(c==0||R(NameComment)==0&&(c==47||c==58)) return Finish(0,213);
-            if(c>255||count>=limit) W(NameAlias,1);
-            else memory.Write8(InfoFib+(R(NameComment)==0?9u:145u)+count,(byte)c);
+            if(c==0||memory.Read32(arena+512+(NameComment))==0&&(c==47||c==58)) return Finish(0,213);
+            if(c>255||count>=limit) memory.Write32(arena+512+(NameAlias),1);
+            else memory.Write8(InfoFib+(memory.Read32(arena+512+(NameComment))==0?9u:145u)+count,(byte)c);
             count++;
         }
-        W(NameScan,at); W(NameCount,count); if(at<R(NameBytes)) return StepResult.Pending;
-        if(R(NameComment)!=0)
+        memory.Write32(arena+512+(NameScan),at); memory.Write32(arena+512+(NameCount),count); if(at<memory.Read32(arena+512+(NameBytes))) return StepResult.Pending;
+        if(memory.Read32(arena+512+(NameComment))!=0)
         {
-            if(R(NameAlias)!=0) return Finish(0,213);
-            memory.Write8(InfoFib+144,(byte)count); W(Phase,61); return StepResult.Pending;
+            if(memory.Read32(arena+512+(NameAlias))!=0) return Finish(0,213);
+            memory.Write8(InfoFib+144,(byte)count); memory.Write32(arena+512+(Phase),61); return StepResult.Pending;
         }
-        if(R(NameAlias)!=0)
+        if(memory.Read32(arena+512+(NameAlias))!=0)
         {
             for(uint n=0;n<108;n++) memory.Write8(InfoFib+8+n,0);
             memory.Write8(InfoFib+8,19); memory.Write8(InfoFib+9,95); memory.Write8(InfoFib+10,95); memory.Write8(InfoFib+11,117);
@@ -145,27 +145,27 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
             for(uint n=0;n<16;n++) { uint digit=Wide.Right(id,(int)((15-n)*4)).Low&15; memory.Write8(InfoFib+12+n,(byte)(digit<10?48+digit:87+digit)); }
         }
         else memory.Write8(InfoFib+8,(byte)count);
-        return R(Action)==26406?PrependNewLinkName():ReadComment();
+        return memory.Read32(arena+512+(Action))==26406?PrependNewLinkName():ReadComment();
     }
     private StepResult ReadComment()
     {
         Wide page=G(InfoObject+48); if(!page.IsZero) return Start(engine.BeginOperation(CpxOperation.ReadMetadata,page),46);
-        W(Phase,61); return StepResult.Pending;
+        memory.Write32(arena+512+(Phase),61); return StepResult.Pending;
     }
     private StepResult PublishFib()
     {
-        if(R(Action)==1033) return PrepareAllRecord();
-        if(R(InfoMode)==1)
+        if(memory.Read32(arena+512+(Action))==1033) return PrepareAllRecord();
+        if(memory.Read32(arena+512+(InfoMode))==1)
         {
-            uint p=R(EnumSlot); Put(p+8,G(InfoEntry)); Put(p+16,G(InfoEntry+8)); memory.Write32(p+24,1);
-            memory.Write32(InfoFib,memory.Read32(p+28)); W(EnumNew,0);
+            uint p=memory.Read32(arena+512+(EnumSlot)); Put(p+8,G(InfoEntry)); Put(p+16,G(InfoEntry+8)); memory.Write32(p+24,1);
+            memory.Write32(InfoFib,memory.Read32(p+28)); memory.Write32(arena+512+(EnumNew),0);
         }
-        else ReleaseEnumerations(0,R(FibAddress),true);
-        CopyInfo(R(FibAddress),InfoFib,260); return Finish(uint.MaxValue);
+        else ReleaseEnumerations(0,memory.Read32(arena+512+(FibAddress)),true);
+        CopyInfo(memory.Read32(arena+512+(FibAddress)),InfoFib,260); return Finish(uint.MaxValue);
     }
     private StepResult InformationStep()
     {
-        uint phase=R(Phase); if(phase>=62) return ExAllStep(); if(phase==60) return DecodeStep(); if(phase==61) return PublishFib();
+        uint phase=memory.Read32(arena+512+(Phase)); if(phase>=62) return ExAllStep(); if(phase==60) return DecodeStep(); if(phase==61) return PublishFib();
         StepResult step=engine.Step(); if(step is StepResult.Pending or StepResult.NeedIo) return step;
         if(step==StepResult.Failed) return Finish(0,ToDosError(engine.Error));
         uint page=engine.MetadataBuffer;
@@ -175,7 +175,7 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 if(!engine.ObjectFound) return Finish(0,205);
                 if(memory.Read8(engine.ObjectRecord+84)!=2) return Finish(0,212);
                 Put(State+InfoRoot,G(engine.ObjectRecord+32));
-                uint slot=R(EnumSlot); bool first=phase==41||memory.Read32(slot+24)==0;
+                uint slot=memory.Read32(arena+512+(EnumSlot)); bool first=phase==41||memory.Read32(slot+24)==0;
                 Put(State+InfoHigh,first?default:G(slot+8)); Put(State+InfoLow,first?default:G(slot+16));
                 return FindEntry(first,phase==40?43u:42u);
             case 42:
@@ -186,9 +186,9 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
             case 43:
                 if(!engine.TreeFound)
                 {
-                    if(R(Action)==1033) return Finish(0,232);
-                    uint p=R(EnumSlot); pools.Release(ResourceKind.Enumeration,p,memory.Read32(p-4)); W(EnumNew,0);
-                    memory.Write32(R(FibAddress),uint.MaxValue); return Finish(0,232);
+                    if(memory.Read32(arena+512+(Action))==1033) return Finish(0,232);
+                    uint p=memory.Read32(arena+512+(EnumSlot)); pools.Release(ResourceKind.Enumeration,p,memory.Read32(p-4)); memory.Write32(arena+512+(EnumNew),0);
+                    memory.Write32(memory.Read32(arena+512+(FibAddress)),uint.MaxValue); return Finish(0,232);
                 }
                 CopyInfo(InfoEntry,engine.TreeRecord,128);
                 return Start(engine.BeginOperation(CpxOperation.ReadObject,G(InfoEntry+16)),45);
@@ -208,7 +208,7 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     }
     private StepResult BeginInformation()
     {
-        uint action=R(Action),output=action==25?Arg(0):Arg(1);
+        uint action=memory.Read32(arena+512+(Action)),output=action==25?Arg(0):Arg(1);
         if(action==26&&!LockId(Arg(0),out _)) return Finish(0,211);
         if(action==26407)
         {
@@ -224,19 +224,19 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
             }
         }
         else { if(output>0x3fffffff||!Buffer(output<<2,36)) return Finish(0,115); output<<=2; }
-        W(FibAddress,output); return Start(engine.BeginOperation(CpxOperation.ReadMetadata,engine.StatePageAddress),52);
+        memory.Write32(arena+512+(FibAddress),output); return Start(engine.BeginOperation(CpxOperation.ReadMetadata,engine.StatePageAddress),52);
     }
     private StepResult PublishInformation()
     {
-        uint p=engine.MetadataBuffer,output=R(FibAddress); Wide total=engine.AllocationUnits,free=G(p+96);
+        uint p=engine.MetadataBuffer,output=memory.Read32(arena+512+(FibAddress)); Wide total=engine.AllocationUnits,free=G(p+96);
         if(U16(p+4)!=3||!G(p+24).IsZero||!Wide.Subtract(total,free,out var used)) return Finish(0,213);
-        if(R(Action)==26407) { Put(output,Arg(0)==6?total:used); return Finish(uint.MaxValue); }
+        if(memory.Read32(arena+512+(Action))==26407) { Put(output,Arg(0)==6?total:used); return Finish(uint.MaxValue); }
         for(uint n=0;n<36;n+=4) memory.Write32(output+n,0);
         memory.Write32(output+8,IsWriteProtected?80u:82u);
         memory.Write32(output+12,total.High!=0||total.Low>int.MaxValue?int.MaxValue:total.Low);
         memory.Write32(output+16,used.High!=0||used.Low>int.MaxValue?int.MaxValue:used.Low);
         memory.Write32(output+20,engine.AllocationUnitBytes); memory.Write32(output+24,CpxArena.Magic);
-        memory.Write32(output+28,R(Volume)>>2); memory.Write32(output+32,HasOpenResources?uint.MaxValue:0);
+        memory.Write32(output+28,memory.Read32(arena+512+(Volume))>>2); memory.Write32(output+32,HasOpenResources?uint.MaxValue:0);
         return Finish(uint.MaxValue);
     }
 }

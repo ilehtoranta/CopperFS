@@ -606,7 +606,7 @@ and successful tests of explicit refusal must not count them as implemented:
 - Native ExAll filtering uses DOS emulation; ED_OWNER is now implemented.
   Notification acknowledgement/removal, timed record-lock waits and Inhibit are
   implemented; record-wait cancellation covers owner close and Ctrl-C.
-- Periodic TRIM maintenance across unrelated packets remains open. Startup
+- The native event loop services [periodic TRIM](cpx4-native-progress.md#timer-driven-trim-maintenance) while idle and between unrelated packets. Startup
   now includes [DMA buffer reservation](cpx4-native-progress.md#dma-constrained-allocation).
   The native event loop drives [primary/backup geometry
   discovery](cpx4-native-progress.md#startup-geometry-discovery),

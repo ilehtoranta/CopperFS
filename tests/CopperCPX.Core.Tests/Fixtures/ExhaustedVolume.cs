@@ -1,4 +1,4 @@
-using CopperCPX.Tests;
+
 using CopperFS.Cpx4.Reference;
 using static CopperFS.Cpx4.Reference.Layout;
 
@@ -9,9 +9,18 @@ namespace CopperCPX.Reference.Tests;
 // ownership oracle; do not manufacture exhaustion by leaking allocations.
 internal static class ExhaustedVolume
 {
+    private sealed class FixtureDisk : IBlockDevice
+    {
+        internal readonly byte[] Bytes=new byte[4194304];
+        public int SectorSize=>512;
+        public ulong SectorCount=>8192;
+        public void Read(ulong sector,Span<byte> data)=>Bytes.AsSpan(checked((int)sector*512),data.Length).CopyTo(data);
+        public void Write(ulong sector,ReadOnlySpan<byte> data)=>data.CopyTo(Bytes.AsSpan(checked((int)sector*512)));
+        public void Flush() { }
+    }
     internal static byte[] Create(bool rootOwner=false)
     {
-        var disk=EngineTests.Fresh(512); var v=new Cpx4Volume<Disk>(disk,new byte[36864]);
+        var disk=new FixtureDisk(); Cpx4Volume<FixtureDisk>.Format(disk,512,new byte[36864],12345); var v=new Cpx4Volume<FixtureDisk>(disk,new byte[36864]);
         Assert.Equal(MutationResult.Success,v.Create("full"u8,out ulong id));
         if(rootOwner) Assert.Equal(MutationResult.Success,v.SetOwner(1,0x1234abcd));
         int length=checked((int)v.Check().FreeUnits*512);
@@ -33,7 +42,7 @@ internal static class ExhaustedVolume
         Put16(extents,48,(ushort)n); Seal(extents);
         Put64(obj,8,logical*512); Put64(obj,16,U64(obj,16)+(uint)count*l.Q); Seal(leaf);
         reserve[64..].Clear(); Seal(reserve);
-        var check=new Cpx4Volume<Disk>(disk,new byte[36864]); Assert.Equal(0,check.AvailableReservePages); check.Check(); new IndependentImage(disk.Bytes);
+        var check=new Cpx4Volume<FixtureDisk>(disk,new byte[36864]); Assert.Equal(0,check.AvailableReservePages); check.Check(); new IndependentImage(disk.Bytes);
         return disk.Bytes;
     }
 }

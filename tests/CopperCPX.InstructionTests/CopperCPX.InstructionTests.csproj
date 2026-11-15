@@ -4,6 +4,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" /><PackageReference Include="xunit" Version="2.9.3" /><PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" /><PackageReference Include="Copper68k" Version="[1.5.4]" /><Using Include="Xunit" />
     <ProjectReference Include="../../src/CopperCPX.Core/CopperCPX.Core.csproj" />
     <ProjectReference Include="../../prototypes/CopperFS.Cpx4.Reference/CopperFS.Cpx4.Reference.csproj" />
+    <Compile Include="../CopperCPX.Core.Tests/Fixtures/ExhaustedVolume.cs" Link="Fixtures/ExhaustedVolume.cs" />
+    <Compile Include="../CopperCPX.Core.Tests/Fixtures/IndependentImage.cs" Link="Fixtures/IndependentImage.cs" />
     <ProjectReference Include="$(CopperSharp68kRoot)/Targets.Amiga/CopperSharp.Targets.Amiga.csproj" />
     <ProjectReference Include="$(CopperSharp68kRoot)/Sdk.Amiga/CopperSharp.Sdk.Amiga.csproj" />
     <ProjectReference Include="$(CopperSharp68kRoot)/Compiler.BootAdf/CopperSharp.Compiler.BootAdf.csproj" />
@@ -17,5 +19,6 @@
     <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxLifecycle.cs" Link="Native/NativeCpxLifecycle.cs" />
     <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxVolume.cs" Link="Native/NativeCpxVolume.cs" />
     <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxRecordTimers.cs" Link="Native/NativeCpxRecordTimers.cs" />
+    <Compile Include="../../src/CopperFS.Amiga/Cpx4/NativeCpxMaintenance.cs" Link="Native/NativeCpxMaintenance.cs" />
   </ItemGroup>
 </Project>

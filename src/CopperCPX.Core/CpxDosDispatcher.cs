@@ -21,14 +21,14 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     private void W(uint offset,uint value)=>memory.Write32(State+offset,value);
     private Wide G(uint p)=>new(memory.Read32(p),memory.Read32(p+4));
     private void Put(uint p,Wide v) { memory.Write32(p,v.High); memory.Write32(p+4,v.Low); }
-    private uint Arg(uint index)=>memory.Read32(R(Packet)+20+index*4);
-    public bool Busy=>R(BusyAt)!=0;
+    private uint Arg(uint index)=>memory.Read32(memory.Read32(arena+512+(Packet))+20+index*4);
+    public bool Busy=>memory.Read32(arena+512+(BusyAt))!=0;
     public bool HasOpenResources
     {
         get { for(uint n=0;n<32;n++) if(memory.Read32(Pool+n*64)!=0||memory.Read32(Pool+2048+n*48)!=0) return true; return false; }
     }
-    public uint Result=>R(ResultAt);
-    public uint DosError=>R(ErrorAt);
+    public uint Result=>memory.Read32(arena+512+(ResultAt));
+    public uint DosError=>memory.Read32(arena+512+(ErrorAt));
     public CpxIo Request=>engine.Request;
     public CpxError CompleteIo(uint token,uint bytes,bool success)=>engine.CompleteIo(token,bytes,success);
     public void Initialize(uint port,uint volume)
@@ -37,37 +37,37 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     // scratch and never takes a DOS slot before publication.
     public void InitializeOnClearedPools(uint port,uint volume)
     {
-        uint serial=R(180)==CpxArena.Magic?R(EnumSerial):0;
-        for(uint n=0;n<512;n+=4) W(n,0);
-        W(EnumSerial,serial); W(180,CpxArena.Magic); W(Port,port); W(Volume,volume);
+        uint serial=memory.Read32(arena+512+(180))==CpxArena.Magic?memory.Read32(arena+512+(EnumSerial)):0;
+        for(uint n=0;n<512;n+=4) memory.Write32(arena+512+(n),0);
+        memory.Write32(arena+512+(EnumSerial),serial); memory.Write32(arena+512+(180),CpxArena.Magic); memory.Write32(arena+512+(Port),port); memory.Write32(arena+512+(Volume),volume);
     }
     public CpxError BeginPacket(uint packet)
     {
         if(Busy) return CpxError.Busy;
         if(packet==0||(packet&1)!=0||packet>uint.MaxValue-48) return CpxError.InvalidArgument;
-        W(Packet,packet); W(Phase,0); W(BusyAt,1); W(Action,memory.Read32(packet+8)); W(ResultAt,0); W(ErrorAt,0); W(Handle,0); W(Destination,0); W(Reserved,0);
-        W(EnumSlot,0); W(EnumNew,0); Put(State+ParentId,default); Put(State+EntryId,default);
-        W(Deferred,0); W(NotifyInternal,0); W(NotifySlot,0); W(NotifyRemoved,64);
-        W(AllActive,0);
+        memory.Write32(arena+512+(Packet),packet); memory.Write32(arena+512+(Phase),0); memory.Write32(arena+512+(BusyAt),1); memory.Write32(arena+512+(Action),memory.Read32(packet+8)); memory.Write32(arena+512+(ResultAt),0); memory.Write32(arena+512+(ErrorAt),0); memory.Write32(arena+512+(Handle),0); memory.Write32(arena+512+(Destination),0); memory.Write32(arena+512+(Reserved),0);
+        memory.Write32(arena+512+(EnumSlot),0); memory.Write32(arena+512+(EnumNew),0); Put(State+ParentId,default); Put(State+EntryId,default);
+        memory.Write32(arena+512+(Deferred),0); memory.Write32(arena+512+(NotifyInternal),0); memory.Write32(arena+512+(NotifySlot),0); memory.Write32(arena+512+(NotifyRemoved),64);
+        memory.Write32(arena+512+(AllActive),0);
         return CpxError.None;
     }
     private StepResult Finish(uint value,uint error=0)
     {
-        if(R(Action)==TrimPacket&&R(Phase)==160) PublishTrimResult();
-        if(R(Action)==1033) FinishExAll(error);
-        if(R(Action)==4097) FinishNotification(ref value,ref error);
+        if(memory.Read32(arena+512+(Action))==TrimPacket&&memory.Read32(arena+512+(Phase))==160) PublishTrimResult();
+        if(memory.Read32(arena+512+(Action))==1033) FinishExAll(error);
+        if(memory.Read32(arena+512+(Action))==4097) FinishNotification(ref value,ref error);
         else NotificationMutation(value,error);
-        if((R(Action) is 1024 or 26406)&&error!=0&&value==0) value=uint.MaxValue;
-        if(error!=0&&R(EnumNew)!=0) { uint e=R(EnumSlot); pools.Release(ResourceKind.Enumeration,e,memory.Read32(e-4)); W(EnumNew,0); }
-        if(R(Reserved)!=0) { pools.Release((ResourceKind)R(ReservedKind),R(Reserved),memory.Read32(R(Reserved)-4)); W(Reserved,0); }
-        W(ResultAt,value); W(ErrorAt,error); W(BusyAt,0); memory.Write32(R(Packet)+12,value); memory.Write32(R(Packet)+16,error); return StepResult.Complete;
+        if((memory.Read32(arena+512+(Action)) is 1024 or 26406)&&error!=0&&value==0) value=uint.MaxValue;
+        if(error!=0&&memory.Read32(arena+512+(EnumNew))!=0) { uint e=memory.Read32(arena+512+(EnumSlot)); pools.Release(ResourceKind.Enumeration,e,memory.Read32(e-4)); memory.Write32(arena+512+(EnumNew),0); }
+        if(memory.Read32(arena+512+(Reserved))!=0) { pools.Release((ResourceKind)memory.Read32(arena+512+(ReservedKind)),memory.Read32(arena+512+(Reserved)),memory.Read32(memory.Read32(arena+512+(Reserved))-4)); memory.Write32(arena+512+(Reserved),0); }
+        memory.Write32(arena+512+(ResultAt),value); memory.Write32(arena+512+(ErrorAt),error); memory.Write32(arena+512+(BusyAt),0); memory.Write32(memory.Read32(arena+512+(Packet))+12,value); memory.Write32(memory.Read32(arena+512+(Packet))+16,error); return StepResult.Complete;
     }
     public static uint ToDosError(CpxError error)=>error switch
     { CpxError.None=>0,CpxError.NotFound=>205,CpxError.WrongType=>212,CpxError.Protected=>223,CpxError.ReadOnly=>214,
       CpxError.ResourceExhausted=>103,CpxError.DiskFull or CpxError.ReserveExhausted=>221,CpxError.InvalidArgument=>115,CpxError.Unsupported=>209,
       CpxError.Busy=>202,CpxError.NotMounted=>218,CpxError.AlreadyExists=>203,CpxError.DirectoryNotEmpty=>216,CpxError.TreeTooDeep=>221,_=>213 };
     private StepResult Start(CpxError error,uint next)
-    { if(error!=CpxError.None) return Finish(R(Action) is 82 or 87 or 1008 or 1022?uint.MaxValue:0,ToDosError(error)); W(Phase,next); return StepResult.Pending; }
+    { if(error!=CpxError.None) return Finish(memory.Read32(arena+512+(Action)) is 82 or 87 or 1008 or 1022?uint.MaxValue:0,ToDosError(error)); memory.Write32(arena+512+(Phase),next); return StepResult.Pending; }
     private bool ValidResource(uint p,ResourceKind kind)
     {
         uint start=Pool+(kind==ResourceKind.Handle?0u:2048u),width=kind==ResourceKind.Handle?64u:48u;
@@ -93,7 +93,7 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     private StepResult MakeLock(Wide id,uint access)
     {
         if(access is not (0xfffffffe or 0xffffffff)) return Finish(0,115);
-        Put(State+Object,id); W(LockAccess,access); W(Phase,78); return StepResult.Pending;
+        Put(State+Object,id); memory.Write32(arena+512+(LockAccess),access); memory.Write32(arena+512+(Phase),78); return StepResult.Pending;
     }
     private StepResult StartPath(uint lockBptr,uint nameBptr)
     {
@@ -102,13 +102,14 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
         if(nameBptr==0||nameBptr>0x3fffffff) return Finish(0,115);
         uint p=nameBptr<<2,length=memory.Read8(p),start=0;
         for(uint n=0;n<length;n++) { byte c=memory.Read8(p+1+n); if(c==0) return Finish(0,210); memory.Write8(Path+n,c); if(c==58) { id=Wide.From(1); start=n+1; } }
-        Put(State+Object,id); W(PathLength,length); W(PathAt,start); W(Phase,10); return StepResult.Pending;
+        Put(State+Object,id); memory.Write32(arena+512+(PathLength),length); memory.Write32(arena+512+(PathAt),start); memory.Write32(arena+512+(Phase),10); return StepResult.Pending;
     }
     public StepResult Step()
     {
         if(!Busy) return StepResult.Complete;
+        if(InternalMaintenance) return MaintenanceStep();
         if(StorageStopPending) return StopStorageStep();
-        uint phase=R(Phase),action=R(Action);
+        uint phase=memory.Read32(arena+512+(Phase)),action=memory.Read32(arena+512+(Action));
         if(phase==0) return Dispatch();
         if(phase==160) return ManualTrimPacketStep();
         if(phase>=140) return NewReadLinkStep();
@@ -122,10 +123,10 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
         if(phase==10)
         {
             if(action==26406) return NewLinkComponent();
-            uint at=R(PathAt),end=at; if(at==R(PathLength)) return Start(engine.BeginOperation(CpxOperation.ReadObject,G(State+Object)),12);
-            while(end<R(PathLength)&&memory.Read8(Path+end)!=47) end++;
+            uint at=memory.Read32(arena+512+(PathAt)),end=at; if(at==memory.Read32(arena+512+(PathLength))) return Start(engine.BeginOperation(CpxOperation.ReadObject,G(State+Object)),12);
+            while(end<memory.Read32(arena+512+(PathLength))&&memory.Read8(Path+end)!=47) end++;
             if(end==at) return Start(engine.BeginOperation(CpxOperation.ReadObject,G(State+Object)),14);
-            Put(State+ParentId,G(State+Object)); W(PathEnd,end); return Start(engine.BeginLookup(G(State+Object),Path+at,end-at),11);
+            Put(State+ParentId,G(State+Object)); memory.Write32(arena+512+(PathEnd),end); return Start(engine.BeginLookup(G(State+Object),Path+at,end-at),11);
         }
         StepResult result=engine.Step();
         if(result is StepResult.Pending or StepResult.NeedIo) return result;
@@ -137,11 +138,11 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
         switch(phase)
         {
             case 11:
-                if(R(PathEnd)==R(PathLength)&&(action is 16 or 17 or 22 or 1004 or 1006 or 1021)) { W(Phase,83); return StepResult.Pending; }
+                if(memory.Read32(arena+512+(PathEnd))==memory.Read32(arena+512+(PathLength))&&(action is 16 or 17 or 22 or 1004 or 1006 or 1021)) { memory.Write32(arena+512+(Phase),83); return StepResult.Pending; }
                 if(!engine.LookupFound) return Finish(0,205);
                 Put(State+EntryId,G(engine.TreeRecord+8));
-                W(LinkPrefix,R(PathAt)); W(LinkSuffix,R(PathEnd));
-                Put(State+Object,engine.LookupId); W(PathAt,R(PathEnd)<R(PathLength)?R(PathEnd)+1:R(PathEnd));
+                memory.Write32(arena+512+(LinkPrefix),memory.Read32(arena+512+(PathAt))); memory.Write32(arena+512+(LinkSuffix),memory.Read32(arena+512+(PathEnd)));
+                Put(State+Object,engine.LookupId); memory.Write32(arena+512+(PathAt),memory.Read32(arena+512+(PathEnd))<memory.Read32(arena+512+(PathLength))?memory.Read32(arena+512+(PathEnd))+1:memory.Read32(arena+512+(PathEnd)));
                 return Start(engine.BeginOperation(CpxOperation.ReadObject,engine.LookupId),13);
             case 12:
                 if(!engine.ObjectFound) return Finish(0,205);
@@ -153,7 +154,7 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 if(action==26406&&Wide.Equal(G(State+Object),Wide.From(1))) ancestor=Wide.From(1);
                 else if(ancestor.IsZero||Wide.Equal(G(State+Object),Wide.From(1))) return Finish(0,205);
                 Put(State+Object,ancestor); Put(State+ParentId,default); Put(State+EntryId,default);
-                W(PathAt,R(PathAt)+1); W(Phase,10); return StepResult.Pending;
+                memory.Write32(arena+512+(PathAt),memory.Read32(arena+512+(PathAt))+1); memory.Write32(arena+512+(Phase),10); return StepResult.Pending;
             case 20: return FinishTransfer(0);
             case 21:
                 if(action==27&&!IsWriteProtected) return Start(engine.BeginOperation(CpxOperation.TrimFree),26);
@@ -166,8 +167,8 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 if(parent.IsZero) return Finish(0,213);
                 return Start(engine.BeginOperation(CpxOperation.ReadObject,parent),70);
             case 25:
-                memory.Write32(R(Handle)+40,1);
-                Wide resized=G(State+ResizeResult); if(Wide.Compare(G(R(Handle)+8),resized)>0) Put(R(Handle)+8,resized);
+                memory.Write32(memory.Read32(arena+512+(Handle))+40,1);
+                Wide resized=G(State+ResizeResult); if(Wide.Compare(G(memory.Read32(arena+512+(Handle))+8),resized)>0) Put(memory.Read32(arena+512+(Handle))+8,resized);
                 if(action==26401) { Put(Arg(3),resized); return Finish(uint.MaxValue); }
                 return Finish(resized.Low);
             case 26: return Finish(uint.MaxValue);
@@ -183,14 +184,14 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     }
     private StepResult FinishTransfer(uint error)
     {
-        uint count=engine.TransferredBytes,p=R(Handle);
-        if(R(Action)==87&&count!=0) memory.Write32(p+40,1);
+        uint count=engine.TransferredBytes,p=memory.Read32(arena+512+(Handle));
+        if(memory.Read32(arena+512+(Action))==87&&count!=0) memory.Write32(p+40,1);
         if(count!=0) { Wide.Add(G(p+8),Wide.From(count),out var next); Put(p+8,next); }
         return Finish(error!=0&&count==0?uint.MaxValue:count,error);
     }
     private StepResult Resolved()
     {
-        uint action=R(Action),record=engine.ObjectRecord; Wide id=G(State+Object);
+        uint action=memory.Read32(arena+512+(Action)),record=engine.ObjectRecord; Wide id=G(State+Object);
         if(memory.Read8(record+84)==3&&(action is 8 or 1004 or 1005 or 1006)) return Finish(0,233);
         if(action==1024) return PathObject();
         switch(action)
@@ -201,7 +202,7 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 if(memory.Read8(record+84)!=1) return Finish(0,212);
                 if((memory.Read32(record+72)&(action==1005?8u:action==1006?5u:12u))!=0) return Finish(0,action==1005?224u:223u);
                 if(Arg(0)==0||Arg(0)>0x3fffffff) return Finish(0,115);
-                W(Phase,81); return StepResult.Pending;
+                memory.Write32(arena+512+(Phase),81); return StepResult.Pending;
             case 21: return Start(engine.BeginProtection(id,Arg(3)),21);
             case 1036: return Start(engine.BeginOwner(id,Arg(3)),21);
             case 28:
@@ -217,24 +218,24 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
     private bool Reserve(ResourceKind kind)
     {
         if(pools.Take(kind,out uint address,out _)!=CpxError.None) return false;
-        W(Reserved,address); W(ReservedKind,(uint)kind); return true;
+        memory.Write32(arena+512+(Reserved),address); memory.Write32(arena+512+(ReservedKind),(uint)kind); return true;
     }
     private StepResult OpenHandle()
     {
-        uint handle=R(Reserved); if(handle==0) return Finish(0,103); W(Reserved,0);
-        Put(handle,G(State+Object)); memory.Write32(handle+16,R(Action)==1006?uint.MaxValue:0xfffffffe); memory.Write32(handle+20,R(Action)==1005?0u:1u);
+        uint handle=memory.Read32(arena+512+(Reserved)); if(handle==0) return Finish(0,103); memory.Write32(arena+512+(Reserved),0);
+        Put(handle,G(State+Object)); memory.Write32(handle+16,memory.Read32(arena+512+(Action))==1006?uint.MaxValue:0xfffffffe); memory.Write32(handle+20,memory.Read32(arena+512+(Action))==1005?0u:1u);
         Put(handle+24,G(State+ParentId)); Put(handle+32,G(State+EntryId));
-        if(R(Phase) is 30 or 32) memory.Write32(handle+40,1);
-        uint fh=Arg(0)<<2; memory.Write32(fh+8,R(Port)); memory.Write32(fh+36,handle); return Finish(uint.MaxValue);
+        if(memory.Read32(arena+512+(Phase)) is 30 or 32) memory.Write32(handle+40,1);
+        uint fh=Arg(0)<<2; memory.Write32(fh+8,memory.Read32(arena+512+(Port))); memory.Write32(fh+36,handle); return Finish(uint.MaxValue);
     }
     private StepResult FinalComponent()
     {
-        uint action=R(Action),at=R(PathAt),length=R(PathLength)-at; Wide parent=G(State+ParentId);
+        uint action=memory.Read32(arena+512+(Action)),at=memory.Read32(arena+512+(PathAt)),length=memory.Read32(arena+512+(PathLength))-at; Wide parent=G(State+ParentId);
         if(action==1021) return CreateLink();
-        if(action==17&&R(Destination)!=0)
+        if(action==17&&memory.Read32(arena+512+(Destination))!=0)
         {
             if(engine.LookupFound&&Conflicts(engine.LookupId,true)) return Finish(0,202);
-            W(Phase,84); return StepResult.Pending;
+            memory.Write32(arena+512+(Phase),84); return StepResult.Pending;
         }
         if(action==22||!engine.LookupFound&&(action is 1004 or 1006))
         {
@@ -248,15 +249,15 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
         if(action is 16 or 17)
         {
             if(Conflicts(engine.LookupId,true)) return Finish(0,202);
-            W(Phase,85); return StepResult.Pending;
+            memory.Write32(arena+512+(Phase),85); return StepResult.Pending;
         }
         Put(State+Object,engine.LookupId); return Start(engine.BeginOperation(CpxOperation.ReadObject,engine.LookupId),12);
     }
     private StepResult SeekFinish()
     {
-        bool wide=R(Action) is 26400 or 26401,resize=R(Action) is 1022 or 26401; uint failure=wide?0u:uint.MaxValue;
+        bool wide=memory.Read32(arena+512+(Action)) is 26400 or 26401,resize=memory.Read32(arena+512+(Action)) is 1022 or 26401; uint failure=wide?0u:uint.MaxValue;
         if(!engine.ObjectFound) return Finish(failure,205);
-        uint h=R(Handle),mode=Arg(2); Wide old=G(h+8),basis,offset;
+        uint h=memory.Read32(arena+512+(Handle)),mode=Arg(2); Wide old=G(h+8),basis,offset;
         if(wide)
         {
             if(Arg(1)==0||Arg(3)==0||((Arg(1)|Arg(3))&1)!=0||Arg(1)>uint.MaxValue-8||Arg(3)>uint.MaxValue-8) return Finish(0,115);
@@ -278,14 +279,14 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
             }
             if(!wide&&(next.High!=0||next.Low>int.MaxValue)) return Finish(failure,219);
             CpxError err=engine.BeginResize(G(h),next); if(err!=CpxError.None) return Finish(failure,ToDosError(err));
-            Put(State+ResizeResult,next); W(Phase,25); return StepResult.Pending;
+            Put(State+ResizeResult,next); memory.Write32(arena+512+(Phase),25); return StepResult.Pending;
         }
         if(Wide.Compare(next,G(engine.ObjectRecord+8))>0) return Finish(failure,219);
         if(wide) Put(Arg(3),old); Put(h+8,next); return Finish(wide?uint.MaxValue:old.Low);
     }
     private StepResult Dispatch()
     {
-        uint a=Arg(0),action=R(Action); Wide id;
+        uint a=Arg(0),action=memory.Read32(arena+512+(Action)); Wide id;
         if(!MediaAvailable)
         {
             if(action is 25 or 26) return OfflineInformation();
@@ -313,21 +314,21 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 if(!ValidResource(a,ResourceKind.Handle)) return Finish(uint.MaxValue,211);
                 if(action==87&&memory.Read32(a+20)==0) return Finish(uint.MaxValue,223);
                 if(Arg(2)>int.MaxValue) return Finish(uint.MaxValue,115);
-                W(Handle,a);
+                memory.Write32(arena+512+(Handle),a);
                 return Start(action==82?engine.BeginFileRead(G(a),G(a+8),Arg(1),Arg(2)):engine.BeginMappedWrite(G(a),G(a+8),Arg(1),Arg(2)),20);
             case 1007:
                 if(!ValidResource(a,ResourceKind.Handle)) return Finish(0,211);
-                W(Handle,a); W(Phase,111); return StepResult.Pending;
+                memory.Write32(arena+512+(Handle),a); memory.Write32(arena+512+(Phase),111); return StepResult.Pending;
             case 2008: case 2009: case 26402: case 26403: return BeginRecord();
             case 4097: return BeginAddNotification();
             case 4098: return RemoveNotification();
             case 1008: case 1022: case 26400: case 26401:
                 if(!ValidResource(a,ResourceKind.Handle)) return Finish(action>=26400?0u:uint.MaxValue,211);
-                W(Handle,a); return Start(engine.BeginOperation(CpxOperation.ReadObject,G(a)),23);
+                memory.Write32(arena+512+(Handle),a); return Start(engine.BeginOperation(CpxOperation.ReadObject,G(a)),23);
             case 15:
                 if(a==0) return Finish(uint.MaxValue);
                 if(a>0x3fffffff||!ValidResource(a<<2,ResourceKind.Lock)) return Finish(0,211);
-                W(LifeResource,a<<2); W(Phase,80); return StepResult.Pending;
+                memory.Write32(arena+512+(LifeResource),a<<2); memory.Write32(arena+512+(Phase),80); return StepResult.Pending;
             case 19:
                 if(!LockId(a,out id)) return Finish(0,211);
                 if(a!=0) { uint context=LockContext(a<<2); Context(context,context+8); }
@@ -358,8 +359,8 @@ public partial struct CpxDosDispatcher<TMemory> where TMemory : struct, ICpxMemo
                 Put(State+Object,id); return Start(engine.BeginOperation(CpxOperation.ReadObject,id),12);
             case 24: case 26409: return BeginNext();
             case 25: case 26: case 26407: return BeginInformation();
-            case 27: return Start(IsWriteProtected?engine.BeginPersistenceBarrier():engine.BeginOperation(CpxOperation.Flush),21);
-            case 7: return Finish(R(Volume)>>2);
+            case 27: return Start(IsWriteProtected||engine.BufferedWrites?engine.BeginPersistenceBarrier():engine.BeginOperation(CpxOperation.Flush),21);
+            case 7: return Finish(memory.Read32(arena+512+(Volume))>>2);
             case 32: return Finish(CpxArena.Magic);
             case 1027: return Finish(uint.MaxValue);
             // Until the corresponding mutation or lifetime policy is present,

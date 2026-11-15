@@ -883,6 +883,10 @@ Release mount ownership between bounded batches. Saved cursors and ranges become
 hints and must be revalidated after foreground work or media-generation changes.
 An overflowing fixed hint queue may drop hints; manual scanning remains complete.
 No persistent trimmed-bit map is required. Losing progress only repeats work.
+The CPX4 handler uses a 30-second one-shot. At the next packet boundary it
+checks the mount epoch and admits at most one 4096-bit bitmap window and one
+allocation-unit discard. A busy packet delays this work. A backlog of queued
+packets cannot postpone it indefinitely once the active packet completes.
 Budget bitmap scanning as well as command size: finding a free run must not turn
 one maintenance turn into an unbounded volume scan. One synchronous command can
 still have unbounded device latency; CPU budgeting cannot promise a response-time

@@ -24,6 +24,8 @@ public class AsyncSchedulingTests
     }
     private struct Memory(Meter meter) : ICpxMemory
     {
+        public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
+        public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
         public byte Read8(uint p) => meter.Bytes[p];
         public uint Read32(uint p) => meter.Read(p);
         public void Write8(uint p, byte b) => meter.Bytes[p] = b;

@@ -11,7 +11,7 @@ public static class StartupGeometryProbe
 {
     public static uint Entry()
     {
-        const uint arena=0x40000;
+        const uint arena=0x70000;
         if(!NativeCpxHandler.Geometry(APTR.FromPointer(0x8400),out var start,out var sectors,out uint sector,out uint maximum,out uint mask))
             return 115;
         NativeCpxTransport.Initialize(arena,APTR.FromPointer(0x8200),start,sectors,maximum,mask,true,sector);
@@ -125,7 +125,9 @@ public class NativeStartupGeometryInstructions
                 if(expectedDosError!=0) break;
             }
         }
-        if(expectedDosError==0) expected.Add((command,65536+page,Math.Min(page,maximum),0));
+        // Recovery reads adjacent checkpoints together; transport still splits
+        // that request at the device maximum. Discovery above remains page-sized.
+        if(expectedDosError==0) expected.Add((command,65536+page,Math.Min(2*page,maximum),0));
 
         using var cpu=M68kCoreFactory.Default.Create(M68kCpuModel.M68000,bus);
         cpu.Reset(0x10000+compiled.EntryPoint,0xf0000);
@@ -135,6 +137,7 @@ public class NativeStartupGeometryInstructions
             int lvo=unchecked((int)(0x9000-cpu.State.ProgramCounter));
             switch(lvo)
             {
+                case 198: cpu.State.D[0]=0; break; // Optional buffered storage unavailable in this discovery probe.
                 case 306: cpu.State.D[0]=0; break;
                 case 462:
                     Assert.False(active); Assert.True(sent<expected.Count);
