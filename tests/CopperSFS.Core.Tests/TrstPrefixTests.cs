@@ -114,6 +114,47 @@ public sealed partial class AmigaSmartFileSystemTests
         Assert.Contains((0u, 0x80000003u, 128), records.Values);
     }
 
+    [Fact]
+    public void ConsumingPredecessorKeepsSuccessorSearchableAcrossStaleSeparator()
+    {
+        var seed = PrefixSeed(2);
+        var root = Block(seed.Image, 5);
+        U32(root, 24, 6008); Sum(root);
+        var left = Block(seed.Image, 64); var right = Block(seed.Image, 65);
+        // Move the terminal record (6000..6031) to the left child. The
+        // neighbour owns another block to the right of the stale separator.
+        right.Slice(16, 14).CopyTo(left.Slice(44, 14));
+        U16(left, 12, 3); U32(left, 20, 7000); Sum(left);
+        U32(right, 16, 7000); U32(right, 20, 0); U32(right, 24, 24);
+        U16(right, 28, 1); Sum(right);
+        U32(Block(seed.Image, 8), 24 + 16, 2 * Bytes); Sum(Block(seed.Image, 8));
+        Block(seed.Image, 7000).Fill(0x4A);
+        var map = Block(seed.Image, 13); map[12 + 3000 / 8] &= 0x7F; Sum(map);
+        var info = Block(seed.Image, 2);
+        U32(info, Bytes - 28, BinaryPrimitives.ReadUInt32BigEndian(info[(Bytes - 28)..]) - 1);
+        Sum(info);
+
+        var disk = new Disk(seed.Image.ToArray()) { Buffered = true, CheckReadOnlyViews = true };
+        var neighbor = GroupRead(ref disk, 4);
+        Assert.Equal(seed.Bytes, GroupRead(ref disk, 3));
+        Assert.True(AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref disk, GroupAddress, 9756));
+        var expected = seed.Bytes.ToArray();
+        // Stop with the new tail key strictly beyond 6008. Finishing the
+        // entire overwrite would remove that record and hide a routing bug.
+        for (var at = 0; at < 112 * Bytes; at += 8192)
+        {
+            var payload = Enumerable.Repeat((byte)(0xD0 + at / 8192), 8192).ToArray();
+            Assert.True(GroupWrite(ref disk, 3, (uint)at, payload));
+            payload.CopyTo(expected, at);
+        }
+        var work = TrstWork();
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        var image = disk.Snapshot(); var reopened = new Disk(image);
+        Assert.Equal(expected, GroupRead(ref reopened, 3));
+        Assert.Equal(neighbor, GroupRead(ref reopened, 4));
+        PrefixRecords(image);
+    }
+
     [Theory]
     [InlineData(0, false)] [InlineData(0, true)]
     [InlineData(1, false)] [InlineData(1, true)]

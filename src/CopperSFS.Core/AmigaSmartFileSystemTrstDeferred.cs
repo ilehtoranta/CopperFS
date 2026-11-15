@@ -147,7 +147,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (p.ReadUInt32(proof) != arena.Raw || p.ReadUInt32(hint, 44) != arena.Raw ||
             tail < p.ReadUInt32(proof, 12) || destination < p.ReadUInt32(proof, 16) ||
             count > p.ReadUInt32(hint, 12) || p.ReadUInt32(hint, 20) > ushort.MaxValue - count ||
-            (count == p.ReadUInt32(hint, 12) && (p.ReadUInt32(hint, 24) != 0 || !SfsSharedImagePool.IsPool(ref p, arena)))) return false;
+            (count == p.ReadUInt32(hint, 12) && !SfsSharedImagePool.IsPool(ref p, arena))) return false;
         var progress = tail - p.ReadUInt32(proof, 12);
         var limit = p.ReadUInt32(proof, 20);
         if (progress != destination - p.ReadUInt32(proof, 16) || progress > limit || count > limit - progress) return false;

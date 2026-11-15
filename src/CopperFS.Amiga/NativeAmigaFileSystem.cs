@@ -1611,7 +1611,7 @@ public static partial class NativeAmigaFileSystem
         write.Buffer = buffer; write.Length = bytes;
 #if COPPERSTART_SFS_TRST_BUFFERED && COPPERSTART_SFS_STANDALONE
         var size = APTR.ReadUInt32(file, 8);
-        if (bytes != 0 && bytes <= 65536 && write.Position < size && bytes < size - write.Position &&
+        if (bytes != 0 && bytes <= 65536 && write.Position < size && bytes <= size - write.Position &&
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0)
         {
             var p = new NativeFileSystemPlatform(state);
