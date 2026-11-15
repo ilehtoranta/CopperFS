@@ -9,6 +9,8 @@ public sealed partial class AmigaSmartFileSystemTests
         public Disk Disk = disk;
         public bool Enforce, ProtectAfterFailure;
         public int Queries, Attempts;
+        public uint JournalPages;
+        public bool Borrowed, Released, FailJournalRun;
     }
 
     private struct DeviceProtectionPlatform(DeviceProtectionState state) : IAmigaWritableFileSystemPlatform
@@ -26,9 +28,30 @@ public sealed partial class AmigaSmartFileSystemTests
             state.Attempts++;
             Assert.True(state.Disk.RedoOverlay.IsNull);
             if (state.Disk.Protected) return false;
+            if (state.FailJournalRun && state.Borrowed && count > 1)
+            {
+                state.Disk.FailAtWrite = state.Disk.Writes + 2;
+                state.FailJournalRun = false;
+            }
             var result = state.Disk.WriteDataBlocks(block, count, source);
             if (!result && state.ProtectAfterFailure) state.Disk.Protected = true;
             return result;
+        }
+        public APTR BorrowSfsJournalPages(uint bytes, out uint capacity)
+        {
+            capacity = state.JournalPages;
+            if (capacity == 0) return APTR.Null;
+            Assert.False(state.Borrowed);
+            state.Borrowed = true;
+            return APTR.FromPointer(450000);
+        }
+
+        public void ReleaseSfsJournalPages(APTR pages)
+        {
+            Assert.Equal(450000u, pages.Raw);
+            Assert.True(state.Borrowed);
+            state.Borrowed = false;
+            state.Released = true;
         }
         public bool IsMapped(APTR address, uint bytes) => state.Disk.IsMapped(address, bytes);
         public byte ReadUInt8(APTR address, int offset = 0) => state.Disk.ReadUInt8(address, offset);
@@ -50,6 +73,43 @@ public sealed partial class AmigaSmartFileSystemTests
         public bool Flush() => state.Disk.Flush();
     }
 
+    [Fact]
+    public void FailedJournalRunRestoresWorkspaceAndRetriesWholeGroup()
+    {
+        var seed = GroupSeed(4096);
+        var state = new DeviceProtectionState(new Disk(seed.Image.ToArray())) { JournalPages = 2 };
+        var payload = seed.Bytes.ToArray();
+        Assert.True(AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref state.Disk, GroupAddress, 192 * 1024));
+        // Partial existing sectors stay in the transaction and produce a
+        // multi-page redo stream, independent of bulk relocation policy.
+        var patch = Enumerable.Range(0, 460).Select(i => (byte)(i * 19 + 7)).ToArray();
+        for (var sector = 0; sector < 8; sector++)
+        {
+            var offset = sector * 512 + 11;
+            patch.CopyTo(payload, offset);
+            Assert.True(GroupWrite(ref state.Disk, seed.Node, (uint)offset, patch));
+        }
+        var p = new DeviceProtectionPlatform(state);
+        var w = TrstWork();
+        var scratch = w.Journal;
+        state.FailJournalRun = true;
+        Assert.False(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref p, ref w, GroupAddress));
+        Assert.True(state.Released);
+        Assert.Equal(scratch, w.Journal);
+        Assert.Contains(state.Disk.DataWrites, run => run.Count == 2);
+        var interrupted = new Disk(state.Disk.Snapshot());
+        Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref interrupted, ref w));
+        Assert.Equal(seed.Bytes, GroupRead(ref interrupted, seed.Node));
+
+        state.Disk.FailAtWrite = 0;
+        state.Released = false;
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref p, ref w, GroupAddress));
+        Assert.True(state.Released);
+        Assert.Equal(scratch, w.Journal);
+        var committed = new Disk(state.Disk.Snapshot());
+        Assert.True(AmigaSmartFileSystemWriteCore.Recover(ref committed, ref w));
+        Assert.Equal(payload, GroupRead(ref committed, seed.Node));
+    }
     [Theory]
     [InlineData(false, 0, false)] [InlineData(false, 0, true)]
     [InlineData(false, 1, false)] [InlineData(false, 1, true)]

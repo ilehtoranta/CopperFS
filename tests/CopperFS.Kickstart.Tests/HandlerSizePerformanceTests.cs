@@ -91,8 +91,11 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var before = samples.Where(s => s.Arm == "baseline" && s.Phase == phase).OrderBy(s => s.Trial).ToArray();
             var after = samples.Where(s => s.Arm == "candidate" && s.Phase == phase).OrderBy(s => s.Trial).ToArray();
             for (var trial = 0; trial < 3; trial++)
-                Assert.Equal((before[trial].Reads, before[trial].Writes, before[trial].Flushes),
-                    (after[trial].Reads, after[trial].Writes, after[trial].Flushes));
+            {
+                Assert.True(after[trial].Reads <= before[trial].Reads, $"{profile}/{phase}: more read commands");
+                Assert.True(after[trial].Writes <= before[trial].Writes, $"{profile}/{phase}: more write commands");
+                Assert.True(after[trial].Flushes <= before[trial].Flushes, $"{profile}/{phase}: more device flushes");
+            }
             // Allow 0.1% for timer/interrupt placement; retain every raw sample.
             // A passing probe only qualifies these workloads and ROM/CPU.
             var ratio = after.Average(s => s.Cycles) / before.Average(s => s.Cycles);

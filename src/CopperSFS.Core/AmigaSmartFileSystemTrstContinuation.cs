@@ -42,7 +42,11 @@ public static partial class AmigaSmartFileSystemWriteCore
             p.ReadUInt32(hint, 44) != active.Raw || r.Length == 0 || r.Length > 65536 ||
             (w.BlockBytes == 512 ? ((r.Position | r.Length) & 511) != 0 :
                 r.Position % w.BlockBytes != 0 || r.Length % w.BlockBytes != 0) || (r.Buffer.Raw & 3) != 0 ||
-            p.ReadUInt32(active, 8) != (w.BlockBytes | 0x80000000)) return true;
+            (p.ReadUInt32(active, 8) != (w.BlockBytes | 0x80000000) &&
+             p.ReadUInt32(active, 8) != (w.BlockBytes | SfsSharedImagePool.Format))) return true;
+        if (SfsSharedImagePool.IsPool(ref p, active) &&
+            !SfsSharedImagePool.ValidLayout(ref p, group, active, p.ReadUInt32(group, 8), w.BlockBytes))
+            return FailContinuation(ref w, DOS.Error.DiskNotValidated);
         if (!p.IsMapped(r.Buffer, r.Length)) return FailContinuation(ref w, DOS.Error.BadNumber);
         if (p.ReadUInt32(group, TrstGroupObjectHint) != r.Node) return true;
         var objectBlock = p.ReadUInt32(group, TrstGroupObjectHint + 4);
@@ -59,7 +63,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         var tail = p.ReadUInt32(hint, 8); var tailLength = p.ReadUInt32(hint, 12);
         var before = p.ReadUInt32(hint, 16); var beforeLength = p.ReadUInt32(hint, 20);
         var count = w.BlockBytes == 512 ? r.Length >> 9 : r.Length / w.BlockBytes;
-        if (count >= tailLength || beforeLength > ushort.MaxValue - count) return true;
+        if (count > tailLength || beforeLength > ushort.MaxValue - count ||
+            (count == tailLength && (p.ReadUInt32(hint, 24) != 0 || !SfsSharedImagePool.IsPool(ref p, active)))) return true;
         if (tail < w.ReservedBlocks || tail >= w.BlockCount - 1 || tailLength > w.BlockCount - 1 - tail ||
             before < w.ReservedBlocks || before >= w.BlockCount - 1 || beforeLength > w.BlockCount - 1 - before ||
             count > w.BlockCount - 1 - before - beforeLength) return FailContinuation(ref w, DOS.Error.DiskNotValidated);
@@ -89,11 +94,11 @@ public static partial class AmigaSmartFileSystemWriteCore
                 p.ReadUInt32(proof, 68) + progress >= bits;
             return true;
         }
-        var leaf = AmigaSmartFileSystemRedoArena.OwnedMetadataAt(ref p, active, p.ReadUInt32(proof, 24), p.ReadUInt32(hint, 28), TreeId);
+        var leaf = TrstProofImage(ref p, group, active, 24, p.ReadUInt32(hint, 28), TreeId);
         if (leaf.IsNull || !TrstContinuationLeaf(ref p, w.BlockBytes, hint, leaf, proof)) return FailContinuation(ref w, DOS.Error.DiskNotValidated);
-        var oldBitmap = AmigaSmartFileSystemRedoArena.OwnedMetadataAt(ref p, active, p.ReadUInt32(proof, 28), p.ReadUInt32(proof, 56), BitmapId);
+        var oldBitmap = TrstProofImage(ref p, group, active, 28, p.ReadUInt32(proof, 56), BitmapId);
         var newBitmap = p.ReadUInt32(proof, 56) == p.ReadUInt32(proof, 60) ? oldBitmap :
-            AmigaSmartFileSystemRedoArena.OwnedMetadataAt(ref p, active, p.ReadUInt32(proof, 32), p.ReadUInt32(proof, 60), BitmapId);
+            TrstProofImage(ref p, group, active, 32, p.ReadUInt32(proof, 60), BitmapId);
         if (oldBitmap.IsNull || newBitmap.IsNull) return FailContinuation(ref w, DOS.Error.DiskNotValidated);
         var oldAt = 12 + (int)((p.ReadUInt32(proof, 64) + progress) >> 5) * 4;
         var newAt = 12 + (int)((p.ReadUInt32(proof, 68) + progress) >> 5) * 4;
@@ -113,13 +118,14 @@ public static partial class AmigaSmartFileSystemWriteCore
             : p.WriteDataBlocks(destination, count, r.Buffer);
         p.RedoOverlay = active;
         if (!written) return FailContinuation(ref w, DOS.Error.DiskNotValidated);
+        p.ObserveFreedRange(tail, count);
         if (runLimit != 0) BeginTrstRun(ref p, group, active, count, runLimit, size);
-        else ApplyTrstContinuation(ref p, hint, leaf, oldBitmap, newBitmap, count, oldAt, newAt, r.Length);
+        else ApplyTrstContinuation(ref p, hint, leaf, oldBitmap, newBitmap, count, oldAt, newAt, r.Length, w.BlockBytes);
         handled = true; return true;
     }
 
     private static void ApplyTrstContinuation<T>(ref T p, APTR hint, APTR leaf, APTR oldBitmap,
-        APTR newBitmap, uint count, int oldAt, int newAt, uint byteLength) where T : struct, IAmigaGuestMemory
+        APTR newBitmap, uint count, int oldAt, int newAt, uint byteLength, uint blockBytes) where T : struct, IAmigaGuestMemory
     {
         // Data I/O expires all borrowed platform views. These pointers name
         // owned indexed-arena slots, which the unpublished transfer cannot move
@@ -127,9 +133,22 @@ public static partial class AmigaSmartFileSystemWriteCore
         AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, leaf, 0);
         AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, oldBitmap, 0);
         if (newBitmap != oldBitmap) AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, newBitmap, 0);
-        ApplyTrstContinuationLeaf(ref p, hint, leaf, count);
         var tail = p.ReadUInt32(hint, 8); var tailLength = p.ReadUInt32(hint, 12);
         var beforeLength = p.ReadUInt32(hint, 20); var destination = p.ReadUInt32(hint, 16) + beforeLength;
+        if (count == tailLength)
+        {
+            // Both records are in this owned leaf and its predecessor remains.
+            // No parent update, new slot, or fallible access follows data I/O.
+            var beforeAt = (int)p.ReadUInt32(hint, 36);
+            p.WriteUInt32(leaf, beforeAt + 4, 0);
+            p.WriteUInt16(leaf, beforeAt + 12, (ushort)(beforeLength + count));
+            RemoveLeafRecord(ref p, leaf, (int)p.ReadUInt32(hint, 32), p.ReadUInt16(leaf, 12), p.ReadUInt8(leaf, 15));
+            // Moving 14-byte records can rotate words relative to the checksum.
+            p.WriteUInt32(leaf, 4, unchecked(p.ReadUInt32(leaf, 4) - AmigaSmartFileSystemCore.BlockSum(ref p, leaf, blockBytes) - 1));
+            p.WriteUInt32(hint, 0, 0);
+            p.WriteUInt32(hint, TrstGroupProof - TrstGroupContinuation, 0);
+        }
+        else ApplyTrstContinuationLeaf(ref p, hint, leaf, count);
         UpdateTrstBitmapRange(ref p, newBitmap, newAt, destination & 31, count, false);
         UpdateTrstBitmapRange(ref p, oldBitmap, oldAt, tail & 31, count, true);
         AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, leaf, TreeId);

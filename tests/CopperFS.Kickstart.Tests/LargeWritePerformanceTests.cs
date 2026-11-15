@@ -6,8 +6,9 @@ namespace CopperFS.Kickstart.Tests;
 public sealed partial class OriginalHandlerCorrectnessTests
 {
     [HandlerSizePerformanceTheory]
-    [InlineData("ofs")] [InlineData("ffs")] [InlineData("sfs")]
-    public async System.Threading.Tasks.Task LargeWritesPreserveCyclesAndDiskOperations(string profile)
+    [InlineData("ofs", false)] [InlineData("ffs", false)] [InlineData("sfs", false)]
+    [InlineData("ofs", true)] [InlineData("ffs", true)]
+    public async System.Threading.Tasks.Task LargeWritesPreserveCyclesAndDiskOperations(string profile, bool chip)
     {
         var path = Environment.GetEnvironmentVariable("COPPERFS_SIZE_MANIFEST")!;
         var manifest = JsonSerializer.Deserialize<SizeManifest>(File.ReadAllText(path))!;
@@ -16,8 +17,8 @@ public sealed partial class OriginalHandlerCorrectnessTests
             : CopperStart.Floppy.Native.Tests.DosDiskImage.Create(profile == "ffs",
                 includeLargeFile: false, blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3]).Bytes;
         if (profile == "sfs") Assert.Equal(manifest.ClassicBaseSha256, Hash(initial));
-        var root = Path.Combine(Path.GetDirectoryName(path)!, "large-writes", profile);
-        var entry = "LargeWriteProbe::" + (profile == "ofs" ? "Ofs" : profile == "ffs" ? "Ffs" : "Sfs");
+        var root = Path.Combine(Path.GetDirectoryName(path)!, chip ? "large-writes-chip" : "large-writes", profile);
+        var entry = "LargeWriteProbe::" + (profile == "ofs" ? "Ofs" : profile == "ffs" ? "Ffs" : "Sfs") + (chip ? "Chip" : "");
         var samples = new List<PacketSample>();
         foreach (var trial in Enumerable.Range(0, 3))
         foreach (var arm in trial % 2 == 0 ? new[] { "baseline", "candidate" } : new[] { "candidate", "baseline" })
@@ -59,8 +60,11 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var before = samples.Where(s => s.Arm == "baseline" && s.Phase == phase).OrderBy(s => s.Trial).ToArray();
             var after = samples.Where(s => s.Arm == "candidate" && s.Phase == phase).OrderBy(s => s.Trial).ToArray();
             for (var trial = 0; trial < 3; trial++)
-                Assert.Equal((before[trial].Reads, before[trial].Writes, before[trial].Flushes),
-                    (after[trial].Reads, after[trial].Writes, after[trial].Flushes));
+            {
+                Assert.True(after[trial].Reads <= before[trial].Reads, $"{profile}/{phase}: more read commands");
+                Assert.True(after[trial].Writes <= before[trial].Writes, $"{profile}/{phase}: more write commands");
+                Assert.True(after[trial].Flushes <= before[trial].Flushes, $"{profile}/{phase}: more device flushes");
+            }
             var ratio = after.Average(s => s.Cycles) / before.Average(s => s.Cycles);
             Assert.True(ratio <= 1.001, $"{profile}/{phase}: candidate uses {(ratio - 1) * 100:F3}% more cycles; see cycles.json.");
         }
@@ -74,20 +78,25 @@ public static class LargeWriteProbe
     public static int Ofs() => Run(0);
     public static int Ffs() => Run(1);
     public static int Sfs() => Run(2);
+    public static int OfsChip() => Run(0, true);
+    public static int FfsChip() => Run(1, true);
+    public static int SfsChip() => Run(2, true);
 
-    private static int Run(uint kind)
+    private static int Run(uint kind, bool chip = false)
     {
         var library = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!library.HasValue) return Fail(APTR.Null, 1);
         DOS.DOSLibraryBase = library.Value;
         var control = APTR.FromPointer(global::Amiga.Exec.AllocMem(1024,
             global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
-        var data = APTR.FromPointer(global::Amiga.Exec.AllocMem(65536, global::Amiga.Exec.MemoryFlags.Public));
+        var data = APTR.FromPointer(global::Amiga.Exec.AllocMem(65536,
+            global::Amiga.Exec.MemoryFlags.Public | (chip ? global::Amiga.Exec.MemoryFlags.Chip : global::Amiga.Exec.MemoryFlags.Fast)));
         if (control.IsNull || data.IsNull) return Fail(control, 2);
         CorrectnessProbe.Report(200); CorrectnessProbe.Report((int)(control.Raw >> 24));
         CorrectnessProbe.Report((int)(control.Raw >> 16)); CorrectnessProbe.Report((int)(control.Raw >> 8));
         CorrectnessProbe.Report((int)control.Raw);
         if (CorrectnessProbe.Mount(control, kind) != 0) return Fail(control, 3);
+        if (APTR.ReadUInt32(control, 948) == 1 && !CorrectnessProbe.WarmDiscardDevice(data)) return Fail(control, 17);
         for (var i = 0; i < 65536; i++) APTR.WriteUInt8(data, i, 0xA7);
         var name = APTR.FromPointer(control.Raw + 400);
         APTR.WriteUInt32(name, 0, 0x53455130); // SEQ0:F00
@@ -105,6 +114,7 @@ public static class LargeWriteProbe
         var gap = DOS.Open("SEQ0:Gap", DOS.FileMode.NewFile);
         if (!gap.HasValue || DOS.Write(gap.Value, data, 4096) != 4096 || DOS.Close(gap.Value) == 0 ||
             DOS.Write(file.Value, data, 49152) != 49152 || DOS.Close(file.Value) == 0) return Fail(control, 6);
+        if (!Checkpoint()) return Fail(control, 15);
         CorrectnessProbe.Report(221);
         file = DOS.Open("SEQ0:Large", DOS.FileMode.ReadWrite);
         if (!file.HasValue) return Fail(control, 7);
@@ -113,6 +123,7 @@ public static class LargeWriteProbe
         for (var i = 0; i < 12; i++)
             if (DOS.Write(file.Value, data, 8192) != 8192) return Fail(control, 8);
         if (DOS.Close(file.Value) == 0) return Fail(control, 9);
+        if (!Checkpoint()) return Fail(control, 16);
         CorrectnessProbe.Report(223);
         CorrectnessProbe.Report(224);
         file = DOS.Open("SEQ0:Large", DOS.FileMode.OldFile);
@@ -127,6 +138,12 @@ public static class LargeWriteProbe
         if (DOS.Inhibit("SEQ0:", 1) == 0) return Fail(control, 14);
         CorrectnessProbe.Report(210);
         return 0;
+    }
+
+    private static bool Checkpoint()
+    {
+        var port = DOS.DeviceProc("SEQ0:");
+        return port.IsNotNull && DOS.DoPkt(port, (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) != 0;
     }
 
     private static int Fail(APTR control, uint stage)

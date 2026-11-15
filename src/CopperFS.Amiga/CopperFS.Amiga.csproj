@@ -4,6 +4,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants Condition="'$(CopperFsHandler)' == 'Cpx4'">$(DefineConstants);COPPERFS_CPX4</DefineConstants>
     <DefineConstants Condition="'$(CopperFsAutoTrim)' == 'true'">$(DefineConstants);COPPERFS_AUTOTRIM</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsFfsIndexKiB)' == '64'">$(DefineConstants);COPPERFS_FFS_INDEX64</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsFfsIndexKiB)' == '1024'">$(DefineConstants);COPPERFS_FFS_INDEX1024</DefineConstants>
     <!-- Empty keeps the shared source consumer and host tests multi-format. -->
     <CopperFsFfsOnly Condition="'$(CopperFsHandler)' == 'Ffs'">true</CopperFsFfsOnly>
     <CopperFsSmartOnly Condition="'$(CopperFsHandler)' == 'Sfs'">true</CopperFsSmartOnly>
@@ -16,6 +18,15 @@
     <DefineConstants Condition="'$(CopperStartSfsStrictWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS_STRICT_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfsTrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS_TRST_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">$(DefineConstants);COPPERSTART_SFS_TRST_BUFFERED</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfsPool)' == 'true'">$(DefineConstants);COPPERFS_SFS_POOL</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfsPool)' == 'true' and '$(CopperFsSfsInPlace)' == 'true'">$(DefineConstants);COPPERFS_SFS_IN_PLACE</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfsPool)' == 'true' and '$(CopperFsSfsExtraKiB)' == '16'">$(DefineConstants);COPPERFS_SFS_EXTRA_CACHE</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfsGrouped)' == 'true'">$(DefineConstants);COPPERFS_SFS_GROUPED</DefineConstants>
+    <DefineConstants Condition="'$(CopperStartSfs2TrstGrouped)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_GROUPED</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfs2Owned)' == 'true'">$(DefineConstants);COPPERFS_SFS2_OWNED</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfs2ExtraKiB)' == '16'">$(DefineConstants);COPPERFS_SFS2_EXTRA16</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfs2ExtraKiB)' == '64'">$(DefineConstants);COPPERFS_SFS2_EXTRA64</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfs2ExtraKiB)' == '256'">$(DefineConstants);COPPERFS_SFS2_EXTRA256</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfs2TrstWrites)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperStartNativeSfs2)' == 'true'">$(DefineConstants);COPPERSTART_NATIVE_SFS2</DefineConstants>
     <DefineConstants Condition="'$(CopperFsNativeFfsReadAhead)' == 'true'">$(DefineConstants);COPPERFS_NATIVE_FFS_READAHEAD</DefineConstants>
@@ -25,6 +36,20 @@
   <Target Name="ValidateHandlerFamily" BeforeTargets="BeforeBuild">
     <Error Condition="'$(CopperFsHandler)' != '' and '$(CopperFsHandler)' != 'Ffs' and '$(CopperFsHandler)' != 'Sfs' and '$(CopperFsHandler)' != 'Cpx4'"
            Text="CopperFsHandler must be empty, Ffs, Sfs or Cpx4 (experimental handler)." />
+  </Target>
+  <Target Name="ValidateSfs2GroupedProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperStartSfs2TrstGrouped)' == 'true'">
+    <Error Condition="'$(CopperStartNativeSfs2)' != 'true' or '$(CopperStartSfs2TrstWrites)' != 'true' or '$(CopperStartSfsStrictWrites)' == 'true'"
+           Text="Grouped SFS2 requires SFS2 TRST without strict writes." />
+  </Target>
+  <Target Name="ValidateSfsGroupedProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSfsGrouped)' == 'true'">
+    <Error Condition="'$(CopperStartSfsTrstBuffered)' != 'true' or '$(CopperFsFfsOnly)' == 'true'" Text="Grouped SFS requires the buffered SFS TRST profile." />
+  </Target>
+  <Target Name="ValidateSfsPoolProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSfsPool)' == 'true'">
+    <Error Condition="'$(CopperFsSfsGrouped)' != 'true'" Text="Shared SFS images require the opt-in grouped SFS profile." />
+  </Target>
+  <Target Name="ValidateSfs2OwnedProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSfs2Owned)' == 'true'">
+    <Error Condition="'$(CopperStartSfs2TrstGrouped)' != 'true'" Text="Owned SFS2 requires grouped SFS2 TRST." />
+    <Error Condition="'$(CopperFsSfs2ExtraKiB)' != '' and '$(CopperFsSfs2ExtraKiB)' != '0' and '$(CopperFsSfs2ExtraKiB)' != '16' and '$(CopperFsSfs2ExtraKiB)' != '64' and '$(CopperFsSfs2ExtraKiB)' != '256'" Text="SFS2 extra memory must be 0, 16, 64 or 256 KiB." />
   </Target>
   <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
           Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">

@@ -7,16 +7,34 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
     public static bool DescribeInformation<T>(ref T p, uint node, APTR metadata,
         out ulong size, out bool directory, out uint parent) where T : struct, IAmigaFileSystemPlatform
     {
+        if (p.Sfs2Context.IsNotNull)
+        {
+            size = 0; directory = false; parent = 0;
+            if (!OwnedObject(ref p, node, metadata, false, out var handle, out var at) ||
+                !Sfs2MountContext.Volume(ref p, p.Sfs2Context, out var volume)) return false;
+            var valid = DescribeAt(ref p, volume, node, handle.Image, at, out var owned);
+            size = owned.Size; directory = owned.Directory; parent = owned.Parent;
+            Sfs2MetadataStore.Release(ref p, ref handle); return valid;
+        }
         var ok = Describe(ref p, node, metadata, out var entry);
         size = entry.Size; directory = entry.Directory; parent = entry.Parent; return ok;
     }
-    public static bool Examine<T>(ref T p, uint node, APTR fib, APTR metadata) where T : struct, IAmigaFileSystemPlatform =>
-        Describe(ref p, node, metadata, out var entry) && FillInfo(ref p, entry, fib);
+    public static bool Examine<T>(ref T p, uint node, APTR fib, APTR metadata) where T : struct, IAmigaFileSystemPlatform
+    {
+        if (p.Sfs2Context.IsNotNull)
+        {
+            if (!OwnedObject(ref p, node, metadata, false, out var handle, out var at) ||
+                !Sfs2MountContext.Volume(ref p, p.Sfs2Context, out var volume)) return false;
+            var valid = DescribeAt(ref p, volume, node, handle.Image, at, out var owned) && FillInfo(ref p, owned, fib);
+            Sfs2MetadataStore.Release(ref p, ref handle); return valid;
+        }
+        return Describe(ref p, node, metadata, out var entry) && FillInfo(ref p, entry, fib);
+    }
     public static DOS.Error ExamineNext<T>(ref T p, uint directory, APTR fib, APTR metadata) where T : struct, IAmigaFileSystemPlatform
     {
         if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes)) return DOS.Error.InvalidLock;
         var cursor = p.ReadUInt32(fib);
-        var error = ExamineNext(ref p, directory, ref cursor, metadata, out var entry);
+        var error = ExamineNextCore(ref p, directory, ref cursor, metadata, p.Sfs2Context.IsNotNull, out var entry);
         return error != DOS.Error.None ? error : FillInfo(ref p, entry, fib) ? DOS.Error.None : DOS.Error.DiskNotValidated;
     }
     private static bool FillInfo<T>(ref T p, ReadEntry entry, APTR fib) where T : struct, IAmigaFileSystemPlatform

@@ -13,6 +13,7 @@ public sealed partial class AmigaSmartFileSystemTests
     [Theory]
     [InlineData(0u, 0u)]
     [InlineData(1024u, 1024u)]
+    [InlineData(1027u, 1027u)]
     [InlineData(8192u, 0u)]
     [InlineData(8192u, 1024u)]
     [InlineData(8192u, 6144u)]
@@ -46,9 +47,10 @@ public sealed partial class AmigaSmartFileSystemTests
         oldBytes.CopyTo(expected, 0); payload.CopyTo(expected, (int)position);
         bool Write(ref Disk disk, out uint actual)
         {
-            payload.CopyTo(disk.Ram, 4000); var work = TrstWork();
+            var input = 4000 + (int)(position & 3);
+            payload.CopyTo(disk.Ram, input); var work = TrstWork();
             var r = new AmigaSmartFileSystemWriteCore.Request
-            { Node = create.Node, Position = position, Buffer = APTR.FromPointer(4000), Length = (uint)payload.Length };
+            { Node = create.Node, Position = position, Buffer = APTR.FromPointer((uint)input), Length = (uint)payload.Length };
             return AmigaSmartFileSystemWriteCore.ExecuteTrst(ref disk, ref work, ref r,
                 AmigaSmartFileSystemWriteCore.TrstOperation.Write, APTR.FromPointer(200000), 196608, out actual);
         }
@@ -70,10 +72,10 @@ public sealed partial class AmigaSmartFileSystemTests
 
         var baseline = new Disk(saved.ToArray()) { Buffered = true };
         Assert.True(Write(ref baseline, out var actual)); Assert.Equal(2048u, actual);
-        Assert.Contains(baseline.DataWrites, run => run.Count == 4);
+        Assert.Contains(baseline.DataWrites, run => run.Count == (position % 512 == 0 ? 4u : 3u));
         // New file data is absent from the metadata-only staging arena.
         var arena = APTR.FromPointer(200000);
-        var slots = baseline.ReadUInt32(arena); Assert.InRange(slots, 1u, 6u);
+        var slots = baseline.ReadUInt32(arena); Assert.InRange(slots, 1u, position % 512 == 0 ? 6u : 8u);
         for (var slot = 0u; slot < slots; slot++)
         {
             var target = baseline.ReadUInt32(APTR.FromPointer(baseline.ReadUInt32(arena, 20) + slot * 516));

@@ -20,6 +20,14 @@ public interface IAmigaDiscardFileSystemPlatform : IAmigaWritableFileSystemPlatf
     bool DiscardBlocks(APTR control, uint block, uint count);
 }
 
+/// <summary>Optional single-command vector discard. All descriptors must be
+/// validated before submission; failure may deallocate any subset. The caller
+/// retains exclusive ownership until completion, including on failure.</summary>
+public interface IAmigaBatchDiscardFileSystemPlatform : IAmigaDiscardFileSystemPlatform
+{
+    bool DiscardRanges(APTR control, APTR ranges, uint count);
+}
+
 /// <summary>Explicit CopperSFS DOS packet ABI; unrelated handlers reject it.
 /// Arg1 is an APTR to a Size-byte record. All fields are big-endian longwords.
 /// Result1 is DOS TRUE on success; Result2 is a DOS error on failure.</summary>

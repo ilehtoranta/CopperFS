@@ -34,31 +34,140 @@ internal static class NativeSfs2Bridge
         JournalCursor = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset)
     };
 
+#if COPPERFS_SFS2_OWNED
+    internal static void Suspend(APTR state)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        Sfs2MountContext.Suspend(ref p, p.Sfs2Context);
+    }
+
+    internal static void ReleaseContext(APTR state)
+    {
+        Suspend(state);
+        var storage = APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextStorageOffset);
+        if (storage != 0) global::Amiga.Exec.FreeMem(storage, APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextBytesOffset));
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2ContextOffset, 0);
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2ContextStorageOffset, 0);
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2ContextBytesOffset, 0);
+    }
+
+    internal static bool MountContext(APTR state)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        if (p.Sfs2Context.IsNotNull && Sfs2MountContext.Ready(ref p, p.Sfs2Context)) return true;
+        // Normal operations allocate nothing. Reserve both transaction arenas
+        // and the selected metadata budget before accepting the first packet.
+        if (Arena(state).IsNull) return false;
+        var storage = APTR.FromPointer(APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextStorageOffset));
+        var bytes = APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextBytesOffset);
+        if (storage.IsNull)
+        {
+#if COPPERFS_SFS2_EXTRA256
+            var extra = 256u * 1024;
+#elif COPPERFS_SFS2_EXTRA64
+            var extra = 64u * 1024;
+#elif COPPERFS_SFS2_EXTRA16
+            var extra = 16u * 1024;
+#else
+            var extra = 0u;
+#endif
+            // Reuse the obsolete undo-buffer budget, including the twelve
+            // new state bytes. Extra memory is entirely opt-in and accounted.
+            var baseline = AmigaSmartFileSystemTransactionBuffer.StorageBytes(p.BlockBytes,
+                AmigaSmartFileSystemTransactionBuffer.MaximumCapacity) - 12;
+            while (true)
+            {
+                bytes = baseline + extra;
+                storage = global::Amiga.Exec.AllocMem(bytes, global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear);
+                if (storage.IsNotNull || extra == 0) break;
+                extra = extra == 256 * 1024 ? 64u * 1024 : extra == 64 * 1024 ? 16u * 1024 : 0u;
+            }
+            // No optional metadata capacity: retain the checked grouped path.
+            if (storage.IsNull) return true;
+            APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2ContextStorageOffset, storage.Raw);
+            APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2ContextBytesOffset, bytes);
+        }
+        var work = Work(state);
+        return Sfs2MountContext.Mount(ref p, ref work, storage, bytes);
+    }
+#endif
+
     internal static bool Recover(APTR state, ref AmigaSmartFileSystemWriteCore.Work classic)
     {
         var p = new NativeFileSystemPlatform(state); var work = Work(state);
+#if COPPERSTART_SFS2_TRST_GROUPED
+        var group = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset));
+        var ok = group.IsNotNull ? AmigaSmartFileSystem2WriteCore.RecoverTrstGroup(ref p, ref work, group) :
+            AmigaSmartFileSystem2WriteCore.Recover(ref p, ref work);
+#else
         var ok = AmigaSmartFileSystem2WriteCore.Recover(ref p, ref work);
+#endif
         classic.Error = work.Error; classic.JournalCursor = work.JournalCursor;
         return ok;
     }
+
+#if COPPERFS_SFS2_OWNED && COPPERSTART_SFS2_TRST_GROUPED
+    internal static bool CanDeferClose(APTR state)
+    {
+        // Accepted images belong to the mount, not the retiring file handle.
+        // The existing non-resetting timer bounds their lifetime; flush,
+        // inhibit and pressure still commit them. Do not defer without a timer
+        // or hide a failed commit behind a successful close.
+        if (!IsSfs2(state) || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) == 0 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0) return false;
+        var p = new NativeFileSystemPlatform(state);
+        return Sfs2MountContext.Ready(ref p, p.Sfs2Context);
+    }
+#endif
 
     internal static bool Trim(APTR state, ref NativeFileSystemPlatform p,
         ref AmigaSmartFileSystemWriteCore.Work classic, APTR control, uint flags,
         out AmigaSmartFileSystemWriteCore.TrimResult result, uint startBlock = 0, uint blockCount = uint.MaxValue, APTR validation = default)
     {
         var work = Work(state);
+#if COPPERSTART_SFS2_TRST_GROUPED
+        if (flags != AmigaSmartFileSystemTrimPacket.QueryOnly && !Recover(state, ref classic))
+        { result = default; return false; }
+#endif
         var ok = AmigaSmartFileSystem2WriteCore.TrimWindow(ref p, ref work, control, flags, out var trimmed, startBlock, blockCount, validation);
         result = new AmigaSmartFileSystemWriteCore.TrimResult
         { Limits = trimmed.Limits, Blocks = trimmed.Blocks, Ranges = trimmed.Ranges };
         classic.Error = work.Error; classic.JournalCursor = work.JournalCursor;
         return ok;
     }
+    internal static bool TrimFreed(APTR state, ref NativeFileSystemPlatform p,
+        ref AmigaSmartFileSystemWriteCore.Work classic, APTR control, APTR batch, uint ranges)
+    {
+        var work = Work(state);
+        var ok = AmigaSmartFileSystem2WriteCore.TrimFreedBatch(ref p, ref work, control, batch, ranges, out _);
+        classic.Error = work.Error; classic.JournalCursor = work.JournalCursor;
+        return ok;
+    }
+
+#if COPPERFS_AUTOTRIM
+    internal static bool CollectAutomatic(APTR state, APTR batch, uint generation)
+    {
+        var p = new NativeFileSystemPlatform(state); var work = Work(state);
+        var ok = AmigaSmartFileSystem2WriteCore.CollectAutomaticTrim(ref p, ref work, batch, state.Raw, generation);
+        if (ok) NativeAutomaticTrim.RememberRoots(state, work.BitmapBase, work.RootContainer, work.AdminContainer, work.NodeRoot, work.ExtentRoot);
+        return ok;
+    }
+#endif
+
     private static APTR Arena(APTR state)
     {
         var buffer = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset);
         if (buffer == 0)
         {
             buffer = global::Amiga.Exec.AllocMem(BufferBytes, global::Amiga.Exec.MemoryFlags.Public);
+#if COPPERSTART_SFS2_TRST_GROUPED
+            if (buffer != 0)
+            {
+                var p = new NativeFileSystemPlatform(state);
+                if (!AmigaSmartFileSystem2WriteCore.InitializeTrstGroup(ref p, APTR.FromPointer(buffer), BufferBytes))
+                { global::Amiga.Exec.FreeMem(buffer, BufferBytes); buffer = 0; }
+            }
+#endif
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset, buffer);
         }
         return APTR.FromPointer(buffer);
@@ -70,8 +179,39 @@ internal static class NativeSfs2Bridge
         var p = new NativeFileSystemPlatform(state); var work = Work(state); actual = 0;
 #if COPPERSTART_SFS2_TRST_WRITES
         var arena = Arena(state);
+#if COPPERSTART_SFS2_TRST_GROUPED
+        var ok = false;
+        if (arena.IsNotNull)
+        {
+            var saved = request;
+            ok = AmigaSmartFileSystem2WriteCore.ExecuteTrstGroup(ref p, ref work, ref request, kind, arena, out actual);
+            if (!ok && work.Error == DOS.Error.NoFreeStore)
+            {
+                // A rejected packet has not changed the accepted view. Commit
+                // it first, then use the full allocation for this strict packet.
+                if (AmigaSmartFileSystem2WriteCore.FlushTrstGroup(ref p, ref work, arena))
+                {
+                    request = saved;
+#if COPPERFS_SFS2_OWNED
+                    var context = p.Sfs2Context;
+                    Sfs2MountContext.Suspend(ref p, context); p.Sfs2Context = APTR.Null;
+#endif
+                    ok = AmigaSmartFileSystem2WriteCore.ExecuteTrst(ref p, ref work, ref request, kind, arena, BufferBytes, out actual);
+                    AmigaSmartFileSystem2WriteCore.InitializeTrstGroup(ref p, arena, BufferBytes);
+#if COPPERFS_SFS2_OWNED
+                    p.Sfs2Context = context;
+                    if (ok && context.IsNotNull) ok = Sfs2MountContext.Mount(ref p, ref work, context,
+                        APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextBytesOffset));
+#endif
+                }
+            }
+            if (ok && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) == 0)
+                ok = AmigaSmartFileSystem2WriteCore.FlushTrstGroup(ref p, ref work, arena);
+        }
+#else
         var ok = !arena.IsNull && AmigaSmartFileSystem2WriteCore.ExecuteTrst(ref p, ref work, ref request, kind,
             arena, BufferBytes, out actual);
+#endif
         if (arena.IsNull) work.Error = DOS.Error.NoFreeStore;
 #else
         bool ok;
@@ -95,6 +235,10 @@ internal static class NativeSfs2Bridge
         };
 #endif
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, work.JournalCursor);
+#if COPPERFS_AUTOTRIM
+        if (ok) NativeAutomaticTrim.RememberRoots(state, work.BitmapBase, work.RootContainer, work.AdminContainer, work.NodeRoot, work.ExtentRoot);
+#endif
+        if (!ok) actual = 0;
         error = work.Error; return ok;
     }
 

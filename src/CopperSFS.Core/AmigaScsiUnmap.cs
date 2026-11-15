@@ -15,10 +15,11 @@ public interface IAmigaScsiDirectPlatform : IAmigaGuestMemory
 /// offsets are device bytes, while the public ranges are partition blocks.</summary>
 public static class AmigaScsiUnmap
 {
-    public const uint ControlBytes = 256, ScsiCommandBytes = 30;
+    public const uint ControlBytes = 256, BatchControlBytes = 512, ScsiCommandBytes = 30;
     private const int Cdb = 32, Sense = 48, Data = 80;
     private const int Sector = 208, Maximum = 212, Cookie = 216,
-        StartHigh = 220, StartLow = 224, Blocks = 228, Bytes = 232;
+        StartHigh = 220, StartLow = 224, Blocks = 228, Bytes = 232,
+        Descriptors = 236, SectorShift = 240;
     private const uint Ready = 0x554E4D50;
 
     public static bool Query<T>(ref T p, AmigaVolumeGeometry geometry, APTR control,
@@ -30,7 +31,8 @@ public static class AmigaScsiUnmap
         if (!Inquiry(ref p, control, 0xB2, 8) || (p.ReadUInt8(control, Data + 5) & 128) == 0 ||
             !Inquiry(ref p, control, 0xB0, 28)) return false;
         var maximum = p.ReadUInt32(control, Data + 20);
-        if (maximum == 0 || p.ReadUInt32(control, Data + 24) == 0) return false;
+        var descriptors = p.ReadUInt32(control, Data + 24);
+        if (maximum == 0 || descriptors == 0) return false;
         Prepare(ref p, control, 16, 32, true);
         p.WriteUInt8(control, Cdb, 0x9E); p.WriteUInt8(control, Cdb + 1, 0x10);
         p.WriteUInt32(control, Cdb + 10, 32);
@@ -65,8 +67,72 @@ public static class AmigaScsiUnmap
         p.WriteUInt32(control, StartHigh, (uint)(geometry.StartByte >> 32));
         p.WriteUInt32(control, StartLow, (uint)geometry.StartByte);
         p.WriteUInt32(control, Blocks, geometry.BlockCount); p.WriteUInt32(control, Bytes, geometry.BlockBytes);
+        p.WriteUInt32(control, Descriptors, descriptors);
+        uint shift = 0;
+        for (var size = sector; size > 1; size >>= 1) shift++;
+        p.WriteUInt32(control, SectorShift, shift);
         p.WriteUInt32(control, Cookie, Ready);
         return true;
+    }
+
+    public static uint MaximumDescriptors<T>(ref T p, APTR control) where T : struct, IAmigaGuestMemory =>
+        p.ReadUInt32(control, Cookie) == Ready ? p.ReadUInt32(control, Descriptors) : 0;
+
+    /// <summary>At most eight descriptors, one synchronous UNMAP. The 512-byte
+    /// buffer keeps the parameter list separate from cached capability fields.</summary>
+    public static bool DiscardRanges<T>(ref T p, AmigaVolumeGeometry geometry,
+        APTR control, APTR ranges, uint count) where T : struct, IAmigaScsiDirectPlatform
+    {
+        if (count == 0 || count > 8 || control.IsNull || (control.Raw & 1) != 0 ||
+            control.Raw > uint.MaxValue - BatchControlBytes || ranges.Raw > uint.MaxValue - count * 8 ||
+            (ranges.Raw < control.Raw + BatchControlBytes && control.Raw < ranges.Raw + count * 8) ||
+            !p.IsMapped(control, BatchControlBytes) || !p.IsMapped(ranges, count * 8) ||
+            p.ReadUInt32(control, Cookie) != Ready || count > p.ReadUInt32(control, Descriptors) ||
+            p.ReadUInt32(control, StartHigh) != (uint)(geometry.StartByte >> 32) ||
+            p.ReadUInt32(control, StartLow) != (uint)geometry.StartByte ||
+            p.ReadUInt32(control, Blocks) != geometry.BlockCount ||
+            p.ReadUInt32(control, Bytes) != geometry.BlockBytes) return false;
+        var sector = p.ReadUInt32(control, Sector);
+        var shift = (int)p.ReadUInt32(control, SectorShift);
+        var maximum = p.ReadUInt32(control, Maximum);
+        if (sector == 0 || (sector & (sector - 1)) != 0 || shift > 31 || (1u << shift) != sector) return false;
+        // First validate the complete vector. Neither malformed later entries nor
+        // aggregate overflow may submit an earlier prefix to the device.
+        ulong total = 0;
+        for (var i = 0u; i < count; i++)
+        {
+            var block = p.ReadUInt32(ranges, (int)i * 8);
+            var length = p.ReadUInt32(ranges, (int)i * 8 + 4);
+            if (length == 0 || block >= geometry.BlockCount || length > geometry.BlockCount - block) return false;
+            var offset = geometry.StartByte + (ulong)block * geometry.BlockBytes;
+            var bytes = (ulong)length * geometry.BlockBytes;
+            if (offset < geometry.StartByte || offset > ulong.MaxValue - bytes ||
+                (offset & (sector - 1)) != 0 || (bytes & (sector - 1)) != 0) return false;
+            total += bytes >> shift;
+            if (total > maximum) return false;
+        }
+        var payload = APTR.FromPointer(control.Raw + ControlBytes);
+        var payloadBytes = 8 + count * 16;
+        Prepare(ref p, control, 10, payloadBytes, false);
+        p.WriteUInt32(control, 0, payload.Raw);
+        p.WriteUInt8(control, Cdb, 0x42);
+        // CDB byte 7 is odd even when control is aligned. Keep 68000 transport
+        // valid too; the 68020 permits a word store here but the 68000 does not.
+        p.WriteUInt8(control, Cdb + 7, (byte)(payloadBytes >> 8));
+        p.WriteUInt8(control, Cdb + 8, (byte)payloadBytes);
+        p.Clear(payload, payloadBytes);
+        p.WriteUInt16(payload, 0, (ushort)(payloadBytes - 2));
+        p.WriteUInt16(payload, 2, (ushort)(count * 16));
+        for (var i = 0u; i < count; i++)
+        {
+            var block = p.ReadUInt32(ranges, (int)i * 8);
+            var length = p.ReadUInt32(ranges, (int)i * 8 + 4);
+            var lba = (geometry.StartByte + (ulong)block * geometry.BlockBytes) >> shift;
+            var at = 8 + (int)i * 16;
+            p.WriteUInt32(payload, at, (uint)(lba >> 32)); p.WriteUInt32(payload, at + 4, (uint)lba);
+            p.WriteUInt32(payload, at + 8, (uint)(((ulong)length * geometry.BlockBytes) >> shift));
+        }
+        return Complete(ref p, control, 10, payloadBytes);
     }
 
     public static bool Discard<T>(ref T p, AmigaVolumeGeometry geometry, APTR control,

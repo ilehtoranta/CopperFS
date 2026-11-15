@@ -36,6 +36,16 @@ public static partial class AmigaSmartFileSystemWriteCore
         return true;
     }
 
+    /// <summary>Opt-in shared images in exactly the existing arena allocation.</summary>
+    public static bool InitializeSharedTrstGroup<T>(ref T p, APTR group, uint groupBytes)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var span = TrstGroupBytes(groupBytes, p.BlockBytes);
+        if (group.IsNull || span == 0 || !SfsSharedImagePool.Initialize(ref p, group, span, p.BlockBytes)) return false;
+        p.WriteUInt32(group, 0, TrstGroupMagic); p.WriteUInt32(group, 52, p.BlockBytes);
+        return true;
+    }
+
     public static bool TrstGroupPending<T>(ref T p, APTR group)
         where T : struct, IAmigaWritableFileSystemPlatform
         => group.IsNotNull && (p.ReadUInt32(group, 4) & 1) != 0;
@@ -77,7 +87,8 @@ public static partial class AmigaSmartFileSystemWriteCore
     /// read-after-write visibility, not durability: FlushTrstGroup commits every
     /// accepted Write together. On failure the prior accepted view is retained.
     /// Capacity failure never publishes a prefix; callers may flush that prior
-    /// group and retry the whole request. Other operations require a group flush.
+    /// group and retry the whole request. Other operations use ExecuteTrstGroup
+    /// or require a group flush before entering the strict APIs.
     /// Eager continuation prepares an optional next-Write proof. Disabling it
     /// leaves the accepted Write fully admitted; the next Write builds its proof
     /// through the existing checked fallback, spreading cold-path work.
@@ -88,12 +99,24 @@ public static partial class AmigaSmartFileSystemWriteCore
 
     /// <summary>Accept a complete Write, optionally preparing the next continuation eagerly.</summary>
     public static bool WriteTrstGroup<T>(ref T p, ref Work w, ref Request r, APTR group, out uint actual, bool eagerContinuation)
+        where T : struct, IAmigaWritableFileSystemPlatform =>
+        ExecuteTrstGroup(ref p, ref w, ref r, TrstOperation.Write, group, out actual, eagerContinuation);
+
+    /// <summary>Accept one complete mutation using the existing private arena.
+    /// Accepted images belong to the mount until explicit/timer/pressure flush.
+    /// Failed packets leave the previous accepted images and roots intact.</summary>
+    public static bool ExecuteTrstGroup<T>(ref T p, ref Work w, ref Request r,
+        TrstOperation operation, APTR group, out uint actual, bool eagerContinuation = true)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0; w.Error = DOS.Error.None; w.TrstObjectHint = APTR.Null; w.TrstContinuation = APTR.Null;
+        if (operation < TrstOperation.Write || operation > TrstOperation.ReplaceFile)
+            return Fail(ref w, DOS.Error.BadNumber);
         if (!TrstGroupValid(ref p, group)) return Fail(ref w, DOS.Error.NoFreeStore);
         var span = p.ReadUInt32(group, 8); var bytes = p.BlockBytes;
-        if (!TrstWorkspaceFits(ref p, ref w, group, span, bytes) || Overlap(group, span, r.Buffer, r.Length))
+        if (!TrstWorkspaceFits(ref p, ref w, group, span, bytes) || Overlap(group, span, r.Buffer, r.Length) ||
+            Overlap(group, span, r.Name, r.Length) ||
+            (operation == TrstOperation.SetDate && Overlap(group, span, r.Buffer, 12)))
             return Fail(ref w, DOS.Error.NoFreeStore);
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
         // Retry a failed publication only through recovery, never by encoding
@@ -102,6 +125,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         var pending = TrstGroupPending(ref p, group);
         var active = APTR.FromPointer(p.ReadUInt32(group, 16));
         var next = APTR.FromPointer(p.ReadUInt32(group, 20));
+        var pooled = SfsSharedImagePool.IsPool(ref p, active);
         if (!MaterializeTrstGroup(ref p, group, active)) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (p.RedoOverlay != (pending ? active : APTR.Null)) return Fail(ref w, DOS.Error.ActionNotKnown);
         if (!pending)
@@ -114,14 +138,27 @@ public static partial class AmigaSmartFileSystemWriteCore
         w.Buffered = APTR.Null; w.Batch = APTR.Null;
         if (!pending)
         {
-            if (!Prepare(ref p, ref w)) { w.Buffered = buffered; w.Batch = batch; return false; }
+            var mount = p.SfsMountStorage;
+            if (pooled && buffered.IsNull && batch.IsNull && mount.IsNotNull && p.ReadUInt32(mount) != 0)
+            {
+                // Only a normally mounted, exclusively owned SFS volume can
+                // enter here. Retry of an interrupted publication uses Prepare
+                // in FlushTrstGroup, with the mount record invalidated.
+                w.BlockCount = p.BlockCount; w.BlockBytes = bytes; w.ReservedBlocks = p.ReservedBlocks;
+                var selected = View(ref p, ref w, p.ReadUInt32(mount, 16), AmigaSmartFileSystemCore.DosType, w.Meta);
+                if (selected.IsNull) { w.Buffered = buffered; w.Batch = batch; return false; }
+                RootFields(ref p, ref w, selected);
+                w.OriginalBitmap = 0; w.OriginalBitmapImage = 0; w.OriginalBitmapWordOffset = -1;
+                w.JournalWrapped = true;
+            }
+            else if (!Prepare(ref p, ref w)) { w.Buffered = buffered; w.Batch = batch; return false; }
             SaveTrstGroupRoots(ref p, group, ref w);
             var root = View(ref p, ref w, w.RootContainer, ObjectId, w.Meta);
             if (root.IsNull) { w.Buffered = buffered; w.Batch = batch; return false; }
             p.WriteUInt32(group, 60, p.ReadUInt32(root, (int)bytes - 28));
         }
         else LoadTrstGroupRoots(ref p, group, ref w);
-        if (pending && p.ReadUInt32(group, TrstGroupContinuation) != 0)
+        if (operation == TrstOperation.Write && pending && p.ReadUInt32(group, TrstGroupContinuation) != 0)
         {
             var continued = ContinueTrstWrite(ref p, ref w, ref r, group, active, out var handled);
             if (!continued || handled)
@@ -139,7 +176,19 @@ public static partial class AmigaSmartFileSystemWriteCore
         }
         p.WriteUInt32(group, TrstGroupContinuation, 0);
         p.WriteUInt32(group, TrstGroupProof, 0);
-        var prepared = pending
+        if (operation != TrstOperation.Write) p.WriteUInt32(group, TrstGroupObjectHint, 0);
+        if (pending && pooled && (operation == TrstOperation.SetDate || operation == TrstOperation.SetProtection))
+        {
+            var updated = TryUpdateAcceptedAttribute(ref p, ref w, ref r, active, operation, out var handled);
+            if (handled)
+            {
+                w.Buffered = buffered; w.Batch = batch;
+                return updated;
+            }
+        }
+        var prepared = true;
+        if (pooled) SfsSharedImagePool.Begin(ref p, active, next, pending);
+        else prepared = pending
             ? AmigaSmartFileSystemRedoArena.Clone(ref p, active, next, p.ReadUInt32(group, 12))
             : AmigaSmartFileSystemRedoArena.Initialize(ref p, next, p.ReadUInt32(group, 12), bytes);
         if (!prepared)
@@ -149,9 +198,27 @@ public static partial class AmigaSmartFileSystemWriteCore
         { p.RedoOverlay = pending ? active : APTR.Null; w.Buffered = buffered; w.Batch = batch; return Fail(ref w, DOS.Error.ActionNotKnown); }
         var original = r;
         w.RedoStaging = true; w.RedoCheckpoint = pending ? active : APTR.Null;
-        w.TrstObjectHint = APTR.FromPointer(group.Raw + TrstGroupObjectHint);
-        w.TrstContinuation = APTR.FromPointer(group.Raw + TrstGroupContinuation);
-        var success = Write(ref p, ref w, ref r, out var written);
+        if (operation == TrstOperation.Write)
+        {
+            w.TrstObjectHint = APTR.FromPointer(group.Raw + TrstGroupObjectHint);
+            w.TrstContinuation = APTR.FromPointer(group.Raw + TrstGroupContinuation);
+        }
+        uint written = 0;
+        var success = operation switch
+        {
+            TrstOperation.Write => Write(ref p, ref w, ref r, out written),
+            TrstOperation.CreateFile => Create(ref p, ref w, ref r, false),
+            TrstOperation.CreateDirectory => Create(ref p, ref w, ref r, true),
+            TrstOperation.Remove => Remove(ref p, ref w, r.Node),
+            TrstOperation.Rename => Rename(ref p, ref w, ref r),
+            TrstOperation.Resize => Resize(ref p, ref w, r.Node, r.Position),
+            TrstOperation.Truncate => Truncate(ref p, ref w, r.Node),
+            TrstOperation.SetProtection => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetProtection),
+            TrstOperation.SetComment => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetComment),
+            TrstOperation.SetDate => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate),
+            TrstOperation.ReplaceFile => ReplaceFile(ref p, ref w, ref r),
+            _ => false
+        };
         w.TrstObjectHint = APTR.Null; w.TrstContinuation = APTR.Null;
         w.RedoStaging = false; w.RedoCheckpoint = APTR.Null;
         if (p.ReadUInt32(next, 12) != 0) success = Fail(ref w, DOS.Error.NoFreeStore);
@@ -179,14 +246,43 @@ public static partial class AmigaSmartFileSystemWriteCore
         {
             p.WriteUInt32(group, TrstGroupObjectHint, 0);
             p.WriteUInt32(group, TrstGroupContinuation, 0);
+            if (pooled)
+            {
+                if (!pending) p.WriteUInt32(next, 0, 0);
+                SfsSharedImagePool.Finish(ref p, pending ? active : next);
+            }
             r = original; p.RedoOverlay = pending ? active : APTR.Null;
+            LoadTrstGroupRoots(ref p, group, ref w);
             return false;
         }
+        if (pooled) SfsSharedImagePool.Finish(ref p, next);
+        SaveTrstGroupRoots(ref p, group, ref w);
         p.WriteUInt32(group, 16, next.Raw); p.WriteUInt32(group, 20, active.Raw);
         var dirty = p.ReadUInt32(next) != 0;
         p.WriteUInt32(group, 4, dirty ? 1u : 0u);
         p.RedoOverlay = dirty ? next : APTR.Null;
         actual = written;
+        return true;
+    }
+
+    // An existing accepted object slot already has space reserved in the
+    // journal. A date/protection update cannot change roots, allocations, or
+    // record length. Validate everything before the two non-failing stores.
+    private static bool TryUpdateAcceptedAttribute<T>(ref T p, ref Work w, ref Request r, APTR active,
+        TrstOperation operation, out bool handled) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        handled = true;
+        var date = operation == TrstOperation.SetDate;
+        if (date && !p.IsMapped(r.Buffer, 12)) return Fail(ref w, DOS.Error.BadNumber);
+        var image = ObjectView(ref p, ref w, r.Node, w.Meta, out var at);
+        if (image.IsNull) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (!AttributeValue(ref p, ref w, ref r, date, out var field, out var value)) return false;
+        if (p.ReadUInt32(image, at + field) == value) return true;
+        var block = p.ReadUInt32(image, 8);
+        var owned = SfsSharedImagePool.Find(ref p, active, block);
+        if (block < w.ReservedBlocks || block >= w.BlockCount - 1 || owned != image)
+        { handled = false; return true; }
+        ReplaceWord(ref p, image, at + field, value);
         return true;
     }
 
@@ -234,8 +330,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         var stride = w.BlockBytes + AmigaSmartFileSystemRedoArena.SlotHeaderBytes;
         var slot = APTR.FromPointer(p.ReadUInt32(arena, 20));
         var bitmapCount = 0u;
-        for (var i = 0u; i < count; i++, slot = APTR.FromPointer(slot.Raw + stride))
-            if (p.ReadUInt32(slot, (int)AmigaSmartFileSystemRedoArena.SlotHeaderBytes) == BitmapId) bitmapCount++;
+        for (var i = 0u; i < count; i++)
+            if (p.ReadUInt32(AmigaSmartFileSystemRedoArena.SlotAt(ref p, arena, i), (int)AmigaSmartFileSystemRedoArena.SlotHeaderBytes) == BitmapId) bitmapCount++;
         var unavailable = bitmapCount * ((w.BlockBytes - 12) * 8) + count;
         var originalFree = p.ReadUInt32(group, 60);
         if (originalFree >= unavailable && originalFree - unavailable >= pages)
@@ -272,8 +368,9 @@ public static partial class AmigaSmartFileSystemWriteCore
         var maps = (w.BlockCount - 1) / ((w.BlockBytes - 12) * 8) + 1;
         var overlay = p.RedoOverlay;
         p.RedoOverlay = APTR.Null;
-        for (var i = 0u; i < count; i++, slot += w.BlockBytes + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)
+        for (var i = 0u; i < count; i++)
         {
+            slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, arena, i).Raw;
             var image = APTR.FromPointer(slot + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
             if (p.ReadUInt32(image) != BitmapId) continue;
             // File payload can begin with BTMP too. Only actual allocation
@@ -318,7 +415,12 @@ public static partial class AmigaSmartFileSystemWriteCore
         p.WriteUInt32(group, 4, 3);
         var success = CommitTrst(ref p, ref w, ref staged);
         w.Buffered = buffered; w.Batch = batch;
-        if (!success) { p.RedoOverlay = active; return false; }
+        if (!success)
+        {
+            var mount = p.SfsMountStorage;
+            if (mount.IsNotNull) p.WriteUInt32(mount, 0, 0);
+            p.RedoOverlay = active; return false;
+        }
         p.WriteUInt32(group, 4, 0);
         p.WriteUInt32(group, TrstGroupObjectHint, 0);
         return true;

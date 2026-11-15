@@ -20,6 +20,9 @@ public static class AmigaSmartFileSystemRedoArena
     public static bool Materialize<T>(ref T p, APTR arena) where T : struct, IAmigaGuestMemory
     {
         var format = p.ReadUInt32(arena, 8);
+        if ((format & SfsSharedImagePool.Format) != 0)
+            return (format & Deferred) == 0 && p.ReadUInt32(arena, 12) <= 1 ||
+                AmigaSmartFileSystemWriteCore.MaterializeTrstRun(ref p, arena, APTR.FromPointer(p.ReadUInt32(arena, 24)));
         if ((format & Indexed) == 0) return (format & Deferred) == 0;
         var owner = p.ReadUInt32(arena, 12);
         return owner <= 1 && (format & Deferred) == 0 ||
@@ -114,6 +117,10 @@ public static class AmigaSmartFileSystemRedoArena
         return true;
     }
 
+    internal static APTR SlotAt<T>(ref T p, APTR arena, uint index) where T : struct, IAmigaGuestMemory
+        => SfsSharedImagePool.IsPool(ref p, arena) ? SfsSharedImagePool.SlotAt(ref p, arena, index) :
+            APTR.FromPointer(p.ReadUInt32(arena, 20) + index * ((p.ReadUInt32(arena, 8) & ~(Indexed | Deferred)) + SlotHeaderBytes));
+
     private static APTR Probe<T>(ref T p, APTR arena, uint block) where T : struct, IAmigaGuestMemory
     {
         var mask = p.ReadUInt32(arena, 16);
@@ -136,6 +143,17 @@ public static class AmigaSmartFileSystemRedoArena
         bool editable, out bool found) where T : struct, IAmigaFileSystemPlatform
     {
         var format = p.ReadUInt32(arena, 8);
+        if ((format & SfsSharedImagePool.Format) != 0)
+        {
+            if (((format & Deferred) != 0 || p.ReadUInt32(arena, 12) > 1) && !Materialize(ref p, arena)) { found = true; return APTR.Null; }
+            return SfsSharedImagePool.View(ref p, arena, block, id, editable, out found);
+        }
+        if (Sfs2MetadataStore.IsStore(ref p, arena))
+        {
+            var view = Sfs2MetadataStore.View(ref p, arena, block, id, out found);
+            if (editable && view.IsNotNull) p.WriteUInt32(APTR.FromPointer(view.Raw - Sfs2MetadataStore.SlotBytes), 4, 0);
+            return view;
+        }
         if ((format & Deferred) != 0 || ((format & Indexed) != 0 && p.ReadUInt32(arena, 12) > 1))
         {
             if (!Materialize(ref p, arena)) { found = true; return APTR.Null; }
@@ -168,6 +186,12 @@ public static class AmigaSmartFileSystemRedoArena
     public static bool TryFind<T>(ref T p, APTR arena, uint block, out APTR image) where T : struct, IAmigaGuestMemory
     {
         var format = p.ReadUInt32(arena, 8);
+        if ((format & SfsSharedImagePool.Format) != 0)
+        {
+            if (((format & Deferred) != 0 || p.ReadUInt32(arena, 12) > 1) && !Materialize(ref p, arena)) { image = APTR.Null; return false; }
+            image = SfsSharedImagePool.Find(ref p, arena, block); return true;
+        }
+        if (Sfs2MetadataStore.IsStore(ref p, arena)) return Sfs2MetadataStore.RawView(ref p, arena, block, out image);
         if ((format & Deferred) != 0 || ((format & Indexed) != 0 && p.ReadUInt32(arena, 12) > 1))
         {
             if (!Materialize(ref p, arena)) { image = APTR.Null; return false; }
@@ -226,6 +250,10 @@ public static class AmigaSmartFileSystemRedoArena
     internal static bool StoreImage<T>(ref T p, APTR arena, uint block, APTR source, uint verifiedId) where T : struct, IAmigaGuestMemory
     {
         var format = p.ReadUInt32(arena, 8);
+        if ((format & SfsSharedImagePool.Format) != 0)
+            return ((format & Deferred) == 0 && p.ReadUInt32(arena, 12) <= 1 || Materialize(ref p, arena)) &&
+                SfsSharedImagePool.Store(ref p, arena, block, source, verifiedId);
+        if (Sfs2MetadataStore.IsStore(ref p, arena)) return Sfs2MetadataStore.Store(ref p, arena, block, source, verifiedId);
         if ((format & Deferred) != 0 || ((format & Indexed) != 0 && p.ReadUInt32(arena, 12) > 1))
         {
             if (!Materialize(ref p, arena)) return false;

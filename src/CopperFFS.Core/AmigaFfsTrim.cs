@@ -14,6 +14,40 @@ public static partial class AmigaFfsWriteCore
     // Revalidate durable allocation each turn. Window bounds discard, not preflight.
     public static bool TrimWindow<T>(ref T p, ref Work w, APTR control, uint flags,
         out AmigaSmartFileSystemWriteCore.TrimResult result, uint startBlock, uint blockCount, APTR validation = default) where T : struct, IAmigaDiscardFileSystemPlatform
+    => TrimWindowCore(ref p, ref w, control, flags, out result, startBlock, blockCount, validation, false);
+
+    /// <summary>Only for hints emitted by validated allocation mutations. Holds
+    /// mount ownership through recovery, durable commit, current-bitmap validation
+    /// and discard. Hints may be stale or rolled back; allocated blocks are skipped.</summary>
+    public static bool TrimFreedRange<T>(ref T p, ref Work w, APTR control,
+        uint startBlock, uint blockCount, out AmigaSmartFileSystemWriteCore.TrimResult result)
+        where T : struct, IAmigaDiscardFileSystemPlatform =>
+        TrimWindowCore(ref p, ref w, control, 0, out result, startBlock, blockCount, APTR.Null, true);
+
+    /// <summary>Batch of trusted unallocation hints (pairs of first/count).
+    /// One durable gate precedes all discards. The owner must exclude every other
+    /// mount operation for the complete call; batch storage must not alias scratch.</summary>
+    public static bool TrimFreedBatch<T>(ref T p, ref Work w, APTR control,
+        APTR batch, uint ranges, out AmigaSmartFileSystemWriteCore.TrimResult result) where T : struct, IAmigaDiscardFileSystemPlatform
+    {
+        result = default;
+        if (ranges == 0) return true;
+        if (ranges > AmigaFreedRangeQueue.Capacity || !p.IsMapped(batch, ranges * 8))
+            return Fail(ref w, DOS.Error.BadNumber);
+        for (var i = 0u; i < ranges; i++)
+        {
+            var first = p.ReadUInt32(batch, (int)i * 8);
+            var count = p.ReadUInt32(batch, (int)i * 8 + 4);
+            var ok = TrimWindowCore(ref p, ref w, control, 0, out var part,
+                first, count, APTR.Null, true, i != 0);
+            result.Limits = part.Limits; result.Blocks += part.Blocks; result.Ranges += part.Ranges;
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    private static bool TrimWindowCore<T>(ref T p, ref Work w, APTR control, uint flags,
+        out AmigaSmartFileSystemWriteCore.TrimResult result, uint startBlock, uint blockCount, APTR validation, bool tracked, bool committed = false) where T : struct, IAmigaDiscardFileSystemPlatform
     {
         result = default; w.Error = DOS.Error.None;
         if (flags > AmigaSmartFileSystemTrimPacket.QueryOnly) return Fail(ref w, DOS.Error.BadNumber);
@@ -21,14 +55,14 @@ public static partial class AmigaFfsWriteCore
             return Fail(ref w, DOS.Error.DiskNotValidated);
         // Automatic discovery on an unsupported device must not evict a useful
         // cache page just to read the boot block. Keep manual packet ordering.
-        if (validation.IsNull)
+        if (validation.IsNull && !tracked)
         {
             if (!p.ReadBlock(0, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
             if (p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301)) return Fail(ref w, DOS.Error.ActionNotKnown);
         }
         if (!p.QueryDiscard(control, out result.Limits)) return Fail(ref w, DOS.Error.ActionNotKnown);
         if (!result.Limits.Valid) return Fail(ref w, DOS.Error.BadNumber);
-        if (validation.IsNotNull)
+        if (validation.IsNotNull || tracked)
         {
             if (!p.ReadBlock(0, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
             if (p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301)) return Fail(ref w, DOS.Error.ActionNotKnown);
@@ -40,9 +74,24 @@ public static partial class AmigaFfsWriteCore
         // Flush all acknowledged writes, including the valid root, before trusting
         // allocation. A failed barrier or preflight authorizes no discard.
         var validated = AmigaTrimValidation.Current(ref p, validation);
-        if (!validated && !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (!validated && !TrimLayout(ref p, ref w)) return false;
-        if (!Prepare(ref p, ref w, 0, scan: !validated)) return false;
+        if (!committed && !validated && !p.Flush())
+        {
+            AmigaFfsMountIndex.Forget(ref p, w.Index);
+            return Fail(ref w, DOS.Error.DiskNotValidated);
+        }
+        var directory = w.Index;
+        if (!validated && !tracked && directory.IsNotNull)
+        {
+            var geometry = AmigaFfsGeometry.Read(ref p);
+            AmigaFfsMountIndex.Forget(ref p, directory);
+            if (!LoadDosType(ref p, ref w) || !Header(ref p, ref w, geometry.RootBlock) || p.ReadUInt32(w.Meta, geometry.Tail + 312) != uint.MaxValue ||
+                !AmigaFfsMountIndex.Build(ref p, directory, w.Meta, w.Bitmap, in geometry, w.DosType))
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            validated = p.ReadUInt32(directory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean;
+        }
+        if (!validated && !tracked && !TrimLayout(ref p, ref w)) return false;
+        if (tracked && !TrimTrackedLayout(ref p, ref w, startBlock, blockCount)) return false;
+        if (!Prepare(ref p, ref w, 0, scan: !validated && !tracked)) return false;
         AmigaTrimValidation.Complete(ref p, validation);
         var g = AmigaFfsGeometry.Read(ref p);
         var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
@@ -57,8 +106,12 @@ public static partial class AmigaFfsWriteCore
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             var count = g.BlockCount - first;
             if (count > g.BitmapBits) count = g.BitmapBits;
-            for (var bit = 0u; bit < count; bit++)
+            // The next tracked range may use IsFree/LoadBitmap. Keep the cached
+            // identity in sync with the page we just loaded into that scratch.
+            w.BitmapBlock = map; w.BitmapFirst = first; w.BitmapCount = count; w.BitmapDirty = 0;
+            for (var bit = startBlock > first ? startBlock - first : 0; bit < count; bit++)
             {
+                if (first + bit >= startBlock && first + bit - startBlock >= blockCount) break;
                 var free = (p.ReadUInt32(w.Bitmap, 4 + (int)(bit / 32) * 4) & (1u << (int)(bit % 32))) != 0;
                 if (free) { if (length == 0) run = first + bit; length++; }
                 else if (length != 0)
@@ -70,6 +123,46 @@ public static partial class AmigaFfsWriteCore
             first += count;
         }
         return length == 0 || TrimRange(ref p, ref w, control, run, length, flags, ref result, startBlock, blockCount);
+    }
+
+    // Validate pointer layout relevant to a tracked range without reading the
+    // allocation contents of unrelated bitmap pages. Check aliases of touched
+    // pages and protect every permanent bitmap/extension key from stale hints.
+    private static bool TrimTrackedLayout<T>(ref T p, ref Work w, uint first, uint count)
+        where T : struct, IAmigaDiscardFileSystemPlatform
+    {
+        var g = AmigaFfsGeometry.Read(ref p);
+        if (count == 0 || first < g.ReservedBlocks || first >= g.BlockCount || count > g.BlockCount - first)
+            return Fail(ref w, DOS.Error.BadNumber);
+        if (g.RootBlock >= first && g.RootBlock - first < count) return Fail(ref w, DOS.Error.DiskNotValidated);
+        var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
+        var begin = (first - g.ReservedBlocks) / g.BitmapBits;
+        var end = (first + count - 1 - g.ReservedBlocks) / g.BitmapBits;
+        for (var touched = begin; touched <= end; touched++)
+        {
+            var lookup = new AmigaDiskFileSystemCore.BitmapCursor();
+            if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref lookup, touched, w.Meta, out var page))
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (IsFree(ref p, ref w, page) || w.Error != DOS.Error.None)
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
+            for (var index = 0u; index < maps; index++)
+            {
+                if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref cursor, index, w.Meta, out var other) ||
+                    (index != touched && other == page) || (other >= first && other - first < count))
+                    return Fail(ref w, DOS.Error.DiskNotValidated);
+            }
+        }
+        if (!Header(ref p, ref w, g.RootBlock)) return false;
+        var extension = p.ReadUInt32(w.Meta, g.Tail + 416);
+        for (var guard = 0u; extension != 0; guard++)
+        {
+            if (guard >= maps || extension < g.ReservedBlocks || extension >= g.BlockCount ||
+                extension == g.RootBlock || (extension >= first && extension - first < count) ||
+                !p.ReadBlock(extension, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            extension = p.ReadUInt32(w.Data, (int)g.BlockBytes - 4);
+        }
+        return true;
     }
 
     private static bool TrimLayout<T>(ref T p, ref Work w) where T : struct, IAmigaDiscardFileSystemPlatform

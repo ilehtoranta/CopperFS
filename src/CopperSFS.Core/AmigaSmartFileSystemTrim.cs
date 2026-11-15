@@ -25,6 +25,40 @@ public static partial class AmigaSmartFileSystemWriteCore
     // Revalidate durable allocation each turn. Window bounds discard, not preflight.
     public static bool TrimWindow<T>(ref T p, ref Work w, APTR control, uint flags, out TrimResult result, uint startBlock, uint blockCount, APTR validation = default)
         where T : struct, IAmigaDiscardFileSystemPlatform
+    => TrimWindowCore(ref p, ref w, control, flags, out result, startBlock, blockCount, validation, false);
+
+    /// <summary>Only for hints emitted by validated allocation mutations. Holds
+    /// mount ownership through recovery, durable commit, current-bitmap validation
+    /// and discard. Hints may be stale or rolled back; allocated blocks are skipped.</summary>
+    public static bool TrimFreedRange<T>(ref T p, ref Work w, APTR control,
+        uint startBlock, uint blockCount, out TrimResult result)
+        where T : struct, IAmigaDiscardFileSystemPlatform =>
+        TrimWindowCore(ref p, ref w, control, 0, out result, startBlock, blockCount, APTR.Null, true);
+
+    /// <summary>Batch of trusted unallocation hints (pairs of first/count).
+    /// One durable gate precedes all discards. The owner must exclude every other
+    /// mount operation for the complete call; batch storage must not alias scratch.</summary>
+    public static bool TrimFreedBatch<T>(ref T p, ref Work w, APTR control,
+        APTR batch, uint ranges, out TrimResult result) where T : struct, IAmigaDiscardFileSystemPlatform
+    {
+        result = default;
+        if (ranges == 0) return true;
+        if (ranges > AmigaFreedRangeQueue.Capacity || !p.IsMapped(batch, ranges * 8))
+            return Fail(ref w, DOS.Error.BadNumber);
+        for (var i = 0u; i < ranges; i++)
+        {
+            var first = p.ReadUInt32(batch, (int)i * 8);
+            var count = p.ReadUInt32(batch, (int)i * 8 + 4);
+            var ok = TrimWindowCore(ref p, ref w, control, 0, out var part,
+                first, count, APTR.Null, true, i != 0);
+            result.Limits = part.Limits; result.Blocks += part.Blocks; result.Ranges += part.Ranges;
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    private static bool TrimWindowCore<T>(ref T p, ref Work w, APTR control, uint flags, out TrimResult result, uint startBlock, uint blockCount, APTR validation, bool tracked, bool committed = false)
+        where T : struct, IAmigaDiscardFileSystemPlatform
     {
         result = default; w.Error = DOS.Error.None;
         if (flags > AmigaSmartFileSystemTrimPacket.QueryOnly)
@@ -34,7 +68,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (flags == AmigaSmartFileSystemTrimPacket.QueryOnly) return true;
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
 
-        if (!AmigaTrimValidation.Current(ref p, validation))
+        if (!committed && !AmigaTrimValidation.Current(ref p, validation))
         {
             if (!Recover(ref p, ref w) || !Flush(ref p, ref w) || !Prepare(ref p, ref w)) return false;
             if (!p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -42,7 +76,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         else
         {
             if (!Prepare(ref p, ref w)) return false;
-            if (!AmigaTrimValidation.Current(ref p, validation) && !p.Flush())
+            if (!committed && !AmigaTrimValidation.Current(ref p, validation) && !p.Flush())
                 return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         if (w.BlockBytes < 512 || w.BlockBytes > uint.MaxValue / 8 ||
@@ -62,10 +96,11 @@ public static partial class AmigaSmartFileSystemWriteCore
             // known permanent metadata as well as checksums and own-block numbers.
             // The mounted allocator and this scan share the bitmap's allocation
             // semantics; neither treats a checksum as a full filesystem fsck.
-            for (var map = 0u; map < maps; map++)
+            for (var map = tracked ? startBlock / bits : 0u; map < maps; map++)
             {
-                if (!Read(ref p, ref w, w.BitmapBase + map, BitmapId, w.Bitmap)) return false;
                 var first = map * bits;
+                if (tracked && first >= startBlock && first - startBlock >= blockCount) break;
+                if (!Read(ref p, ref w, w.BitmapBase + map, BitmapId, w.Bitmap)) return false;
                 var remaining = w.BlockCount - first;
                 var count = remaining < bits ? remaining : bits;
                 if (!TrimCheckAllocated(ref p, ref w, first, count, w.RootContainer) ||
@@ -91,8 +126,10 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (!Read(ref p, ref w, w.BitmapBase + map, BitmapId, w.Bitmap)) return false;
             var remaining = w.BlockCount - first;
             var count = remaining < bits ? remaining : bits;
-            for (var wordIndex = 0u; wordIndex < count; wordIndex += 32)
+            var wordStart = startBlock > first ? (startBlock - first) & ~31u : 0;
+            for (var wordIndex = wordStart; wordIndex < count; wordIndex += 32)
             {
+                if (first + wordIndex >= startBlock && first + wordIndex - startBlock >= blockCount) break;
                 var word = p.ReadUInt32(w.Bitmap, 12 + (int)(wordIndex / 32) * 4);
                 var wordBits = count - wordIndex < 32 ? count - wordIndex : 32;
                 var wordBlock = first + wordIndex;

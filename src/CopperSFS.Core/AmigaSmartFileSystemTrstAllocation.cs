@@ -46,9 +46,11 @@ public static partial class AmigaSmartFileSystemWriteCore
         // The current candidate arena contains every accepted checkpoint slot.
         var bits = (w.BlockBytes - 12) * 8;
         var slots = p.ReadUInt32(overlay);
-        var slot = p.ReadUInt32(overlay, 20);
-        for (var i = 0u; i < slots; i++, slot += w.BlockBytes + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)
-            ClearSearchBit(ref p, w.Bitmap, mapIndex, bits, p.ReadUInt32(APTR.FromPointer(slot)));
+        for (var i = 0u; i < slots; i++)
+        {
+            var slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, overlay, i);
+            ClearSearchBit(ref p, w.Bitmap, mapIndex, bits, p.ReadUInt32(slot));
+        }
         return w.Bitmap;
     }
 }

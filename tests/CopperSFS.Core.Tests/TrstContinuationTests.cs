@@ -44,10 +44,10 @@ public sealed partial class AmigaSmartFileSystemTests
         return (image, contents, used);
     }
 
-    private static Disk StageContinuation(byte[] image, byte[] expected, int writeBytes = 1024, bool scratchView = false)
+    private static Disk StageContinuation(byte[] image, byte[] expected, int writeBytes = 1024, bool scratchView = false, bool shared = false)
     {
         var disk = new Disk(image.ToArray()) { Buffered = true, CheckReadOnlyViews = true, ReturnScratchMetadataViews = scratchView };
-        Assert.True(AmigaSmartFileSystemWriteCore.InitializeTrstGroup(ref disk, GroupAddress, 192 * 1024));
+        Assert.True(shared ? AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref disk, GroupAddress, 9756) : AmigaSmartFileSystemWriteCore.InitializeTrstGroup(ref disk, GroupAddress, 192 * 1024));
         for (var i = 0; i < 2; i++)
         {
             var payload = Enumerable.Repeat((byte)(0xA1 + i), writeBytes).ToArray();

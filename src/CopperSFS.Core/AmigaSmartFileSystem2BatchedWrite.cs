@@ -255,18 +255,19 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool MarkDataRun<T>(ref T p, ref Work w, uint first, uint count)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        if (w.RedoStaging && p.Sfs2Context.IsNotNull) return ChangeOwnedAllocationRun(ref p, ref w, first, count, false);
         if (!BitmapPosition(ref p, ref w, first, out var map, out _, out _) ||
-            !Read(ref p, ref w, map, BitmapId, w.Bitmap)) return false;
+            !EditMetadata(ref p, ref w, map, BitmapId, w.Bitmap, out var edit)) return false;
         var bits = (p.BlockBytes - 12) * 8;
-        if (count == 0 || count > bits - first % bits) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (count == 0 || count > bits - first % bits) return RejectMetadata(ref p, ref w, ref edit);
         for (var i = 0u; i < count; i++)
         {
             var bit = (first + i) % bits; var offset = 12 + (int)(bit / 32) * 4; var mask = 1u << (int)(31 - bit % 32);
-            var word = p.ReadUInt32(w.Bitmap, offset);
-            if ((word & mask) == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
-            p.WriteUInt32(w.Bitmap, offset, word & ~mask);
+            var word = p.ReadUInt32(edit.Image, offset);
+            if ((word & mask) == 0) return RejectMetadata(ref p, ref w, ref edit);
+            p.WriteUInt32(edit.Image, offset, word & ~mask);
         }
-        if (!Put(ref p, ref w, map, w.Bitmap)) return false;
+        if (!PublishMetadata(ref p, ref w, map, ref edit)) return false;
         w.FreeDelta -= (int)count;
         return true;
     }

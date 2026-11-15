@@ -14,6 +14,9 @@ public static partial class AmigaSmartFileSystemWriteCore
     {
         var sum = 0u;
         for (var at = 0; at < 76; at += 4) sum = unchecked(sum + p.ReadUInt32(proof, at));
+        var group = APTR.FromPointer(proof.Raw - TrstGroupProof);
+        if (p.ReadUInt32(group, 12) == 0)
+            for (var at = 232; at <= 240; at += 4) sum = unchecked(sum + p.ReadUInt32(group, at));
         return sum == uint.MaxValue;
     }
 
@@ -26,7 +29,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         p.WriteUInt32(proof, 0, 0);
         var bits = (w.BlockBytes - 12) * 8;
         var sourceBit = tail % bits; var destinationBit = destination % bits;
-        var limit = p.ReadUInt32(hint, 12) - 1;
+        var limit = p.ReadUInt32(hint, 12);
+        // The shared pool can unlink the last extent from its owned leaf.
+        // Other layouts still leave a nonempty tail for ordinary relocation.
+        if (p.ReadUInt32(hint, 24) != 0 || !SfsSharedImagePool.IsPool(ref p, active)) limit--;
         var maximum = ushort.MaxValue - p.ReadUInt32(hint, 20);
         if (limit > maximum) limit = maximum;
         if (limit > bits - sourceBit) limit = bits - sourceBit;
@@ -52,8 +58,9 @@ public static partial class AmigaSmartFileSystemWriteCore
         var slots = p.ReadUInt32(active); var slotBase = p.ReadUInt32(active, 20);
         var stride = w.BlockBytes + AmigaSmartFileSystemRedoArena.SlotHeaderBytes;
         var slot = slotBase;
-        for (var i = 0u; i < slots; i++, slot += stride)
+        for (var i = 0u; i < slots; i++)
         {
+            slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, active, i).Raw;
             var target = p.ReadUInt32(APTR.FromPointer(slot));
             if (target >= destination && target - destination < limit) limit = target - destination;
         }
@@ -80,9 +87,12 @@ public static partial class AmigaSmartFileSystemWriteCore
         p.WriteUInt32(proof, 4, p.ReadUInt32(group, 60));
         p.WriteUInt32(proof, 8, slots); p.WriteUInt32(proof, 12, tail);
         p.WriteUInt32(proof, 16, destination); p.WriteUInt32(proof, 20, free);
-        p.WriteUInt32(proof, 24, (leaf.Raw - AmigaSmartFileSystemRedoArena.SlotHeaderBytes - slotBase) / stride);
-        p.WriteUInt32(proof, 28, (oldBitmap.Raw - AmigaSmartFileSystemRedoArena.SlotHeaderBytes - slotBase) / stride);
-        p.WriteUInt32(proof, 32, (newBitmap.Raw - AmigaSmartFileSystemRedoArena.SlotHeaderBytes - slotBase) / stride);
+        p.WriteUInt32(proof, 24, SfsSharedImagePool.IsPool(ref p, active) ? SfsSharedImagePool.PhysicalIndex(ref p, active, leaf) :
+            (leaf.Raw - AmigaSmartFileSystemRedoArena.SlotHeaderBytes - slotBase) / stride);
+        p.WriteUInt32(proof, 28, SfsSharedImagePool.IsPool(ref p, active) ? SfsSharedImagePool.PhysicalIndex(ref p, active, oldBitmap) :
+            (oldBitmap.Raw - AmigaSmartFileSystemRedoArena.SlotHeaderBytes - slotBase) / stride);
+        p.WriteUInt32(proof, 32, SfsSharedImagePool.IsPool(ref p, active) ? SfsSharedImagePool.PhysicalIndex(ref p, active, newBitmap) :
+            (newBitmap.Raw - AmigaSmartFileSystemRedoArena.SlotHeaderBytes - slotBase) / stride);
         p.WriteUInt32(proof, 36, p.ReadUInt32(hint, 32));
         p.WriteUInt32(proof, 40, p.ReadUInt32(hint, 36));
         p.WriteUInt32(proof, 44, p.ReadUInt32(hint, 24) == 0 ? 0 : p.ReadUInt32(hint, 40));
@@ -90,9 +100,45 @@ public static partial class AmigaSmartFileSystemWriteCore
         p.WriteUInt32(proof, 56, oldMap); p.WriteUInt32(proof, 60, newMap);
         p.WriteUInt32(proof, 64, sourceBit); p.WriteUInt32(proof, 68, destinationBit);
         var sum = active.Raw;
+        if (SfsSharedImagePool.IsPool(ref p, active))
+        {
+            p.WriteUInt32(group, 232, p.ReadUInt32(APTR.FromPointer(leaf.Raw - 12)));
+            p.WriteUInt32(group, 236, p.ReadUInt32(APTR.FromPointer(oldBitmap.Raw - 12)));
+            p.WriteUInt32(group, 240, p.ReadUInt32(APTR.FromPointer(newBitmap.Raw - 12)));
+            for (var at = 232; at <= 240; at += 4) sum = unchecked(sum + p.ReadUInt32(group, at));
+        }
         for (var at = 4; at < 72; at += 4) sum = unchecked(sum + p.ReadUInt32(proof, at));
         p.WriteUInt32(proof, 72, ~sum); p.WriteUInt32(proof, 0, active.Raw);
         ready = true; return true;
+    }
+
+    // Pool references bind physical indices and revisions; arena indices keep
+    // their established interpretation. Layout validation precedes pool access.
+    private static APTR TrstProofImage<T>(ref T p, APTR group, APTR view, int field, uint block, uint id, bool raw = false)
+        where T : struct, IAmigaGuestMemory
+    {
+        var index = p.ReadUInt32(group, TrstGroupProof + field);
+        if (SfsSharedImagePool.IsPool(ref p, view))
+            return SfsSharedImagePool.ProofImage(ref p, view, index, p.ReadUInt32(group, 232 + field - 24), block, id);
+        return raw ? AmigaSmartFileSystemRedoArena.OwnedMetadataAtRaw(ref p, view, index, block, id) :
+            AmigaSmartFileSystemRedoArena.OwnedMetadataAt(ref p, view, index, block, id);
+    }
+
+    private static bool TrstPoolProofOwned<T>(ref T p, APTR group, APTR view) where T : struct, IAmigaGuestMemory
+    {
+        var proof = APTR.FromPointer(group.Raw + TrstGroupProof);
+        if (!TrstProofSealed(ref p, proof) ||
+            SfsSharedImagePool.ProofImage(ref p, view, p.ReadUInt32(proof, 24), p.ReadUInt32(group, 232),
+                p.ReadUInt32(group, TrstGroupContinuation + 28), TreeId).IsNull) return false;
+        var index = p.ReadUInt32(proof, 28);
+        var revision = p.ReadUInt32(group, 236);
+        var block = p.ReadUInt32(proof, 56);
+        if (SfsSharedImagePool.ProofImage(ref p, view, index, revision, block, BitmapId).IsNull) return false;
+        var destinationIndex = p.ReadUInt32(proof, 32);
+        var destinationRevision = p.ReadUInt32(group, 240);
+        var destinationBlock = p.ReadUInt32(proof, 60);
+        return (index == destinationIndex && revision == destinationRevision && block == destinationBlock) ||
+            SfsSharedImagePool.ProofImage(ref p, view, destinationIndex, destinationRevision, destinationBlock, BitmapId).IsNotNull;
     }
 
     private static uint TrstFreeSpan<T>(ref T p, APTR bitmap, uint bit, uint limit, bool free = true)
