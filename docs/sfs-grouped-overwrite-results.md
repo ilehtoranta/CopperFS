@@ -76,3 +76,18 @@ In the instruction profile the new growth commit took 381,590 cycles out of 1,08
 A separate tree-descent prototype borrowed the current image until the first edit. It reduced the Fast total to 5,933,823 cycles and growth to 1,072,610, but overwrite rose to 566,830 cycles. Chip overwrite also rose, to 569,400. It remains experimental. Hoisting shared-pool geometry checks also increased Fast overwrite to 555,463 and total to 5,957,223. A compiler-only experiment applying scalar replacement and inlining to 23 portable methods on top of 9d6c8c4 measured 553,183 Fast overwrite cycles and 5,960,147 total. The ordinary comparisons are in artifacts/sfs-borrow-tree, artifacts/sfs-proof-geometry and artifacts/sfs-core-continuation-on respectively.
 
 The Release solution build succeeded with one compiler dependency warning. The solution tests passed 2,177 cases with five conditional skips. Both standalone builds succeeded and the two CopperStart native replay suites passed 186 and 77 cases. Kickstart 3.1 runs passed grouped power cuts and failures, journal and home partial writes, explicit flush and close, original-handler recovery and handoff, foreign startup, TRIM and read placement. Mixed mutation and verification passed the original-handler gate in Fast and Chip RAM. Growth and overwrite remain above the release threshold, so this profile remains opt-in.
+
+### Where the overwrite gap occurs
+
+The host profiler timed each guest DOS call from its library vector to the matching return address and stack pointer. Each of the twelve writes returned 8,192 bytes on all three handlers. These figures are from a single instruction trace per handler; the ordinary timing series above supplies the acceptance measurements.
+
+| Guest call | SFS 1.279 | 9d6c8c4 | 0b3cd3d |
+|---|---:|---:|---:|
+| First write | 23,864 | 156,634 | 155,912 |
+| Second write | 21,347 | 30,481 | 34,941 |
+| Remaining ten writes combined | 227,980 | 220,630 | 211,216 |
+| Close | 26,356 | 14,566 | 14,540 |
+| Explicit flush packet | 14,086 | 123,062 | 124,274 |
+| Complete phase including other guest activity | 324,630 | 556,370 | 551,880 |
+
+The first write accounted for 132,048 excess cycles and explicit flush for 110,188. The last ten writes and close recovered some of that difference. Those two expensive calls are where further reductions can most affect the full workload. The first write opens the replacement extent and the flush makes the accepted group durable. The three profile files are under artifacts/sfs-dos-calls.

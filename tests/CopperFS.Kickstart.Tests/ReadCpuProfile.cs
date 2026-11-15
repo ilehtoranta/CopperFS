@@ -26,6 +26,34 @@ internal sealed class ReadCpuProfile
     private long recognizedMoveBytes;
     private readonly List<object> ioRequests = [];
     private readonly List<object> deviceCalls = [];
+    private readonly List<object> dosCalls = [];
+    private uint dosReturn, dosStack, dosBase;
+    private int dosVector;
+    private long dosStart, dosHandler, dosRom;
+
+    // Observe library-vector entry and the matching guest RTS. No guest
+    // instruction, timer, DMA request or packet is added to either handler.
+    private void ObserveDosCall(uint pc, long cycle)
+    {
+        if (dosReturn != 0)
+        {
+            if (pc != dosReturn || core.State.A[7] != dosStack) return;
+            dosCalls.Add(new { Vector = dosVector, Start = dosStart - start, Cycles = cycle - dosStart,
+                Handler = dosHandler, Kickstart = dosRom, Result = core.State.D[0] });
+            dosReturn = 0;
+        }
+        var library = core.State.A[6];
+        var vector = unchecked((int)(pc - library));
+        if (vector is not (Amiga.DosLvo.Write or Amiga.DosLvo.Close or Amiga.DosLvo.DoPkt or Amiga.DosLvo.DeviceProc)) return;
+        if (dosBase == 0)
+        {
+            if (TaskName(library) != "dos.library") return;
+            dosBase = library;
+        }
+        if (library != dosBase || Memory(core.State.A[7], 4).Length != 4) return;
+        dosReturn = ReadLong(core.State.A[7]); dosStack = core.State.A[7] + 4;
+        dosStart = cycle; dosHandler = dosRom = 0; dosVector = vector;
+    }
     private readonly List<object> copyEntries = [];
     private uint copyEntry;
     private uint blockCopyEntry, blockCopyBytes, blockCopyCaller;
@@ -117,7 +145,7 @@ internal sealed class ReadCpuProfile
         var blockCopy = symbols.FirstOrDefault(s => s.Name.EndsWith("::CopyBlock", StringComparison.Ordinal));
         blockCopyEntry = codeBase + blockCopy.Offset; blockCopyBytes = blockCopy.Size;
         blockCopyCallers.Clear();
-        transactionCalls.Clear(); blockTransfers.Clear(); deviceCalls.Clear();
+        transactionCalls.Clear(); blockTransfers.Clear(); deviceCalls.Clear(); dosCalls.Clear(); dosReturn = dosBase = 0;
         cacheReturn = cacheReturnStack = 0; cacheHits = cacheLookups = 0;
         uint Entry(string method) => codeBase + symbols.FirstOrDefault(s => s.Name.Contains("::" + method + "<") ||
             s.Name.EndsWith("::" + method, StringComparison.Ordinal)).Offset;
@@ -148,7 +176,7 @@ internal sealed class ReadCpuProfile
             RomExecution = romCycles.Select(r => new { Task = r.Key.Task, Name = TaskName(r.Key.Task),
                 InterruptMask = r.Key.Mask, Cycles = r.Value }),
             RecognizedMoveBytesToCaller = recognizedMoveBytes, IoRequests = ioRequests, CopyEntries = copyEntries,
-            TransactionCalls = transactionCalls, BlockTransfers = blockTransfers, DeviceCalls = deviceCalls,
+            TransactionCalls = transactionCalls, BlockTransfers = blockTransfers, DeviceCalls = deviceCalls, DosCalls = dosCalls,
             CacheIndexLookups = cacheLookups, CacheIndexHits = cacheHits,
             BlockCopyCallers = blockCopyCallers.Select(p => new
             {
@@ -291,6 +319,7 @@ internal sealed class ReadCpuProfile
                 if (DispatchInterrupt()) continue;
                 if (cpu.Halted || cpu.Stopped) break;
                 var pc = cpu.ProgramCounter; var before = cpu.Cycles;
+                if (phase == "overwrite") ObserveDosCall(pc, before);
                 if (callDirectory != null)
                 {
                     while (activeCalls.TryPeek(out var frame) && pc == frame.Return && core.State.A[7] == frame.Stack)
@@ -375,6 +404,11 @@ internal sealed class ReadCpuProfile
                 if (measuredPhase != null && measuredPhase == phase)
                 {
                     if (measureRom) romCycles[context] = romCycles.GetValueOrDefault(context) + cpu.Cycles - before;
+                    if (dosReturn != 0)
+                    {
+                        if (pc >= codeBase && pc - codeBase < codeBytes) dosHandler += cpu.Cycles - before;
+                        else if (pc >= 0xF80000 && pc < 0x1000000) dosRom += cpu.Cycles - before;
+                    }
                     var value = counts.GetValueOrDefault(pc);
                     counts[pc] = (value.Cycles + cpu.Cycles - before, value.Instructions + 1);
                     if (pc >= blockCopyEntry && pc - blockCopyEntry < blockCopyBytes)
