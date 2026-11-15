@@ -112,6 +112,10 @@ public static partial class AmigaSmartFileSystemWriteCore
     private struct RedoStream
     {
         internal uint First, Block, Offset, Search, Bitmap;
+        internal APTR Pages;
+        internal uint Capacity, Buffered;
+        internal APTR Originals;
+        internal uint OriginalFirst, OriginalCount;
     }
 
     private static bool TrstWriteBlock<T>(ref T p, uint block, APTR image)
@@ -125,6 +129,24 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool TrstWritePage<T>(ref T p, uint block, APTR image)
         where T : struct, IAmigaWritableFileSystemPlatform => p.SupportsUnpublishedDataWrites
             ? p.WriteUnpublishedDataBlocks(block, 1, image) : TrstWriteBlock(ref p, block, image);
+
+    // All pages in a run have passed TrstSpace independently. Never cross
+    // a physical gap or publish a marker before the last run has completed.
+    private static bool FinishExternalPage<T>(ref T p, ref Work w, ref RedoStream stream, uint next)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        if (stream.Pages.IsNull) return TrstWritePage(ref p, stream.Block, w.Journal);
+        var count = ++stream.Buffered;
+        if (next != 0 && next - 1 == stream.Block && count < stream.Capacity)
+        {
+            w.Journal = APTR.FromPointer(w.Journal.Raw + w.BlockBytes);
+            return true;
+        }
+        if (!p.WriteUnpublishedDataBlocks(stream.Block - (count - 1), count, stream.Pages)) return false;
+        stream.Buffered = 0;
+        w.Journal = stream.Pages;
+        return true;
+    }
 
     private static bool TrstSpace<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
         ref RedoStream stream, out uint block) where T : struct, IAmigaWritableFileSystemPlatform
@@ -168,6 +190,14 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static void TrstPage<T>(ref T p, ref Work w, ref RedoStream stream, uint block)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        // Journal output grows from the front. It always has priority over
+        // read-ahead at the tail, including when a record crosses pages.
+        if (stream.OriginalCount != 0 && w.Journal == stream.Originals)
+        {
+            stream.Originals = APTR.FromPointer(stream.Originals.Raw + w.BlockBytes);
+            stream.OriginalFirst++;
+            stream.OriginalCount--;
+        }
         p.Clear(w.Journal, p.BlockBytes);
         p.WriteUInt32(w.Journal, 0, NativeRedoId); p.WriteUInt32(w.Journal, 8, block);
         stream.Block = block; stream.Offset = 16;
@@ -191,7 +221,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             }
             if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var next)) return false;
             p.WriteUInt32(w.Journal, 12, next); Seal(ref p, w.Journal, w.BlockBytes);
-            if (!TrstWritePage(ref p, stream.Block, w.Journal)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!FinishExternalPage(ref p, ref w, ref stream, next)) return Fail(ref w, DOS.Error.DiskNotValidated);
             TrstPage(ref p, ref w, ref stream, next);
         }
         p.WriteUInt8(w.Journal, (int)stream.Offset++, value); return true;
@@ -266,6 +296,19 @@ public static partial class AmigaSmartFileSystemWriteCore
     {
         if (staged.Count == 0) return true;
         var stream = new RedoStream { Search = p.ReservedBlocks, Bitmap = uint.MaxValue };
+        var scratch = w.Journal;
+        if (staged.Count >= 6)
+            stream.Pages = p.BorrowSfsJournalPages(w.BlockBytes, out stream.Capacity);
+        if (stream.Pages.IsNotNull) w.Journal = stream.Pages;
+        var result = CommitTrstStream(ref p, ref w, ref staged, ref stream);
+        w.Journal = scratch;
+        if (stream.Pages.IsNotNull) p.ReleaseSfsJournalPages(stream.Pages);
+        return result;
+    }
+
+    private static bool CommitTrstStream<T>(ref T p, ref Work w, ref RedoPlatform<T> staged, ref RedoStream stream)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
         var marker = w.RootContainer + 2;
         var first = marker;
         // SFS 1.279 also publishes a one-sector TRST directly in root + 2.
@@ -275,14 +318,36 @@ public static partial class AmigaSmartFileSystemWriteCore
             !TrstSpace(ref p, ref w, ref staged, ref stream, out first)) return false;
         stream.First = first; TrstPage(ref p, ref w, ref stream, first);
         var slot = staged.Buffer;
-        for (var i = 0u; i < staged.Count; i++, slot = APTR.FromPointer(slot.Raw + staged.Stride))
+        for (var i = 0u; i < staged.Count; i++)
         {
+            slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, staged.Arena, i);
             var target = p.ReadUInt32(slot); var image = APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
-            var original = p.ReadRetainedBlock(target);
+            var original = target - stream.OriginalFirst < stream.OriginalCount
+                ? APTR.FromPointer(stream.Originals.Raw + (target - stream.OriginalFirst) * w.BlockBytes)
+                : p.ReadRetainedBlock(target);
             if (original.IsNull)
             {
-                if (!p.ReadBlock(target, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
-                original = w.Data;
+                var count = 1u;
+                if (stream.Pages.IsNotNull)
+                    while (count < 4 && count + 1 < stream.Capacity - stream.Buffered && count < staged.Count - i &&
+                        p.ReadUInt32(AmigaSmartFileSystemRedoArena.SlotAt(ref p, staged.Arena, i + count)) == target + count)
+                        count++;
+                if (count > 1)
+                {
+                    stream.Originals = APTR.FromPointer(stream.Pages.Raw + (stream.Capacity - count) * w.BlockBytes);
+                    stream.OriginalCount = 0;
+                    if (p.TryReadTrstOriginal(target, count, stream.Originals, out var complete) && complete)
+                    {
+                        stream.OriginalFirst = target; stream.OriginalCount = count;
+                        original = stream.Originals;
+                    }
+                }
+                if (original.IsNull)
+                {
+                    if (!p.TryReadTrstOriginal(target, 1, w.Data, out var success)) success = p.ReadBlock(target, w.Data);
+                    if (!success) return Fail(ref w, DOS.Error.DiskNotValidated);
+                    original = w.Data;
+                }
             }
             var runs = AmigaSmartFileSystemTrstCodec.Plan(ref p, original, image, staged.Stride - AmigaSmartFileSystemRedoArena.SlotHeaderBytes, w.Bitmap, out var length);
             // Record starts are word-aligned, including across page boundaries.
@@ -319,7 +384,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         }
         else
         {
-            if (!TrstWritePage(ref p, stream.Block, w.Journal) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!FinishExternalPage(ref p, ref w, ref stream, 0) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
             p.Clear(w.Meta, p.BlockBytes);
             p.WriteUInt32(w.Meta, 0, TransactionFailed); p.WriteUInt32(w.Meta, 8, marker);
             p.WriteUInt32(w.Meta, 12, stream.First); Seal(ref p, w.Meta, 16);
@@ -328,11 +393,55 @@ public static partial class AmigaSmartFileSystemWriteCore
         // The complete redo journal is durable. Retained final images are the
         // same images encoded above; healthy commits need not read/decode them
         // back from disk. Recovery still validates the entire journal first.
-        slot = staged.Buffer;
-        for (var i = 0u; i < staged.Count; i++, slot = APTR.FromPointer(slot.Raw + staged.Stride))
+        // Journal publication is durable. Home writes may be reordered inside
+        // this interval. The run plan is dead, so Bitmap can hold slot pointers.
+        var capacity = p.RetainedRunCapacity;
+        if (capacity > 1 && staged.Count >= 6 && staged.Count <= 64 && staged.Count <= w.BlockBytes / 4)
+        {
+            if (!WriteTrstHomeRuns(ref p, ref w, ref staged, capacity)) return false;
+            return CompleteNative(ref p, ref w, marker);
+        }
+        for (var i = 0u; i < staged.Count; i++)
+        {
+            slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, staged.Arena, i);
             if (!TrstWriteBlock(ref p, p.ReadUInt32(slot), APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)))
                 return Fail(ref w, DOS.Error.DiskNotValidated);
+        }
         return CompleteNative(ref p, ref w, marker);
+    }
+
+    private static bool WriteTrstHomeRuns<T>(ref T p, ref Work w, ref RedoPlatform<T> staged, uint capacity)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        for (var i = 0u; i < staged.Count; i++)
+        {
+            var slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, staged.Arena, i);
+            var key = p.ReadUInt32(slot);
+            var at = (int)i * 4;
+            while (at != 0)
+            {
+                var previous = p.ReadUInt32(w.Bitmap, at - 4);
+                if (p.ReadUInt32(APTR.FromPointer(previous)) < key) break;
+                p.WriteUInt32(w.Bitmap, at, previous);
+                at -= 4;
+            }
+            p.WriteUInt32(w.Bitmap, at, slot.Raw);
+        }
+        for (var i = 0u; i < staged.Count;)
+        {
+            var slots = APTR.FromPointer(w.Bitmap.Raw + i * 4);
+            var slot = APTR.FromPointer(p.ReadUInt32(slots));
+            var first = p.ReadUInt32(slot);
+            var count = 1u;
+            while (count < capacity && count < staged.Count - i &&
+                p.ReadUInt32(APTR.FromPointer(p.ReadUInt32(slots, (int)count * 4))) == first + count) count++;
+            var success = count == 1
+                ? TrstWriteBlock(ref p, first, APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes))
+                : p.WriteRetainedRun(first, count, slots);
+            if (!success) return Fail(ref w, DOS.Error.DiskNotValidated);
+            i += count;
+        }
+        return true;
     }
 }
 

@@ -11,8 +11,11 @@ public static partial class AmigaSmartFileSystem2WriteCore
     }
 
     /// <summary>
-    /// Opt-in native SFS redo transaction. Stages ALL changed blocks (including file
-    /// data) in caller-owned memory. A 16-byte header precedes slots of BlockBytes + 4 bytes.
+    /// Native SFS redo transaction. Stages changed reachable blocks, including
+    /// overwritten file data, in caller-owned memory. Contiguous data proven free
+    /// in the original bitmap may be written unpublished; the journal barrier
+    /// makes it durable before TRFA publication. A 16-byte header precedes slots
+    /// of BlockBytes + 4 bytes.
     /// Buffer exhaustion fails before publication without changing live blocks.
     /// Request fields match the ordinary APIs; Resize takes its size in Position.
     /// After a failed commit, Recover is required; a published transaction rolls
@@ -52,21 +55,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
         p.RedoOverlay = stagingBuffer;
         if (p.RedoOverlay != stagingBuffer) return Fail(ref w, DOS.Error.ActionNotKnown);
         w.RedoStaging = true;
-        uint written = 0;
-        var success = operation switch
-        {
-            TrstOperation.Write => Write(ref p, ref w, ref r, out written),
-            TrstOperation.CreateFile => Create(ref p, ref w, ref r, false),
-            TrstOperation.CreateDirectory => Create(ref p, ref w, ref r, true),
-            TrstOperation.Remove => Remove(ref p, ref w, r.Node),
-            TrstOperation.Rename => Rename(ref p, ref w, ref r),
-            TrstOperation.Resize => Resize(ref p, ref w, r.Node, r.Position),
-            TrstOperation.Truncate => Truncate(ref p, ref w, r.Node),
-            TrstOperation.SetProtection => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetProtection),
-            TrstOperation.SetComment => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetComment),
-            TrstOperation.SetDate => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate),
-            _ => false
-        };
+        var info = default(FileInformation);
+        var success = StageTrst(ref p, ref w, ref r, operation, out var written, ref info);
         p.RedoOverlay = APTR.Null;
         staged.Inner = p;
         staged.Count = p.ReadUInt32(stagingBuffer, 0);
@@ -78,27 +68,66 @@ public static partial class AmigaSmartFileSystem2WriteCore
         return true;
     }
 
+    private static bool StageTrst<T>(ref T p, ref Work w, ref Request r, TrstOperation operation, out uint written,
+        ref FileInformation info, bool prepared = false)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        written = 0;
+        return operation switch
+        {
+            TrstOperation.Write => WritePacket(ref p, ref w, ref r, out written, prepared, ref info),
+            TrstOperation.CreateFile => Create(ref p, ref w, ref r, false),
+            TrstOperation.CreateDirectory => Create(ref p, ref w, ref r, true),
+            TrstOperation.Remove => Remove(ref p, ref w, r.Node),
+            TrstOperation.Rename => Rename(ref p, ref w, ref r),
+            TrstOperation.Resize => Resize(ref p, ref w, r.Node, r.Position),
+            TrstOperation.Truncate => Truncate(ref p, ref w, r.Node),
+            TrstOperation.SetProtection => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetProtection),
+            TrstOperation.SetComment => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetComment),
+            TrstOperation.SetDate => SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate),
+            _ => false
+        };
+    }
+
     // Native platforms own the overlay; this descriptor never becomes a
     // generic platform argument (the native compiler uses four-byte platforms).
     private struct RedoPlatform<T> where T : struct, IAmigaWritableFileSystemPlatform
     {
         internal T Inner;
-        internal APTR Buffer;
+        internal APTR Buffer, OwnedArena;
         internal uint Capacity, Count;
         internal bool Full;
-        internal APTR Slot(uint index) => APTR.FromPointer(Buffer.Raw + index * (Inner.BlockBytes + 4));
-        internal APTR Image(uint index) => APTR.FromPointer(Slot(index).Raw + 4);
+        internal APTR Slot(uint index) => OwnedArena.IsNotNull ? Sfs2MetadataStore.Slot(ref Inner, OwnedArena, index) : APTR.FromPointer(Buffer.Raw + index * (Inner.BlockBytes + 4));
+        internal APTR Image(uint index) => APTR.FromPointer(Slot(index).Raw + (OwnedArena.IsNotNull ? Sfs2MetadataStore.SlotBytes : 4));
         internal bool Find(uint block, out APTR image)
         {
-            for (var i = 0u; i < Count; i++)
-                if (Inner.ReadUInt32(Slot(i)) == block) { image = Image(i); return true; }
+            if (OwnedArena.IsNotNull) { image = Sfs2MetadataStore.Find(ref Inner, OwnedArena, block); return image.IsNotNull; }
+            // The checked fallback is a contiguous legacy array. Its stride
+            // is invariant throughout a search, including journal allocation.
+            var slot = Buffer.Raw;
+            var stride = Inner.BlockBytes + 4;
+            for (var i = 0u; i < Count; i++, slot += stride)
+                if ((Inner.ReadUInt32(APTR.FromPointer(slot)) & 0x7FFFFFFF) == block)
+                { image = APTR.FromPointer(slot + 4); return true; }
             image = APTR.Null; return false;
         }
     }
 
     private struct RedoStream
     {
-        internal uint First, Block, Offset, Search;
+        internal uint First, Block, Offset, Search, Bitmap;
+    }
+
+    private static bool TrstWriteImage<T>(ref T p, uint block, APTR image)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        if (!p.UsesOriginalSfs2DataWrites || !p.SupportsRetainedBlockWrites) return p.WriteBlock(block, image);
+        // Commit has detached the logical overlay. Its images and scratch are
+        // retained through this synchronous transfer. Expire the physical
+        // before-image before I/O, including a failed or partial replacement.
+        var cache = Sfs2MountContext.Cache(ref p, p.Sfs2Context);
+        return (cache.IsNull || Sfs2MetadataStore.Invalidate(ref p, cache, block, 1)) &&
+            p.WriteRetainedBlock(block, image);
     }
 
     private static bool TrstSpace<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
@@ -111,14 +140,30 @@ public static partial class AmigaSmartFileSystem2WriteCore
         while (stream.Search < p.BlockCount - 1)
         {
             var candidate = stream.Search++;
-            if (candidate == w.RootContainer + 2 || staged.Find(candidate, out _)) continue;
-            if (!BitmapPosition(ref p, ref w, candidate, out var map, out var offset, out var mask) ||
-                !Read(ref p, ref w, map, BitmapId, w.Meta)) return false;
-            if ((p.ReadUInt32(w.Meta, offset) & mask) == 0) continue;
-            if (staged.Find(map, out var finalMap))
+            if (!BitmapPosition(ref p, ref w, candidate, out var map, out var offset, out var mask)) return false;
+            // Only journal allocation uses Meta during emission. Intersect the
+            // original/final map once; neither image can change under this owner.
+            if (stream.Bitmap != map)
             {
-                if ((p.ReadUInt32(finalMap, offset) & mask) == 0) continue;
+                if (!Read(ref p, ref w, map, BitmapId, w.Meta)) return false;
+                if (staged.Find(map, out var finalMap))
+                    for (var at = 12; at < p.BlockBytes; at += 4)
+                        p.WriteUInt32(w.Meta, at, p.ReadUInt32(w.Meta, at) & p.ReadUInt32(finalMap, at));
+                stream.Bitmap = map;
             }
+            // Skip occupied words, and inspect their remaining bits locally.
+            // Bitmap pages contain a whole number of words, so this cannot
+            // cross the validated map. Avoid geometry/division for every bit.
+            var free = p.ReadUInt32(w.Meta, offset) & (uint.MaxValue >> (int)(candidate & 31));
+            if (free == 0)
+            {
+                stream.Search = candidate + 32 - (candidate & 31);
+                continue;
+            }
+            while ((free & mask) == 0) { candidate++; mask >>= 1; }
+            stream.Search = candidate + 1;
+            if (candidate >= p.BlockCount - 1) break;
+            if (candidate == w.RootContainer + 2 || staged.Find(candidate, out _)) continue;
             block = candidate; return true;
         }
         return Fail(ref w, DOS.Error.DiskFull);
@@ -137,45 +182,71 @@ public static partial class AmigaSmartFileSystem2WriteCore
     {
         if (stream.Offset == p.BlockBytes)
         {
+            // A tentative marker page has not reached the device. Promote it
+            // before emitting anything if the complete log does not fit.
+            if (stream.First == w.RootContainer + 2)
+            {
+                if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var first)) return false;
+                stream.First = stream.Block = first;
+                p.WriteUInt32(w.Journal, 8, first);
+            }
             if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var next)) return false;
             p.WriteUInt32(w.Journal, 12, next); Seal(ref p, w.Journal);
-            if (!p.WriteBlock(stream.Block, w.Journal)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!TrstWriteImage(ref p, stream.Block, w.Journal)) return Fail(ref w, DOS.Error.DiskNotValidated);
             TrstPage(ref p, ref w, ref stream, next);
         }
         p.WriteUInt8(w.Journal, (int)stream.Offset++, value); return true;
     }
 
-    // LONGCOMPRESSION: unchanged, zero, all-ones, or literal runs of 1..64 longs.
-    // The first pass measures; the second emits. Skips only cover old == final
-    // words, so replay remains idempotent after a partially applied transaction.
-    private static bool TrstEncode<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
-        ref RedoStream stream, APTR image, bool emit, out uint length)
+    // The shared codec classifies each long once into caller-owned Bitmap
+    // scratch. Allocation uses Meta and cannot overwrite this emission plan.
+    private static bool TrstEmit<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
+        ref RedoStream stream, APTR image, uint runs, uint length)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        length = 0;
-        var words = p.BlockBytes / 4;
-        for (var at = 0u; at < words;)
+        var bytes = p.BlockBytes;
+        if (stream.Offset <= bytes && length <= bytes - stream.Offset)
         {
-            var value = p.ReadUInt32(image, (int)(at * 4));
-            var kind = value == p.ReadUInt32(w.Data, (int)(at * 4)) ? 1u : value == 0 ? 0u : value == uint.MaxValue ? 2u : 3u;
-            var count = 1u;
-            while (count < 64 && at + count < words)
+            var source = image.Raw;
+            var destination = w.Journal.Raw + stream.Offset;
+            for (var run = 0u; run < runs; run++)
             {
-                value = p.ReadUInt32(image, (int)((at + count) * 4));
-                var next = value == p.ReadUInt32(w.Data, (int)((at + count) * 4)) ? 1u : value == 0 ? 0u : value == uint.MaxValue ? 2u : 3u;
-                if (next != kind) break;
-                count++;
+                var code = p.ReadUInt8(w.Bitmap, (int)run);
+                var span = ((uint)(code & 63) + 1) * 4;
+                p.WriteUInt8(APTR.FromPointer(destination++), 0, code);
+                if ((code >> 6) == 3)
+                {
+                    p.Copy(APTR.FromPointer(source), APTR.FromPointer(destination), span);
+                    destination += span;
+                }
+                source += span;
             }
-            length++;
-            if (emit && !TrstByte(ref p, ref w, ref staged, ref stream, (byte)((kind << 6) | (count - 1)))) return false;
-            if (kind == 3)
+            stream.Offset += length;
+            return true;
+        }
+        var pointer = image.Raw;
+        for (var run = 0u; run < runs; run++)
+        {
+            var code = p.ReadUInt8(w.Bitmap, (int)run);
+            var span = ((uint)(code & 63) + 1) * 4;
+            if (!TrstByte(ref p, ref w, ref staged, ref stream, code)) return false;
+            if ((code >> 6) == 3)
             {
-                length += count * 4;
-                if (emit)
-                    for (var i = 0u; i < count * 4; i++)
-                        if (!TrstByte(ref p, ref w, ref staged, ref stream, p.ReadUInt8(image, (int)(at * 4 + i)))) return false;
+                var remaining = span;
+                while (remaining != 0)
+                {
+                    if (stream.Offset == bytes)
+                    {
+                        if (!TrstByte(ref p, ref w, ref staged, ref stream, p.ReadUInt8(APTR.FromPointer(pointer)))) return false;
+                        pointer++; remaining--; continue;
+                    }
+                    var take = bytes - stream.Offset;
+                    if (take > remaining) take = remaining;
+                    p.Copy(APTR.FromPointer(pointer), APTR.FromPointer(w.Journal.Raw + stream.Offset), take);
+                    stream.Offset += take; pointer += take; remaining -= take;
+                }
             }
-            at += count;
+            else pointer += span;
         }
         return true;
     }
@@ -183,35 +254,109 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool CommitTrst<T>(ref T p, ref Work w, ref RedoPlatform<T> staged)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (staged.Count == 0) return true;
-        var stream = new RedoStream { Search = p.ReservedBlocks };
-        if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var first)) return false;
-        stream.First = first; TrstPage(ref p, ref w, ref stream, first);
+        if (staged.Count == 0)
+            return !p.UsesOriginalSfs2DataWrites || p.Flush() || Fail(ref w, DOS.Error.DiskNotValidated);
+        var stream = new RedoStream { Search = p.ReservedBlocks, Bitmap = uint.MaxValue };
         for (var i = 0u; i < staged.Count; i++)
         {
             var target = p.ReadUInt32(staged.Slot(i)); var image = staged.Image(i);
-            if (!p.ReadBlock(target, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (!TrstEncode(ref p, ref w, ref staged, ref stream, image, false, out var length)) return false;
-            if (!TrstByte(ref p, ref w, ref staged, ref stream, (byte)(length >> 8)) ||
-                !TrstByte(ref p, ref w, ref staged, ref stream, (byte)length)) return false;
-            for (var shift = 24; shift >= 0; shift -= 8)
-                if (!TrstByte(ref p, ref w, ref staged, ref stream, (byte)(target >> shift))) return false;
-            if (!TrstByte(ref p, ref w, ref staged, ref stream, 0) ||
-                !TrstEncode(ref p, ref w, ref staged, ref stream, image, true, out _)) return false;
+            // The owned clean cache still holds the physical before-image.
+            // Providers invalidate its key before queueing any replacement, so
+            // this cannot bypass a newer pending physical write. Plan consumes
+            // it before emission can replace or invalidate a cache image.
+            var cache = staged.OwnedArena.IsNotNull ? Sfs2MountContext.Cache(ref p, p.Sfs2Context) : APTR.Null;
+            var original = cache.IsNotNull ? Sfs2MetadataStore.Find(ref p, cache, target) : APTR.Null;
+            if (original.IsNull) original = p.ReadRetainedBlock(target);
+            if (original.IsNull)
+            {
+                if (!p.ReadBlock(target, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
+                original = w.Data;
+            }
+            var changes = staged.OwnedArena.IsNotNull && p.UsesOriginalSfs2DataWrites && p.BlockBytes == 512
+                ? p.ReadUInt32(staged.Slot(i), 16) : uint.MaxValue;
+            uint length;
+            var runs = changes != uint.MaxValue
+                ? AmigaSmartFileSystemTrstCodec.PlanSparse512(ref p, original, image, changes, w.Bitmap, out length)
+                : AmigaSmartFileSystemTrstCodec.Plan(ref p, original, image, p.BlockBytes, w.Bitmap, out length);
+            var unchanged = true;
+            for (var run = 0u; run < runs; run++)
+                if ((p.ReadUInt8(w.Bitmap, (int)run) & 0xC0) != 0x40) { unchanged = false; break; }
+            if (unchanged)
+            {
+                // The high bit is outside the supported block-number domain.
+                // Keep the target reserved during journal allocation, but omit
+                // an identical image from both the journal and home writes.
+                p.WriteUInt32(staged.Slot(i), 0, target | 0x80000000);
+                continue;
+            }
+            if (stream.First == 0)
+            {
+                var first = w.RootContainer + 2;
+                // Keep the checked writer as the external-journal reference.
+                // The owned profile can use original SFS's atomic single-sector
+                // publication; multi-sector blocks retain TRFA publication.
+                if ((staged.OwnedArena.IsNull || p.BlockBytes != 512 || p.Geometry.SectorBytes != 512) &&
+                    !TrstSpace(ref p, ref w, ref staged, ref stream, out first)) return false;
+                stream.First = first; TrstPage(ref p, ref w, ref stream, first);
+            }
+            // Record starts are word aligned. Emit an in-page header directly;
+            // retain byte streaming for a header crossing a page boundary.
+            if (stream.Offset <= p.BlockBytes - 7)
+            {
+                var at = (int)stream.Offset;
+                p.WriteUInt16(w.Journal, at, (ushort)length);
+                p.WriteUInt32(w.Journal, at + 2, target); p.WriteUInt8(w.Journal, at + 6, 0);
+                stream.Offset += 7;
+            }
+            else
+            {
+                if (!TrstByte(ref p, ref w, ref staged, ref stream, (byte)(length >> 8)) ||
+                    !TrstByte(ref p, ref w, ref staged, ref stream, (byte)length)) return false;
+                for (var shift = 24; shift >= 0; shift -= 8)
+                    if (!TrstByte(ref p, ref w, ref staged, ref stream, (byte)(target >> shift))) return false;
+                if (!TrstByte(ref p, ref w, ref staged, ref stream, 0)) return false;
+            }
+            if (!TrstEmit(ref p, ref w, ref staged, ref stream, image, runs, length)) return false;
             // Native OperationInformation uses 68k word alignment (7-byte header).
             if ((length & 1) == 0 && !TrstByte(ref p, ref w, ref staged, ref stream, 0)) return false;
         }
+        if (stream.First == 0)
+            return !p.UsesOriginalSfs2DataWrites || p.Flush() || Fail(ref w, DOS.Error.DiskNotValidated);
         // At an exact page boundary, end-of-chain terminates the stream. Otherwise
         // the zero-filled tail supplies the zero length (records are word aligned).
         Seal(ref p, w.Journal);
-        if (!p.WriteBlock(stream.Block, w.Journal) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
-        p.Clear(w.Meta, p.BlockBytes);
         var marker = w.RootContainer + 2;
-        p.WriteUInt32(w.Meta, 0, TransactionFailed); p.WriteUInt32(w.Meta, 8, marker);
-        p.WriteUInt32(w.Meta, 12, stream.First); Seal(ref p, w.Meta);
-        if (!p.WriteBlock(marker, w.Meta) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
-        // Reuse the normal reader for application as well as recovery. Nothing
-        // live is changed before the complete, recoverable journal is published.
-        return ReplayNative(ref p, ref w, marker, stream.First);
+        if (stream.First == marker)
+        {
+            // This write publishes the log. Flush unpublished data first, even
+            // though the native platform can elide an already-clean flush.
+            // Together with the home and clean barriers below all four stages
+            // remain ordered. No additional staging or persistent state.
+            if (!p.Flush() || !TrstWriteImage(ref p, marker, w.Journal) || !p.Flush())
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+        }
+        else
+        {
+            if (!TrstWriteImage(ref p, stream.Block, w.Journal) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+            p.Clear(w.Meta, p.BlockBytes);
+            p.WriteUInt32(w.Meta, 0, TransactionFailed); p.WriteUInt32(w.Meta, 8, marker);
+            p.WriteUInt32(w.Meta, 12, stream.First); Seal(ref p, w.Meta);
+            if (!TrstWriteImage(ref p, marker, w.Meta) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+        }
+        // These owned final images are exactly what the durable journal encodes.
+        // Apply them directly on a healthy commit; interrupted mounts still use
+        // the complete validation/decode path in ReplayNative. All barriers and
+        // marker transitions retain the existing TRST recovery protocol.
+        for (var i = 0u; i < staged.Count; i++)
+        {
+            var target = p.ReadUInt32(staged.Slot(i));
+            if ((target & 0x80000000) != 0) continue;
+            if (!TrstWriteImage(ref p, target, staged.Image(i))) return Fail(ref w, DOS.Error.DiskNotValidated);
+        }
+        if (!p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+        p.Clear(w.Meta, p.BlockBytes);
+        p.WriteUInt32(w.Meta, 0, TransactionOk); p.WriteUInt32(w.Meta, 8, marker);
+        Seal(ref p, w.Meta);
+        return (TrstWriteImage(ref p, marker, w.Meta) && p.Flush()) || Fail(ref w, DOS.Error.DiskNotValidated);
     }
 }

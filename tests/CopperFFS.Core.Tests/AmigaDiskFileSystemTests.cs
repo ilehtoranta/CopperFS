@@ -21,6 +21,8 @@ public sealed class AmigaDiskFileSystemTests
         public uint FailWriteBlock = uint.MaxValue;
         public uint PointerTableReads;
         public uint BulkCopies;
+        public bool UnalignedReads;
+        public bool SupportsUnalignedDataReads => UnalignedReads;
         public uint PayloadReads;
         public uint RetainedKey = uint.MaxValue, RetainedBlockReads;
         public APTR RetainedImage;
@@ -378,19 +380,20 @@ public sealed class AmigaDiskFileSystemTests
         Assert.All(p.Ram.AsSpan(4000 + actual, length - actual).ToArray(), b => Assert.Equal(0xA7, b));
     }
 
-    [Fact]
-    public void FfsBulkFailureInvalidatesCursorAndExplicitInvalidationObservesNewSizeAndMapping()
+    [Theory]
+    [InlineData(0)] [InlineData(1)] [InlineData(2)]
+    public void FfsBulkFailureInvalidatesCursorAndExplicitInvalidationObservesNewSizeAndMapping(int alignment)
     {
-        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes);
-        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000);
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes) { UnalignedReads = true };
+        var meta = APTR.FromPointer(1000); var data = APTR.FromPointer(1600); var target = APTR.FromPointer(4000u + (uint)alignment);
         var file = AmigaDiskFileSystemCore.Resolve(ref p, 880, p.Name("Data/Large"), 10, 0x444F5301, meta, out _);
         var first = p.ReadUInt32(meta, 308); p.BadBlock = first + 2;
-        var cursor = new AmigaDiskFileSystemCore.ReadCursor(); p.Ram.AsSpan(4000, 2048).Fill(0xA7);
+        var cursor = new AmigaDiskFileSystemCore.ReadCursor(); p.Ram.AsSpan((int)target.Raw, 2048).Fill(0xA7);
         Assert.Equal(1024, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
             0, target, 2048, meta, data, out var error));
         Assert.Equal(DOS.Error.DiskNotValidated, error); Assert.Equal(0u, cursor.Header);
         Assert.Equal((first, 4u), p.DataReads.Single());
-        Assert.All(p.Ram.AsSpan(5024, 1024).ToArray(), b => Assert.Equal(0xA7, b));
+        Assert.All(p.Ram.AsSpan((int)target.Raw + 1024, 1024).ToArray(), b => Assert.Equal(0xA7, b));
         p.BadBlock = uint.MaxValue;
         Assert.Equal(512, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
             0, target, 512, meta, data, out _));
@@ -399,7 +402,7 @@ public sealed class AmigaDiskFileSystemTests
         Assert.Equal(17, AmigaDiskFileSystemCore.Read(ref p, ref cursor, file, 0x444F5301,
             0, target, 512, meta, data, out error));
         Assert.Equal(DOS.Error.None, error);
-        Assert.Equal(Enumerable.Range(512, 17).Select(i => (byte)(i * 17)), p.Ram.AsSpan(4000, 17).ToArray());
+        Assert.Equal(Enumerable.Range(512, 17).Select(i => (byte)(i * 17)), p.Ram.AsSpan((int)target.Raw, 17).ToArray());
     }
 
     [Theory]

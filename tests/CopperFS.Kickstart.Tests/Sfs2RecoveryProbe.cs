@@ -10,6 +10,8 @@ public static class Sfs2RecoveryProbe
     public static int Delete() => Run(4);
     public static int Create() => Run(5);
     public static int Comment() => Run(6);
+    public static int Group() => Run(7);
+    public static int CrossClose() => Run(8);
     public static int Recover() => Run(0);
 
     private static int Run(int operation)
@@ -17,7 +19,7 @@ public static class Sfs2RecoveryProbe
         var dos = global::Amiga.Exec.OpenLibrary("dos.library", 37);
         if (!dos.HasValue) { CorrectnessProbe.Report(250); return 1; }
         DOS.DOSLibraryBase = dos.Value;
-        var control = APTR.FromPointer(global::Amiga.Exec.AllocMem(1024,
+        var control = APTR.FromPointer(global::Amiga.Exec.AllocMem(operation == 8 ? 2048u : 1024u,
             global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear));
         if (control.IsNull || CorrectnessProbe.Mount(control, 3) != 0) { CorrectnessProbe.Report(250); return 2; }
         var root = DOS.Lock("SEQ0:", DOS.LockMode.Shared);
@@ -44,6 +46,9 @@ public static class Sfs2RecoveryProbe
         else if (operation == 3) ok = DOS.Rename("SEQ0:Payload", "SEQ0:Renamed") != 0;
         else if (operation == 4) ok = DOS.DeleteFile("SEQ0:Payload") != 0;
         else if (operation == 6) ok = DOS.SetComment("SEQ0:Payload", "recovery") != 0;
+        if (operation == 7) ok = DOS.Rename("SEQ0:Payload", "SEQ0:Renamed") != 0 &&
+            DOS.SetComment("SEQ0:Renamed", "grouped") != 0 && DOS.SetProtection("SEQ0:Renamed", 32) != 0;
+        if (operation == 8) ok = DeferredCloseProbe.Mutate(control);
         if (!ok || DOS.Inhibit("SEQ0:", 1) == 0) { CorrectnessProbe.Report(250); return 4; }
         CorrectnessProbe.Report(210);
         return 0;

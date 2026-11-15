@@ -5,19 +5,27 @@ namespace CopperSFS;
 public static partial class AmigaSmartFileSystemWriteCore
 {
     // The general allocator has written the complete replacement payload into
-    // unpublished space. A non-full root leaf can install that run, advance the
-    // old tail and repair all neighbours in one owned image. No tree separator
-    // or split can intervene. Other layouts retain the ordinary insertion path.
-    private static bool InstallTrstRootPrefix<T>(ref T p, ref Work w, ref uint first, uint node,
-        uint start, uint count, uint replacement, int sourceAt, out bool installed)
+    // unpublished space. Install it in one private leaf if both keys route
+    // there, all neighbours are local and insertion needs no split.
+    private static bool InstallTrstLeafPrefix<T>(ref T p, ref Work w, ref uint first, uint node,
+        uint start, uint count, uint replacement, uint sourceLeaf, int sourceAt, out bool installed)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         installed = false;
-        var leaf = View(ref p, ref w, w.ExtentRoot, TreeId, w.Meta);
+        APTR leaf;
+        if (sourceLeaf != w.ExtentRoot)
+        {
+            leaf = ExtentLeafView(ref p, ref w, replacement, out var destinationLeaf);
+            if (leaf.IsNull) return false;
+            if (destinationLeaf != sourceLeaf) return true;
+        }
+        else leaf = View(ref p, ref w, sourceLeaf, TreeId, w.Meta);
         if (leaf.IsNull) return false;
         TrstLeafLayout(ref p, leaf, out var stride, out var records);
         if (p.ReadUInt8(leaf, 14) != 1 || stride < 14 || (stride & 1) != 0 ||
             records >= (w.BlockBytes - 16) / stride) return true;
+        // InsertBnode must update ancestor lower bounds for a new lowest key.
+        if (sourceLeaf != w.ExtentRoot && replacement < p.ReadUInt32(leaf, 16)) return true;
         if (!TrstRecordOffset(sourceAt, records, stride) || p.ReadUInt32(leaf, sourceAt) != start)
             return Fail(ref w, DOS.Error.DiskNotValidated);
         var length = (uint)p.ReadUInt16(leaf, sourceAt + 12);
@@ -36,6 +44,8 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (hasPrevious && key == previous) beforeAt = at;
             if (after != 0 && key == after) afterAt = at;
         }
+        if (sourceLeaf != w.ExtentRoot && ((hasPrevious && beforeAt == 0) || (after != 0 && afterAt == 0)))
+            return true;
         if ((hasPrevious && (beforeAt == 0 || beforeAt == sourceAt ||
                 p.ReadUInt32(leaf, beforeAt + 4) != start ||
                 !TrstRootExtentValid(ref p, ref w, leaf, beforeAt))) ||
@@ -47,7 +57,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         // Edit copies a borrowed/cache view into the bounded candidate arena.
         // All retained positions are scalars, and no extent mutation occurred
         // since their validation. Insertion shifts positions at/after insertAt.
-        leaf = Edit(ref p, ref w, w.ExtentRoot, TreeId, w.Meta);
+        leaf = Edit(ref p, ref w, sourceLeaf, TreeId, w.Meta);
         if (leaf.IsNull) return false;
         if (previous == 0) previous = node | 0x80000000;
         InsertBnode(ref p, leaf, (int)records, (int)stride, replacement, 0, previous, true);
@@ -60,7 +70,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         p.WriteUInt16(leaf, sourceAt + 12, (ushort)tailLength);
         if (beforeAt != 0) p.WriteUInt32(leaf, beforeAt + 4, replacement);
         if (afterAt != 0) p.WriteUInt32(leaf, afterAt + 8, tail);
-        if (!Put(ref p, ref w, w.ExtentRoot, leaf) || !ReleaseDataRun(ref p, ref w, start, count)) return false;
+        if (!Put(ref p, ref w, sourceLeaf, leaf)) return false;
         if (first == start) first = replacement;
         if (w.TrstContinuation.IsNotNull && tailLength > 1 && count < ushort.MaxValue)
         {
@@ -70,12 +80,13 @@ public static partial class AmigaSmartFileSystemWriteCore
             p.WriteUInt32(hint, 0, node); p.WriteUInt32(hint, 4, 0);
             p.WriteUInt32(hint, 8, tail); p.WriteUInt32(hint, 12, tailLength);
             p.WriteUInt32(hint, 16, replacement); p.WriteUInt32(hint, 20, count);
-            p.WriteUInt32(hint, 24, after); p.WriteUInt32(hint, 28, w.ExtentRoot);
+            p.WriteUInt32(hint, 24, after); p.WriteUInt32(hint, 28, sourceLeaf);
             p.WriteUInt32(hint, 32, (uint)sourceAt); p.WriteUInt32(hint, 36, (uint)insertAt);
             p.WriteUInt32(hint, 40, (uint)afterAt); p.WriteUInt32(hint, 44, p.RedoOverlay.Raw);
             if (!TrstContinuationLeaf(ref p, w.BlockBytes, hint, leaf, APTR.Null))
                 return Fail(ref w, DOS.Error.DiskNotValidated);
         }
+        if (!ReleaseDataRun(ref p, ref w, start, count)) return false;
         installed = true; return true;
     }
 

@@ -6,6 +6,9 @@ public static partial class NativeAmigaFileSystem
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void DispatchAdaptiveReadPacket(APTR state, APTR packet)
     {
+#if COPPERFS_FFS_HANDLER
+        APTR.WriteUInt32(state, FfsCursorsCleared, 0);
+#endif
         var file = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
         var result = -1;
         var error = DOS.Error.InvalidLock;
@@ -30,10 +33,10 @@ public static partial class NativeAmigaFileSystem
             else if (length != 0 && length <= 4096 && (length < 512 || (length & 511) == 0))
                 result = NativeFileSystemReadCore.ReadFfsAligned(ref p, file, APTR.ReadUInt32(file, 4),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
-                    target, length, Metadata(state), Data(state), out error);
+                    target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
             else result = NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
-                    target, length, Metadata(state), Data(state), out error);
+                    target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
             if (result > 0) SetFilePosition(file, position + (uint)result);
 #if COPPERFS_NATIVE_FFS_READAHEAD
             if (adaptive != 0)

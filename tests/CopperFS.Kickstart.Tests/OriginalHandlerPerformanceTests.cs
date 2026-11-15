@@ -4,12 +4,42 @@ namespace CopperFS.Kickstart.Tests;
 
 public sealed partial class OriginalHandlerCorrectnessTests
 {
+    // Explicit diagnostic; scalar profiling is never substituted for acceptance
+    // timing from the unmodified frame runner below.
+    [PerformanceProfileTheory]
+    [InlineData("ofs")] [InlineData("ffs")] [InlineData("sfs")]
+    [InlineData("sfs2-csun")] [InlineData("sfs2-trst")]
+    public async System.Threading.Tasks.Task ProfileReleaseWorkload(string profile)
+    {
+        var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
+        var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!;
+        var pair = manifest.Profiles.Single(p => p.Name == profile);
+        var initial = AutomaticImage(manifest, profile);
+        var root = Path.Combine(Path.GetDirectoryName(path)!, "cpu-profile", profile);
+        var entry = profile == "ofs" ? "Ofs" : profile == "ffs" ? "Ffs" : profile == "sfs" ? "Sfs" : "Sfs2";
+        var written = await Run(root, profile, "candidate", pair.Candidate, initial, true,
+            "CorrectnessProbe::Benchmark" + entry);
+        Assert.True(File.Exists(Path.Combine(root, "candidate", "mutate-profile.json")));
+        if (profile.StartsWith("sfs")) CopperSFS.Check.SfsImageChecker.Check(new MemoryStream(written),
+            reservedBlocks: profile == "sfs" ? 2u : 1u);
+        else DosImageInspection.Check(written, true);
+    }
+
     // Release gate: compare against the original implementations. Internal
     // before/after comparisons remain useful diagnostics, not release criteria.
     [CorrectnessTheory]
     [InlineData("ofs")] [InlineData("ffs")] [InlineData("sfs")]
     [InlineData("sfs2-csun")] [InlineData("sfs2-trst")]
     public async System.Threading.Tasks.Task ReleaseCandidateStaysOnParWithOriginalHandler(string profile)
+        => await CompareOriginalHandler(profile, false);
+
+    [CorrectnessTheory]
+    [InlineData("ofs")] [InlineData("ffs")] [InlineData("sfs")]
+    [InlineData("sfs2-csun")] [InlineData("sfs2-trst")]
+    public async System.Threading.Tasks.Task ReleaseCandidateChipMemoryStaysOnParWithOriginalHandler(string profile)
+        => await CompareOriginalHandler(profile, true);
+
+    private async System.Threading.Tasks.Task CompareOriginalHandler(string profile, bool chip)
     {
         var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
         var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!;
@@ -22,15 +52,15 @@ public sealed partial class OriginalHandlerCorrectnessTests
         if (profile == "sfs") Assert.Equal(manifest.ClassicBaseSha256, Hash(initial));
         var samples = new List<SizeSample>();
         var entry = profile == "ofs" ? "Ofs" : profile == "ffs" ? "Ffs" : profile == "sfs" ? "Sfs" : "Sfs2";
-        var root = Path.Combine(Path.GetDirectoryName(path)!, "original-performance", profile);
-        // CorrectnessProbe allocates the Fast RAM payload before loading either
+        var root = Path.Combine(Path.GetDirectoryName(path)!, chip ? "original-performance-chip" : "original-performance", profile);
+        // CorrectnessProbe allocates the selected RAM payload before loading either
         // handler. Both arms use identical media, CPU, buffer class and packets.
         foreach (var trial in Enumerable.Range(0, 3))
         foreach (var arm in trial % 2 == 0 ? new[] { "original", "candidate" } : new[] { "candidate", "original" })
         {
             long started = -1; int reads = 0, writes = 0, flushes = 0;
             var written = await Run(root, profile, $"{trial}-{arm}", arm == "original" ? pair.Original : pair.Candidate,
-                initial, true, "CorrectnessProbe::Benchmark" + entry, observe: (marker, cycle, r, w, f) =>
+                initial, true, "CorrectnessProbe::Benchmark" + (chip ? "Chip" : "") + entry, observe: (marker, cycle, r, w, f) =>
                 {
                     if (marker is 220 or 222) { started = cycle; reads = r; writes = w; flushes = f; }
                     if (marker is 221 or 223)
@@ -54,8 +84,22 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var candidate = samples.Where(s => s.Arm == "candidate" && s.Phase == phase).Average(s => s.Cycles);
             var percent = 100 * (candidate / original - 1);
             output.WriteLine($"{profile}/{phase}: {percent:F3}% versus original");
-            if (candidate > original * 1.001) failures.Add($"{phase}: {percent:F3}% slower");
+            // SFS2's accepted target is at most 10% more cycles than 1.279.
+            // Other filesystem profiles retain their existing gate.
+            var allowance = profile.StartsWith("sfs2", StringComparison.Ordinal) ? 1.10 : 1.001;
+            if (candidate > original * allowance) failures.Add($"{phase}: {percent:F3}% slower (limit {(allowance - 1) * 100:F1}%)");
         }
         Assert.True(failures.Count == 0, string.Join("; ", failures));
+    }
+}
+
+public sealed class PerformanceProfileTheoryAttribute : TheoryAttribute
+{
+    public PerformanceProfileTheoryAttribute()
+    {
+        if (Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") != "1" ||
+            !File.Exists(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")) ||
+            !File.Exists(Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")))
+            Skip = "Diagnostic: supply ROM/manifest and set COPPERFS_PERFORMANCE_PROFILE=1 explicitly.";
     }
 }

@@ -16,9 +16,10 @@ public sealed partial class VolumeGeometryTests
         public ulong FailWrite = ulong.MaxValue;
         public int WriteCalls, FailWriteCall;
         public bool BulkTransfers;
+        public uint LastBulkWriteBuffer;
         public int FailFlushCall;
         public long LongReads, GeometryReads;
-        public APTR TrimCertificate;
+        public APTR TrimCertificate, FreedQueue, FfsIndex;
     }
 
     private partial struct Memory(Storage storage, AmigaVolumeGeometry geometry) : IAmigaWritableFileSystemPlatform, IAmigaFileSystemDevicePlatform, IAmigaDiscardFileSystemPlatform
@@ -27,6 +28,8 @@ public sealed partial class VolumeGeometryTests
         public uint BlockBytes => Geometry.BlockBytes;
         public uint ReservedBlocks => Geometry.ReservedBlocks;
         public AmigaVolumeGeometry Geometry { get { storage.GeometryReads++; return geometry; } }
+        public bool TracksFreedRanges => storage.FreedQueue.IsNotNull;
+        public void ObserveFreedRange(uint first, uint count) => AmigaFreedRangeQueue.Add(ref this, storage.FreedQueue, first, count);
         public bool WriteProtected() => storage.Protected;
         public bool Flush() { storage.Flushes++; return !storage.FailFlush && storage.Flushes != storage.FailFlushCall; }
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
@@ -36,7 +39,20 @@ public sealed partial class VolumeGeometryTests
         public uint ReadDataBlocks(uint block, uint count, APTR target) => storage.BulkTransfers
             ? (AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, block, count, target) ? count : 0)
             : AmigaFileSystemBlockIo.Read(ref this, block, count, target);
-        public bool ReadBlock(uint block, APTR target) => AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, block, 1, target);
+        public bool ReadBlock(uint block, APTR target)
+        {
+            if (block == geometry.RootBlock && storage.FfsIndex.IsNotNull)
+            {
+                var root = AmigaFfsMountIndex.NamespaceRoot(ref this, storage.FfsIndex);
+                if (root.IsNotNull) { Copy(root, target, geometry.BlockBytes); return true; }
+            }
+            if (storage.FfsIndex.IsNotNull)
+            {
+                var directory = AmigaFfsMountIndex.NamespaceDirectory(ref this, storage.FfsIndex, block);
+                if (directory.IsNotNull) { Copy(directory, target, geometry.BlockBytes); return true; }
+            }
+            return AmigaFileSystemDeviceCore.Transfer(ref this, geometry, false, block, 1, target);
+        }
         public bool WriteDataBlocks(uint block, uint count, APTR source) => storage.BulkTransfers
             ? AmigaFileSystemDeviceCore.Transfer(ref this, geometry, true, block, count, source)
             : AmigaFileSystemBlockIo.Write(ref this, block, count, source);
@@ -45,12 +61,15 @@ public sealed partial class VolumeGeometryTests
         {
             storage.Transfers.Add((command, offset, bytes));
             var write = command is 3 or 25;
+            if (write && storage.FfsIndex.IsNotNull && AmigaFfsMountIndex.NamespaceRoot(ref this, storage.FfsIndex).IsNotNull)
+                return false; // Mirrors the native owner's guard on untracked metadata writes.
+            if (write && bytes > geometry.BlockBytes) storage.LastBulkWriteBuffer = buffer.Raw;
             if (write && storage.TrimCertificate.IsNotNull) WriteUInt32(storage.TrimCertificate, 0, 0);
             if (write && ++storage.WriteCalls == storage.FailWriteCall) return false;
-            if (write && offset == storage.FailWrite) return false;
             for (var at = 0u; at < bytes; at += geometry.SectorBytes)
             {
                 var address = offset + at;
+                if (write && address == storage.FailWrite) return false;
                 var ram = storage.Ram.AsSpan((int)(buffer.Raw + at), (int)geometry.SectorBytes);
                 if (write) storage.Sectors[address] = ram.ToArray();
                 else if (storage.Sectors.TryGetValue(address, out var sector)) sector.CopyTo(ram);

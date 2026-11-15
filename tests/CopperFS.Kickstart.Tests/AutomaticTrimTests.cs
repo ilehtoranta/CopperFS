@@ -32,14 +32,61 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3], volumeName: "Correctness").Bytes;
         if (profile == "sfs") Assert.Equal(manifest.ClassicBaseSha256, Hash(image));
         var hook = new AutomaticDiscardHook(fail);
+        var afterReset = -1;
+        long setupStarted = 0, setupCycles = 0, deleteStarted = 0, deleteCycles = 0;
+        (int Reads, int Writes, int Flushes, int Scsi, int Unmaps, long Reclaimed) Snapshot() =>
+            (hook.ReadCommands, hook.WriteCommands, hook.Flushes, hook.ScsiCommands, hook.Discards, hook.DiscardBytes);
+        var start = Snapshot();
+        var reply = start;
+        var idleEnd = start;
         var entry = profile == "ofs" ? "AutoOfs" : profile == "ffs" ? "AutoFfs"
             : profile == "sfs" ? "AutoSfs" : "AutoSfs2";
         var result = await Run(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile), profile,
             fail ? "partial-failure" : "poison", pair.Candidate, image, true,
-            "CorrectnessProbe::" + entry, deviceHook: hook);
+            "CorrectnessProbe::" + entry,
+            observe: (marker, cycle, _, _, _) =>
+            {
+                if (marker == 225) { afterReset = hook.Discards; setupStarted = cycle; }
+                if (marker == 232) { deleteStarted = cycle; start = Snapshot(); }
+                if (marker == 221 && deleteStarted != 0) { deleteCycles = cycle - deleteStarted; reply = Snapshot(); }
+                if (marker == 221 && setupStarted != 0) setupCycles = cycle - setupStarted;
+                if (marker == 222) idleEnd = Snapshot();
+            },
+            deviceHook: hook);
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile,
+            fail ? "failure-foreground.json" : "foreground.json"), JsonSerializer.Serialize(new
+        { Profile = profile, CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), ForegroundDeleteCycles = deleteCycles,
+            CreateCloseAndDeleteCycles = setupCycles,
+            ForegroundIo = new { Reads = reply.Reads - start.Reads, Writes = reply.Writes - start.Writes,
+                Flushes = reply.Flushes - start.Flushes, Scsi = reply.Scsi - start.Scsi },
+            DeferredIo = new { Reads = idleEnd.Reads - reply.Reads, Writes = idleEnd.Writes - reply.Writes,
+                Flushes = idleEnd.Flushes - reply.Flushes, Scsi = idleEnd.Scsi - reply.Scsi,
+                UNMAPs = idleEnd.Unmaps - reply.Unmaps, ReclaimedBytes = idleEnd.Reclaimed - reply.Reclaimed } }, Json));
+        if (!fail && profile is "ffs" or "ofs")
+            Assert.True(idleEnd.Reclaimed - reply.Reclaimed >= 32768, "Expected all deleted payload sectors to be reclaimed.");
         Assert.True(hook.Discards > 0, "The timer must issue actual UNMAP without CopperTrim.");
-        if (fail) Assert.Equal(1, hook.Discards);
-        else Assert.True(hook.MaximumEnd > 4096L * 512, "A second deferred window must execute.");
+        Assert.True(afterReset >= 0);
+        if (Environment.GetEnvironmentVariable("COPPERFS_TRIM_PROFILE") == "1" && !fail)
+        {
+            var profiles = Directory.GetFiles(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile, "poison"),
+                "deferred-*-service-profile.json");
+            Assert.NotEmpty(profiles);
+            var reclaimed = 0;
+            foreach (var file in profiles)
+            {
+                using var sample = JsonDocument.Parse(File.ReadAllText(file));
+                var root = sample.RootElement;
+                var commands = root.GetProperty("ScopeEnd").GetProperty("Discards").GetInt32() -
+                    root.GetProperty("ScopeStart").GetProperty("Discards").GetInt32();
+                Assert.InRange(commands, 0, 1);
+                reclaimed += commands;
+            }
+            Assert.True(reclaimed > 0);
+        }
+        // A long workload may fail maintenance before the explicit remount. Each
+        // mount must suspend after its first failure, and remount permits a retry.
+        if (fail) Assert.Equal(1, hook.Discards - afterReset);
+        else Assert.True(hook.DiscardBytes < 1024 * 1024, "Only unallocated ranges should be trimmed, not the whole free volume.");
         if (profile.StartsWith("sfs"))
             SfsImageChecker.Check(new MemoryStream(result), reservedBlocks: profile == "sfs" ? 2u : 1u);
         else DosImageInspection.Check(result, true);
@@ -83,10 +130,12 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var root = Path.Combine(Path.GetDirectoryName(path)!, "automatic-cuts", profile, cut.ToString());
         var entry = profile == "ofs" ? "CutOfs" : profile == "ffs" ? "CutFfs" : profile == "sfs" ? "CutSfs" : "CutSfs2";
         var hook = new AutomaticDiscardHook(false, cut);
-        await Assert.ThrowsAsync<AutomaticPowerCutException>(() => Run(root, profile, "cut", pair.Candidate,
+        var exception = await Record.ExceptionAsync(() => Run(root, profile, "cut", pair.Candidate,
             AutomaticImage(manifest, profile), true, "CorrectnessProbe::" + entry,
             observe: (marker, _, _, _, _) => { if (marker == 221) hook.CutArmed = true; },
             deviceHook: hook));
+        Assert.True(exception is AutomaticPowerCutException,
+            $"Expected cut {cut}; got {exception}; armed={hook.CutArmed}, requests={hook.Discards}, sectors={hook.DiscardSectors}.");
         var saved = File.ReadAllBytes(Path.Combine(root, "cut", "disk.hdf"));
         await Run(root, profile, "candidate-restart", pair.Candidate, saved, false);
         await Run(root, profile, "original-restart", pair.Original, saved, false);
@@ -99,23 +148,33 @@ public sealed partial class OriginalHandlerCorrectnessTests
 
     private sealed class AutomaticPowerCutException : Exception { }
 
-    private sealed class AutomaticDiscardHook(bool fail, int cutAt = 0) : IAmigaHardfileDiscardIoHook
+    private sealed class AutomaticDiscardHook(bool fail, int cutAt = 0, bool supportsDiscard = true) : IAmigaHardfileDiscardIoHook
     {
-        public int Discards, DiscardSectors;
+        public int Discards, DiscardSectors, Writes;
+        public int ScsiCommands, ReadCommands, WriteCommands, Flushes;
+        public Action<ushort>? CommandObserved;
         public bool CutArmed;
-        public long MaximumEnd;
-        public bool SupportsDiscard => true;
+        public long MaximumEnd, DiscardBytes, ReadBytes, WriteBytes;
+        public bool SupportsDiscard => supportsDiscard;
         public uint MaximumDiscardSectors => 4096;
         public bool FlushOnDispose => false;
         public void ObserveOpen(int unit) { }
+        public void ObserveCommand(ushort command)
+        {
+            CommandObserved?.Invoke(command);
+            if (command == 28) ScsiCommands++;
+            if (command is 2 or 24) ReadCommands++;
+            if (command is 3 or 25) WriteCommands++;
+        }
         public void Read(FileStream file, long offset, Span<byte> bytes)
-        { file.Position = offset; file.ReadExactly(bytes); }
+        { ReadBytes += bytes.Length; file.Position = offset; file.ReadExactly(bytes); }
         public void Write(FileStream file, long offset, ReadOnlySpan<byte> bytes)
-        { file.Position = offset; file.Write(bytes); }
-        public void Flush(FileStream file) => file.Flush(true);
+        { Writes++; WriteBytes += bytes.Length; file.Position = offset; file.Write(bytes); }
+        public void Flush(FileStream file) { Flushes++; file.Flush(true); }
         public void Discard(FileStream file, long offset, int bytes)
         {
             Discards++;
+            DiscardBytes += fail ? 512 : bytes;
             MaximumEnd = Math.Max(MaximumEnd, offset + bytes);
             if (cutAt != 0 && CutArmed)
             {

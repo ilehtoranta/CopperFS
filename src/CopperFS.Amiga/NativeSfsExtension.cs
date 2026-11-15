@@ -128,6 +128,10 @@ public static partial class NativeSfsExtension
 
     public static bool Recover(APTR state, ref AmigaSmartFileSystemWriteCore.Work work)
     {
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+        NativeAmigaFileSystem.ForgetSfsMount(state);
+        NativeAmigaFileSystem.InvalidateDirectoryCursors(state);
+#endif
 #if COPPERSTART_SFS_TRST_BUFFERED
         if (TrstGroupPending(state)) { var p = new NativeFileSystemPlatform(state); return FlushNativeTrstGroup(state, ref p, ref work); }
 #endif
@@ -225,6 +229,9 @@ public static partial class NativeSfsExtension
     {
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartJournalCursorOffset, work.JournalCursor);
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartAllocationCursorOffset, work.AllocationCursor);
+#if COPPERFS_AUTOTRIM
+        if (success) NativeAutomaticTrim.RememberRoots(state, work.BitmapBase, work.RootContainer, work.AdminContainer, work.NodeRoot, work.ExtentRoot);
+#endif
         return success;
     }
 #endif
@@ -265,7 +272,9 @@ public static partial class NativeSfsExtension
         ref AmigaSmartFileSystemWriteCore.Work work, ref AmigaSmartFileSystemWriteCore.Request request,
         AmigaSmartFileSystemWriteCore.TrstOperation kind, out uint actual)
     {
-#if COPPERSTART_SFS_TRST_BUFFERED
+#if COPPERFS_SFS_GROUPED
+        return ExecuteBufferedNativeTrst(state, ref p, ref work, ref request, kind, out actual);
+#elif COPPERSTART_SFS_TRST_BUFFERED
         return ExecuteStrictNativeTrstGroup(state, ref p, ref work, ref request, kind, out actual);
 #else
         actual = 0;
@@ -444,7 +453,16 @@ public static partial class NativeSfsExtension
     }
     public static uint ResolveInformation(APTR state, uint directory, APTR name, uint length,
         out ulong size, out bool isDirectory, out uint parent, out DOS.Error error)
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+        => ResolveFileInformation(state, directory, name, length, out size, out isDirectory, out parent, out _, out error);
+
+    internal static uint ResolveFileInformation(APTR state, uint directory, APTR name, uint length,
+        out ulong size, out bool isDirectory, out uint parent, out uint firstExtent, out DOS.Error error)
+#endif
     {
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+        firstExtent = 0;
+#endif
 #if COPPERSTART_SFS_STANDALONE
         var p = new NativeFileSystemPlatform(state);
 #if COPPERSTART_NATIVE_SFS2
@@ -460,6 +478,10 @@ public static partial class NativeSfsExtension
             isDirectory = (p.ReadUInt8(record, at + 24) & 128) != 0;
             size = isDirectory ? 0 : APTR.ReadUInt32(record, NativeSfsObjectFieldCodec.SizeOffset + at);
             parent = APTR.ReadUInt32(record, NativeSfsObjectFieldCodec.ParentOffset);
+#if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
+            if ((p.ReadUInt8(record, at + 24) & (128 | 64)) == 0)
+                firstExtent = p.ReadUInt32(record, at + 12);
+#endif
         }
         return node;
 #else
@@ -709,13 +731,20 @@ public static partial class NativeSfsExtension
         var cache = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartEnumerationCacheOffset));
         if (cache.IsNull || directory == 0) return NextDirectoryUncached(ref p, state, owned, directory, fib);
         var wanted = APTR.ReadUInt32(fib, 0);
-        var entry = APTR.FromPointer(cache.Raw + 4 + ((directory ^ wanted) & 31) * NativeAmigaFileSystem.SmartEnumerationEntryBytes);
+        var entry = APTR.FromPointer(cache.Raw + 4 + ((directory ^ wanted) & (NativeAmigaFileSystem.SmartEnumerationCapacity - 1)) * NativeAmigaFileSystem.SmartEnumerationEntryBytes);
         var generation = APTR.ReadUInt32(cache, 0);
         if (APTR.ReadUInt32(entry, NativeSfsEnumerationEntryCodec.DirectoryOffset) == directory && APTR.ReadUInt32(entry, NativeSfsEnumerationEntryCodec.WantedOffset) == wanted &&
             APTR.ReadUInt32(entry, NativeSfsEnumerationEntryCodec.GenerationOffset) == generation)
         {
             var cachedError = (DOS.Error)APTR.ReadUInt32(entry, NativeSfsEnumerationEntryCodec.ErrorOffset);
-            if (cachedError == DOS.Error.None) p.Copy(APTR.FromPointer(entry.Raw + 16), fib, FileInfoBlock.SizeInBytes);
+            if (cachedError == DOS.Error.None)
+            {
+#if COPPERFS_SFS_GROUPED
+                LoadEnumerationResult(ref p, APTR.FromPointer(entry.Raw + 16), fib);
+#else
+                p.Copy(APTR.FromPointer(entry.Raw + 16), fib, FileInfoBlock.SizeInBytes);
+#endif
+            }
             // A later collision miss must rebuild its per-lock cursor from the
             // caller's token, since cached steps bypassed that cursor.
             if (owned.IsNotNull) APTR.WriteUInt32(owned, 40, 0);
@@ -724,12 +753,57 @@ public static partial class NativeSfsExtension
         var error = NextDirectoryUncached(ref p, state, owned, directory, fib);
         if (error is DOS.Error.None or DOS.Error.NoMoreEntries)
         {
+#if COPPERFS_SFS_POOL
+            if (error == DOS.Error.None && !ShortEnumerationResult(fib)) return error;
+#endif
             APTR.WriteUInt32(entry, NativeSfsEnumerationEntryCodec.DirectoryOffset, directory); APTR.WriteUInt32(entry, NativeSfsEnumerationEntryCodec.WantedOffset, wanted);
             APTR.WriteUInt32(entry, NativeSfsEnumerationEntryCodec.ErrorOffset, (uint)error); APTR.WriteUInt32(entry, NativeSfsEnumerationEntryCodec.GenerationOffset, generation);
-            if (error == DOS.Error.None) p.Copy(fib, APTR.FromPointer(entry.Raw + 16), FileInfoBlock.SizeInBytes);
+            if (error == DOS.Error.None)
+            {
+#if COPPERFS_SFS_GROUPED
+                StoreEnumerationResult(ref p, fib, APTR.FromPointer(entry.Raw + 16));
+#else
+                p.Copy(fib, APTR.FromPointer(entry.Raw + 16), FileInfoBlock.SizeInBytes);
+#endif
+            }
         }
         return error;
     }
+
+#if COPPERFS_SFS_GROUPED
+#if COPPERFS_SFS_POOL
+    internal static bool ShortEnumerationResult(APTR fib) =>
+        APTR.ReadUInt8(fib, 8) <= 31 && APTR.ReadUInt8(fib, 144) <= 23;
+#endif
+    internal static void StoreEnumerationResult(ref NativeFileSystemPlatform p, APTR fib, APTR image)
+    {
+#if COPPERFS_SFS_POOL
+        p.Copy(fib, image, 40); // key, type and 32-byte BSTR field
+        p.Copy(APTR.FromPointer(fib.Raw + 116), APTR.FromPointer(image.Raw + 40), 52);
+        APTR.WriteUInt32(image, 92, APTR.ReadUInt32(fib, FileInfoBlock.OwnerOffset));
+#else
+        // ExamineObject emits identical types at 4/120 and clears 228..259.
+        // Extended packets derive their 64-bit fields after this cache step.
+        p.Copy(fib, image, 224);
+        APTR.WriteUInt32(image, 120, APTR.ReadUInt32(fib, FileInfoBlock.OwnerOffset));
+#endif
+    }
+
+    internal static void LoadEnumerationResult(ref NativeFileSystemPlatform p, APTR image, APTR fib)
+    {
+#if COPPERFS_SFS_POOL
+        p.Clear(fib, FileInfoBlock.SizeInBytes);
+        p.Copy(image, fib, 40);
+        p.Copy(APTR.FromPointer(image.Raw + 40), APTR.FromPointer(fib.Raw + 116), 52);
+        APTR.WriteUInt32(fib, FileInfoBlock.OwnerOffset, APTR.ReadUInt32(image, 92));
+#else
+        p.Copy(image, fib, 224);
+        APTR.WriteUInt32(fib, FileInfoBlock.OwnerOffset, APTR.ReadUInt32(image, 120));
+        APTR.WriteUInt32(fib, 120, APTR.ReadUInt32(fib, 4));
+        p.Clear(APTR.FromPointer(fib.Raw + 228), 32);
+#endif
+    }
+#endif
 
     private static DOS.Error NextDirectoryUncached(ref NativeFileSystemPlatform p, APTR state, APTR owned, uint directory, APTR fib)
     {

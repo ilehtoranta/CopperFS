@@ -1,26 +1,33 @@
 # CopperFS
 
-CopperFS is the umbrella repository for CopperFFS (OFS/FFS), CopperSFS
-(classic SFS/SFS2), their shared native handler sources and CopperTrim.
-The formats retain separate allocation, validation and recovery implementations.
+CopperFS is the umbrella project for CopperFFS (OFS/FFS), CopperSFS
+(classic SFS/SFS2), and CopperNova (CNFS). It also hosts the shared native
+handler sources and CopperTrim.
+
+CopperNova is the new Amiga filesystem under development here. Its official
+abbreviation is **CNFS**. **CPX4** identifies its experimental version 4
+on-disk format. The standalone handler for that format is `CopperCPX4`.
+See the [CopperNova design](docs/new-filesystem-design.md).
 
 | Component | Location |
 | --- | --- |
 | OFS/FFS core | `src/CopperFFS.Core` |
 | Classic SFS and SFS2 cores | `src/CopperSFS.Core` |
+| CopperNova experimental CPX4 core | `src/CopperCPX.Core` |
 | Standalone Amiga handler project and shared sources | `src/CopperFS.Amiga` |
 | CopperTrim and compatibility command | `tools/CopperSFS.Trim` |
 | Managed filesystem tests | `tests/CopperFFS.Core.Tests`, `tests/CopperSFS.Core.Tests` |
 | Native build tools | `build/Build-Handler.ps1`, `build/Build-Trim.ps1` |
 
-CopperFFS supports DOS0 OFS and DOS1 FFS reads, writes and manual TRIM on
-one mount. Its reader also handles DOS2-DOS5; those variants remain read-only.
+CopperFFS reads, writes and quick-formats DOS0–DOS5 on one mount, including
+international names and directory caches; see [classic variant writes](docs/classic-variant-writes.md).
+Manual TRIM remains separately qualified for DOS0/DOS1.
 New OFS/FFS data prefers adjacent blocks, then free runs within the remainder
 of the current track (a pointer-table-sized window when track geometry is
 unknown), without searching additional bitmap pages for contiguity. Fragmented
 space retains the first-free fallback. Disk formats and sector I/O are unchanged.
 CopperSFS supports classic SFS and SFS2 with their existing CSUN/TRST policies.
-CopperTrim uses the same version-1 packet for all four supported writable formats.
+CopperTrim uses the same version-1 packet for DOS0, DOS1, classic SFS and SFS2.
 The CopperSFSTrim command remains a byte-identical compatibility alias.
 
 ## Build and test
@@ -73,6 +80,29 @@ See [integration and migration](docs/copperfs-integration.md) for boundaries,
 validation and source provenance, and [manual TRIM](docs/manual-trim.md) for usage.
 
 ## Research tools and additional tests
+
+The isolated [new-filesystem prototype](prototypes/CopperFS.Prototype/README.md)
+explores variable-length extents, inline files, bounded scratch and crash recovery
+in a separate experimental format. Its in-memory demo and host tests are included
+in the solution; it has no native handler or dependency from the existing cores.
+
+The [CopperNova design and safety review](docs/new-filesystem-design.md)
+proposes a separate format with small allocation units, extents, inline data,
+UTF-8/legacy names and TRIM. The CPX3 prototype implements its journal, tree and
+reserve model; [qualification and remaining native gates](docs/cpx3-prototype-qualification.md)
+separate host crash tests from 68000 and media coverage. Existing formats are unchanged.
+The [68000 readiness report](docs/cpx3-68000-readiness.md) records high/low
+arithmetic, resumable scans, scratch budgets and measured arithmetic stack usage.
+The separate [CPX4 native port](docs/cpx4-native-progress.md) now builds a standalone
+handler with resumable file I/O, namespace mutations, external truncation,
+extent-tree growth and unwritten conversion, handle/lock conversion, parent and
+access-mode operations, directory enumeration and information
+queries, ExAll, notifications, timed record locks, Inhibit/remount and bounded
+storage cancellation/media events, Format, persistent volume labels and SetOwner
+with persistent UID/GID metadata and ExAll ownership queries, a partial
+DOS dispatcher and UNMAP.
+Its 512 KiB MC68000 boot/stack workloads are separate from the unfinished full
+packet-parity and exhaustive failure-path qualification.
 
 See [the selective research port](docs/research-port.md) for the image checker,
 reliability tests, wide-volume tests, and unresolved research findings.

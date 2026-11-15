@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CopperNova (CNFS) · Amiga filesystem limits and capabilities</title>
+  <meta name="description" content="CopperNova (CNFS) technical reference for Amiga hard disks. File and partition limits, block sizes, memory use, supported features and MC68000 test results.">
+  <link rel="canonical" href="https://ilehtoranta.github.io/CopperFS/coppernova/">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="masthead">
+    <div class="wrap bar">
+      <a class="brand" href="../" aria-label="CopperFS home"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>CopperFS</a>
+      <nav class="primary" aria-label="Main navigation">
+        <a href="../">Overview</a>
+        <a href="../copperffs/">CopperFFS</a>
+        <a href="../coppersfs/">CopperSFS</a>
+        <a href="../coppernova/" aria-current="page">CopperNova</a>
+      </nav>
+      <a class="github" href="https://github.com/ilehtoranta/CopperFS">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+  <main class="wrap" id="main" tabindex="-1">
+    <header class="detail-head">
+      <h1>CopperNova (CNFS)</h1>
+      <p class="lead">An experimental extent-based filesystem for Amiga hard disks.</p>
+    </header>
+    <div class="reference">
+      <nav class="outline" aria-label="Page contents"><b>On this page</b>
+        <a href="#technical-card">Technical card</a>
+        <a href="#feature-matrix">Feature matrix</a>
+        <a href="#build">Build the handler</a>
+        <a href="#qualification">Qualification evidence</a>
+      </nav>
+      <div class="content">
+        <section aria-labelledby="technical-card">
+          <h2 id="technical-card">Technical card</h2>
+          <table class="specs" aria-labelledby="technical-card">
+            <thead><tr><th scope="col">Specification</th><th scope="col">Value</th></tr></thead>
+            <tbody>
+              <tr><th scope="row" id="file-size"><a href="#file-size">File size (on-disk field)</a></th><td>16&nbsp;EB − 1&nbsp;byte maximum</td></tr>
+              <tr><th scope="row" id="disk-and-partition-size"><a href="#disk-and-partition-size">Partition size</a></th><td>4&nbsp;MB minimum<br>16&nbsp;EB − 512&nbsp;bytes maximum</td></tr>
+              <tr><th scope="row" id="block-sizes"><a href="#block-sizes">Block sizes</a></th><td>512&nbsp;bytes, 1&nbsp;kB, 2&nbsp;kB or 4&nbsp;kB</td></tr>
+              <tr><th scope="row">Metadata page sizes</th><td>1&nbsp;kB, 2&nbsp;kB or 4&nbsp;kB</td></tr>
+              <tr><th scope="row">Classic DOS seek and resize limit</th><td>2&nbsp;GB − 1&nbsp;byte</td></tr>
+              <tr><th scope="row" id="names"><a href="#names">Filename length</a></th><td>768 UTF-8 bytes on disk<br>255 bytes per DOS input component</td></tr>
+              <tr><th scope="row">Volume label length</th><td>30 Latin-1 characters</td></tr>
+            </tbody>
+          </table>
+          <p class="unit-note">Sizes use multiples of 1,024 (1 kB = 1,024 bytes).</p>
+          <p>The partition maximum is 16 EB minus one allocation unit. The value above uses 512-byte units. With 4 kB units, the maximum is 16 EB − 4 kB. Each allocation unit must contain whole device sectors. Partitions extending beyond the 4 GB device boundary require TD64.</p>
+        </section>
+        <section aria-labelledby="feature-matrix">
+          <h2 id="feature-matrix">Feature matrix</h2>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="CopperNova feature matrix">
+            <table class="matrix" aria-labelledby="feature-matrix">
+              <thead><tr><th scope="col">Capability</th><th scope="col">Current behavior</th><th scope="col">Limits</th><th scope="col">Test evidence</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">File storage</th><td>Files up to 160 bytes can live inside their object record. Larger files use extents.</td><td>Six extent descriptors fit inline. The seventh promotes the list into a tree.</td><td>Full-ROM emulation. <a href="../../docs/cpx4-native-progress.md#implemented-native-path">Extent promotion and growth</a>.</td></tr>
+                <tr><th scope="row">Sparse files</th><td>Holes and unwritten ranges read as zero. Resizing can extend a file without allocating its whole length.</td><td>DOS Seek stays inside the logical file. Use SetFileSize to extend it.</td><td>Host tests. <a href="../../docs/cpx4-layered-qualification.md#oracles-and-replay">Sparse write and size checks</a>.</td></tr>
+                <tr><th scope="row">Hard and soft links</th><td>Hard links share a file object. Soft links resolve stored targets.</td><td>Directory hard links are refused. DOS link resolution is bounded and rejects cycles.</td><td>Full-ROM emulation. <a href="../../docs/cpx4-native-progress.md#newreadlink-measurements-2026-11-14">Link packet contract and measurements</a>.</td></tr>
+                <tr><th scope="row">Filenames</th><td>DOS Latin-1 names are encoded as UTF-8. Case-insensitive lookup uses fixed Latin-1 folding.</td><td>Classic Examine gives long or unrepresentable names a stable <code>__u</code> alias.</td><td>Host tests. <a href="../../docs/cpx4-native-progress.md#enumeration-and-information-contract">Name conversion and enumeration</a>.</td></tr>
+                <tr><th scope="row">Wide DOS I/O</th><td>Seek64, SetFileSize64 and wide Examine expose paired 64-bit values.</td><td>Classic Examine reports zero for sizes above 2 GB − 1 byte. Applications need the wide packets for larger values.</td><td>Full-ROM emulation. <a href="../../docs/cpx4-native-progress.md#previous-inhibitmediaexall-checkpoint">Wide sparse-file workload</a>.</td></tr>
+                <tr><th scope="row">Metadata recovery</th><td>The redo journal protects metadata. Recovery validates the committed log before replaying home pages.</td><td>An interrupted external in-place overwrite can leave partial file data. Recovery needs a device that honors flush barriers.</td><td>Host tests. <a href="../../docs/cpx4-layered-qualification.md#crash-corruption-and-boundary-coverage">Crash and replay injections</a>.</td></tr>
+                <tr><th scope="row">Format and labels</th><td>DOS Format initializes a quiescent volume. RenameDisk persists the new label in the journal.</td><td>Formatting is destructive. CopperNova readers built before volume-label support reject labeled volumes.</td><td>Full-ROM emulation. <a href="../../docs/cpx4-native-progress.md#formatlabel-checkpoint-2026-11-14">Format and label checkpoint</a>.</td></tr>
+                <tr><th scope="row">TRIM / UNMAP</th><td>CopperTrim can query support, count free ranges or discard verified free allocation units.</td><td>Requires SCSI UNMAP through HD_SCSICMD, VPD B2/B0 limits and matching READ CAPACITY(16) geometry. Execution requires a writable mount.</td><td>Compiled MC68000 and full-ROM emulation. <a href="../../docs/cpx4-native-progress.md#private-trim-measurements-2026-11-14">TRIM probes and workloads</a>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section aria-labelledby="build">
+          <h2 id="build">Build the handler</h2>
+          <p>Install .NET 10 and place CopperSharp68k beside CopperFS. From the CopperFS root, build the standalone MC68000 handler with PowerShell.</p>
+          <pre tabindex="0"><code>./build/Build-Cpx4Handler.ps1</code></pre>
+          <p>The output is <code>artifacts/native-cpx4-handler/CopperCPX4</code>. Use <code>-CopperSharpRoot</code> for a different toolchain checkout. The build writes a source manifest with the compiler and HUNK hashes. <a href="../../build/Build-Cpx4Handler.ps1">Handler build script</a>.</p>
+        </section>
+        <section aria-labelledby="qualification">
+          <h2 id="qualification">Qualification evidence</h2>
+          <p><time datetime="2026-11-14">14 November 2026</time>. Coverage applies to the builds and workloads identified in the reports.</p>
+          <ul class="criteria">
+            <li><strong>Host tests</strong> write and remount volumes with all ten supported sector and allocation-unit combinations. Fault injection covers interrupted writes, journal replay and damaged metadata. <a href="../../docs/cpx4-layered-qualification.md#oracles-and-replay">Host test methods</a> · <a href="../../docs/cpx4-layered-qualification.md#crash-corruption-and-boundary-coverage">Geometry and remount results</a>.</li>
+            <li><strong>Compiled MC68000 tests</strong> mounted a 4 MB partition starting above the 4 GB device boundary using TD64. They also exercise geometry discovery and split requests. <a href="../../docs/cpx4-native-progress.md#startup-geometry-discovery">Device addressing tests</a>.</li>
+            <li><strong>Full-ROM emulation</strong> exercised wide DOS seek and read above the 4 GB position in a sparse file. The seven geometry-discovery workloads covered damaged-anchor fallback, formatting, file growth and journal recovery. <a href="../../docs/cpx4-native-progress.md#previous-inhibitmediaexall-checkpoint">Sparse-file workload</a> · <a href="../../docs/cpx4-native-progress.md#startup-geometry-discovery">Geometry workloads</a>.</li>
+            <li><strong>Physical hardware.</strong> Maximum physical-drive capacity, controller compatibility and SSD discard remain unqualified. <a href="../../docs/cpx4-layered-qualification.md#open-acceptance-gates">Open acceptance gates</a>.</li>
+          </ul>
+          <h3 id="machine-and-memory">Machine and memory</h3>
+          <p>The geometry-discovery build ran on an emulated MC68000 with Kickstart 3.1 and 512 kB of Chip RAM. Loaded segments used 176,264 bytes, the working arena used 68 kB, and OS and device allocations added 1,272 bytes at mount. Peak stack use across the seven workloads was 1,688 bytes out of 4 kB allocated. <a href="../../docs/cpx4-native-progress.md#startup-geometry-discovery">Memory measurements by workload</a>.</p>
+          <p class="checkpoint">Source revision <span id="source-revision">working tree based on <code>310e39f</code></span>. Geometry-checkpoint HUNK SHA-256 <code>8A473A273883BE50A5A6E69DAB2B1D9D1AA4D66E4875DD33872B5450A9212A2C</code>.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <span><b>CopperFS</b> <span class="dim">/</span> Amiga filesystems</span>
+    <a href="https://github.com/ilehtoranta/CopperFS/blob/main/LICENSE">MIT license</a>
+  </footer>
+</body>
+</html>

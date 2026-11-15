@@ -3,12 +3,14 @@ using Amiga;
 namespace CopperCPX.Amiga;
 
 /// <summary>All transport progress lives in the mount arena. Each service call
-/// submits or reaps at most one command and returns to the handler's event loop.</summary>
+/// submits at most one command and can retire its quick completion immediately.
+/// Deferred completions return to the handler's event loop.</summary>
 public static class NativeCpxTransport
 {
     // 2048..2191 control; 4096..8191 DMA bounce page, inside the 8 KiB mount budget.
     private static APTR State(uint arena)=>APTR.FromPointer(arena+2048);
     private const int Bounce=76, BounceBytes=80, OwnedBytes=84, ForceBounce=88, ScsiControl=92, OwnedBase=96;
+    internal static void EnableQuickIo(uint arena)=>APTR.WriteUInt32(State(arena),100,1);
     public static void Initialize(uint arena,APTR request,Wide start,Wide sectors,uint maximum,uint mask,bool td64,uint sectorBytes=512)
     {
         APTR s=State(arena); for(int n=0;n<144;n+=4) APTR.WriteUInt32(s,n,0);
@@ -126,18 +128,46 @@ public static class NativeCpxTransport
         }
         if(APTR.ReadUInt32(s,48)!=io.Token) { APTR.WriteUInt32(s,48,io.Token); APTR.WriteUInt32(s,52,0); }
         if(io.Kind==IoKind.Flush)
-        { APTR.WriteUInt32(s,56,0); return NativeCpxIo.SubmitFlush(request,s,io.Token)==CpxError.None?StepResult.Pending:StepResult.Failed; }
+        {
+            APTR.WriteUInt32(s,56,0);
+            if(NativeCpxIo.SubmitFlush(request,s,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
+            return APTR.ReadUInt32(s,0)==3?Service(arena,io,out completed,out unsupported):StepResult.Pending;
+        }
         uint done=APTR.ReadUInt32(s,52);
         if(done>io.Bytes) return StepResult.Failed;
+        if(!TryDirect(s,io,out var command))
+        {
         var cursor=new Td64Transfer();
         int shift=SectorShift(arena);
         CpxError begin=cursor.Begin(new(APTR.ReadUInt32(s,20),APTR.ReadUInt32(s,24)),new(APTR.ReadUInt32(s,28),APTR.ReadUInt32(s,32)),
             io.Sector+(done>>shift),shift,io.Bytes-done,io.Buffer+done,APTR.ReadUInt32(s,36),APTR.ReadUInt32(s,40),
             APTR.ReadUInt32(s,Bounce),APTR.ReadUInt32(s,BounceBytes),io.Kind==IoKind.Write,APTR.ReadUInt32(s,44)!=0,APTR.ReadUInt32(s,ForceBounce)!=0);
-        if(begin!=CpxError.None||cursor.Next(out var command)!=StepResult.NeedIo) return StepResult.Failed;
+        if(begin!=CpxError.None||cursor.Next(out command)!=StepResult.NeedIo) return StepResult.Failed;
+        }
         APTR.WriteUInt32(s,56,command.Length); APTR.WriteUInt32(s,60,command.Bounced?1u:0u);
         if(io.Kind==IoKind.Write&&command.Bounced) Copy(io.Buffer+done,command.Buffer,command.Length);
-        return NativeCpxIo.Submit(request,s,command,io.Token)==CpxError.None?StepResult.Pending:StepResult.Failed;
+        if(NativeCpxIo.Submit(request,s,command,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
+        return APTR.ReadUInt32(s,0)==3?Service(arena,io,out completed,out unsupported):StepResult.Pending;
+    }
+    private static bool TryDirect(APTR s,CpxIo io,out DeviceRequest command)
+    {
+        command=default;
+        uint shift=APTR.ReadUInt32(s,68);
+        if(shift<9||shift>12||APTR.ReadUInt32(s,52)!=0||APTR.ReadUInt32(s,88)!=0||
+            io.Sector.High!=0||APTR.ReadUInt32(s,20)!=0||APTR.ReadUInt32(s,28)!=0) return false;
+        uint sector=1u<<(int)shift,baseLow=APTR.ReadUInt32(s,24),length=io.Bytes;
+        if(length==0||io.Buffer==0||length>uint.MaxValue-io.Buffer||
+            ((length|baseLow)&(sector-1))!=0||length>APTR.ReadUInt32(s,36)||APTR.ReadUInt32(s,80)<sector) return false;
+        uint sectors=length>>(int)shift,end=unchecked(io.Sector.Low+sectors);
+        if(end<io.Sector.Low||end>APTR.ReadUInt32(s,32)||io.Sector.Low>(uint.MaxValue>>(int)shift)) return false;
+        uint relative=io.Sector.Low<<(int)shift,offset=unchecked(baseLow+relative);
+        if(offset<baseLow||length>uint.MaxValue-offset) return false;
+        uint mask=APTR.ReadUInt32(s,40);
+        if(!Td64Transfer.DmaRange(APTR.ReadUInt32(s,76),APTR.ReadUInt32(s,80),mask)||!Td64Transfer.DmaRange(io.Buffer,length,mask)) return false;
+        bool wide=APTR.ReadUInt32(s,44)!=0;
+        command=new DeviceRequest {Command=wide?(io.Kind==IoKind.Write?25u:24u):(io.Kind==IoKind.Write?3u:2u),
+            OffsetLow=offset,Length=length,Buffer=io.Buffer};
+        return true;
     }
     private static void Copy(uint from,uint to,uint bytes)
     { for(uint n=0;n<bytes;n++) APTR.WriteUInt8(APTR.FromPointer(to+n),0,APTR.ReadUInt8(APTR.FromPointer(from+n),0)); }

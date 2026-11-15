@@ -7,6 +7,145 @@ namespace CopperSFS.Tests;
 public sealed class Sfs2TrimTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     [Theory]
+    [InlineData(8 * 1024 * 1024)] [InlineData(128 * 1024 * 1024)]
+    public void AutomaticSfs2ReadsOnlyIntersectingMapsOnSmallAndLargeVolumes(int capacity)
+    {
+        var disk = new StudyDisk(Empty(bytes: 1024, capacity: capacity), 1024); var work = WorkFor(disk);
+        var batch = APTR.FromPointer((uint)disk.Ram.Length - 2048);
+        AmigaAutomaticTrimBatch.Begin(ref disk, batch, 11, 7,
+            new AmigaFileSystemDiscardLimits { MaximumBlocks = 4096, Granularity = 1 }, 8);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Inputs, 2);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input, 1000);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input + 4, 16);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input + 8, disk.Geometry.BlockCount - 100);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input + 12, 16);
+        Assert.True(AmigaSmartFileSystem2WriteCore.CollectAutomaticTrim(ref disk, ref work, batch, 11, 7), work.Error.ToString());
+        Assert.Equal(32u, disk.ReadUInt32(batch, AmigaAutomaticTrimBatch.OutputBlocks));
+        Assert.Equal(1, disk.Counts.Flushes);
+        Assert.InRange(disk.Counts.BlockReads, 2, 8);
+        Assert.Equal(0, disk.Counts.BlockWrites);
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void AutomaticSfs2BatchPreservesReusedDataAfterEitherCommitPolicy(bool redo)
+    {
+        var disk = new StudyDisk(Empty(), 512, crashModel: true);
+        var deleted = CreateFile(ref disk, "Deleted"); PutFile(ref disk, deleted, 0, StudyFixture.Pattern(32768, 22));
+        disk.FreedQueue = APTR.FromPointer((uint)disk.Ram.Length - 4096);
+        var work = WorkFor(disk); var r = new AmigaSmartFileSystem2WriteCore.Request { Node = deleted };
+        Assert.True(redo ? AmigaSmartFileSystem2WriteCore.ExecuteTrst(ref disk, ref work, ref r,
+            AmigaSmartFileSystem2WriteCore.TrstOperation.Remove, disk.Payload, 192 * 1024, out _)
+            : AmigaSmartFileSystem2WriteCore.Remove(ref disk, ref work, deleted));
+        Assert.InRange(AmigaFreedRangeQueue.Count(ref disk, disk.FreedQueue), 1u, 8u);
+        var kept = CreateFile(ref disk, "Reused"); PutFile(ref disk, kept, 0, StudyFixture.Pattern(4096, 23));
+        var expected = Manifest(disk.Snapshot());
+        var batch = APTR.FromPointer((uint)disk.Ram.Length - 2048);
+        AmigaAutomaticTrimBatch.Begin(ref disk, batch, 11, 7,
+            new AmigaFileSystemDiscardLimits { MaximumBlocks = 4096, Granularity = 1 }, 8);
+        uint used = 0;
+        while (AmigaFreedRangeQueue.Take(ref disk, disk.FreedQueue, 512, 0, out var first, out var count))
+        {
+            Assert.True(used < 8);
+            disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input + (int)used * 8, first);
+            disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input + (int)used * 8 + 4, count); used++;
+        }
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Inputs, used); AmigaAutomaticTrimBatch.Sort(ref disk, batch);
+        var writes = disk.Counts.BlockWrites;
+        Assert.True(AmigaSmartFileSystem2WriteCore.CollectAutomaticTrim(ref disk, ref work, batch, 11, 7), work.Error.ToString());
+        Assert.Equal(writes, disk.Counts.BlockWrites);
+        Assert.True(disk.ReadUInt32(batch, AmigaAutomaticTrimBatch.OutputBlocks) > 0);
+        disk.DiscardLimits = new() { MaximumBlocks = 4096, Granularity = 1 };
+        for (var i = 0u; i < disk.ReadUInt32(batch, AmigaAutomaticTrimBatch.Outputs); i++)
+            Assert.True(disk.DiscardBlocks(APTR.Null, disk.ReadUInt32(batch, AmigaAutomaticTrimBatch.Output + (int)i * 8),
+                disk.ReadUInt32(batch, AmigaAutomaticTrimBatch.Output + (int)i * 8 + 4)));
+        Assert.Equal(expected, Manifest(disk.Snapshot())); Inspect(disk.Snapshot());
+    }
+
+    [Theory]
+    [InlineData(0x54524641u)] [InlineData(0x54525354u)]
+    public void AutomaticSfs2RefusesDirtyMarkerWithoutRecoveryWrites(uint id)
+    {
+        var image = Empty(); var marker = (int)(U32(image, 104) + 2) * 512;
+        U32(image, marker, id); Seal(image.AsSpan(marker, 512));
+        var disk = new StudyDisk(image, 512, crashModel: true); var work = WorkFor(disk);
+        var batch = APTR.FromPointer((uint)disk.Ram.Length - 2048);
+        AmigaAutomaticTrimBatch.Begin(ref disk, batch, 11, 7,
+            new AmigaFileSystemDiscardLimits { MaximumBlocks = 4096, Granularity = 1 }, 8);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Inputs, 1);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input, 100);
+        disk.WriteUInt32(batch, AmigaAutomaticTrimBatch.Input + 4, 32);
+        Assert.False(AmigaSmartFileSystem2WriteCore.CollectAutomaticTrim(ref disk, ref work, batch, 11, 7));
+        Assert.Equal(0, disk.Counts.BlockWrites); Assert.Empty(disk.DiscardRequests);
+        Assert.Equal(0u, disk.ReadUInt32(batch, AmigaAutomaticTrimBatch.Outputs));
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void TrackedBatchUsesOneBarrierAndPartialFailureTouchesOnlyFreeBlocks(bool fail)
+    {
+        var disk = new StudyDisk(Empty(capacity: 8 * 1024 * 1024), 512) { FailDiscardAt = fail ? 1 : 0 };
+        var batch = APTR.FromPointer((uint)disk.Ram.Length - 2048);
+        disk.WriteUInt32(batch, 0, 100); disk.WriteUInt32(batch, 4, 16);
+        disk.WriteUInt32(batch, 8, 300); disk.WriteUInt32(batch, 12, 16);
+        var work = WorkFor(disk);
+        Assert.Equal(!fail, AmigaSmartFileSystem2WriteCore.TrimFreedBatch(ref disk, ref work, APTR.Null, batch, 2, out var result));
+        Assert.Equal(1, disk.Counts.Flushes);
+        Assert.Equal(fail ? 0u : 32u, result.Blocks);
+        foreach (var (first, count) in disk.DiscardRequests)
+            Assert.True(first >= 100 && first + count <= 116 || first >= 300 && first + count <= 316);
+        Inspect(disk.Snapshot());
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void TrackedSfs2RemovalAndReuseNeverDiscardAllocatedBlocks(bool redo)
+    {
+        var disk = new StudyDisk(Empty(), 512, crashModel: true);
+        var deleted = CreateFile(ref disk, "Deleted"); PutFile(ref disk, deleted, 0, StudyFixture.Pattern(8192, 22));
+        disk.FreedQueue = APTR.FromPointer((uint)disk.Ram.Length - 4096);
+        var work = WorkFor(disk);
+        if (redo)
+        {
+            var r = new AmigaSmartFileSystem2WriteCore.Request { Node = deleted };
+            Assert.True(AmigaSmartFileSystem2WriteCore.ExecuteTrst(ref disk, ref work, ref r,
+                AmigaSmartFileSystem2WriteCore.TrstOperation.Remove, disk.Payload, 192 * 1024, out _));
+        }
+        else Assert.True(AmigaSmartFileSystem2WriteCore.Remove(ref disk, ref work, deleted));
+        Assert.True(AmigaFreedRangeQueue.Count(ref disk, disk.FreedQueue) > 0);
+        var kept = CreateFile(ref disk, "Reused"); PutFile(ref disk, kept, 0, StudyFixture.Pattern(16384, 23));
+        var expected = Manifest(disk.Snapshot());
+        for (var guard = 0; AmigaFreedRangeQueue.Count(ref disk, disk.FreedQueue) != 0; guard++)
+        {
+            Assert.True(guard < 128);
+            Assert.True(AmigaFreedRangeQueue.Take(ref disk, disk.FreedQueue, 64, 0, out var first, out var count));
+            var before = disk.DiscardRequests.Count;
+            Assert.True(AmigaSmartFileSystem2WriteCore.TrimFreedRange(ref disk, ref work, APTR.Null,
+                first, count, out _), work.Error.ToString());
+            foreach (var (block, length) in disk.DiscardRequests.Skip(before))
+                Assert.True(block >= first && length <= count && block - first <= count - length);
+            Assert.Equal(expected, Manifest(disk.Snapshot()));
+        }
+        Inspect(disk.Snapshot());
+    }
+
+    [Fact]
+    public void TrackedRangeIoDoesNotReadUnrelatedAllocationPages()
+    {
+        var reads = new List<long>();
+        foreach (var mib in new[] { 8, 32 })
+        {
+            var disk = new StudyDisk(Empty(capacity: mib * 1024 * 1024), 512);
+            var work = WorkFor(disk); var before = disk.Counts.BlockReads;
+            Assert.True(AmigaSmartFileSystem2WriteCore.TrimFreedRange(ref disk, ref work, APTR.Null, 100, 16, out var result));
+            Assert.Equal(16u, result.Blocks);
+            reads.Add(disk.Counts.BlockReads - before);
+            output.WriteLine($"{mib} MiB tracked 16-block hint: {disk.Counts}");
+        }
+        Assert.Equal(reads[0], reads[1]);
+    }
+
+    [Theory]
     [InlineData(8, 512)] [InlineData(32, 512)] [InlineData(128, 4096)]
     public void CachedWindowValidationIsLinearAndWritesInvalidateIt(int mib, int bytes)
     {

@@ -22,11 +22,27 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     private long deviceWrites, rangeReads, rangeWrites;
     private uint maxRangeBlocks;
     internal int Events, CutAfterEvent, TearAtWrite, TearBytes, FailAtEvent, FailAtRead;
+    internal List<(uint Block, byte[] Data)>? WrittenBlocks;
+    internal List<long>? FlushWriteCounts;
+    internal List<(uint From, uint To, uint Bytes)>? CopyRanges;
     internal bool BatchedWrites, ScalarRanges, PersistentFailure, ReadOnly;
     internal bool RelocateFragmented = true;
     public APTR RedoOverlay { get; set; }
+    public APTR Sfs2Context { get; set; }
+    public bool UsesOriginalSfs2DataWrites { get; set; }
+    public bool SupportsRetainedBlockWrites { get; set; }
+    internal int RetainedWrites;
+    public bool WriteRetainedBlock(uint block, APTR source)
+    {
+        if (!SupportsRetainedBlockWrites || RedoOverlay.IsNotNull) throw new InvalidOperationException("Invalid retained write.");
+        RetainedWrites++;
+        return WriteBlock(block, source);
+    }
+    internal List<(uint Block, uint Count)>? OriginalDataWrites;
     internal bool DiscardSupported = true;
-    internal APTR TrimCertificate;
+    internal APTR TrimCertificate, FreedQueue;
+    public bool TracksFreedRanges => FreedQueue.IsNotNull;
+    public void ObserveFreedRange(uint first, uint count) => AmigaFreedRangeQueue.Add(ref this, FreedQueue, first, count);
     internal int Discarded, FailDiscardAt;
     internal AmigaFileSystemDiscardLimits DiscardLimits = new() { MaximumBlocks = 32, Granularity = 1 };
     internal List<(uint Block, uint Count)> DiscardRequests = new();
@@ -41,14 +57,16 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
         internal readonly byte[] Data = new byte[length];
     }
     internal StudyDisk(byte[] image, int blockBytes, bool crashModel = false, int cacheBytes = 0, int readAheadBytes = 0,
-        bool batchedWrites = false, uint maxTransfer = 0x7FFFFFFF, uint reservedBlocks = 1)
+        bool batchedWrites = false, uint maxTransfer = 0x7FFFFFFF, uint reservedBlocks = 1, uint sectorBytes = 0)
     {
         bytes = blockBytes; this.crashModel = crashModel;
         device = new byte[image.Length + 2 * bytes];
         device.AsSpan(0, bytes).Fill(0xA5); device.AsSpan(device.Length - bytes, bytes).Fill(0xA5);
         image.CopyTo(device, bytes);
         AmigaVolumeGeometry.Create((uint)(image.Length / bytes), (uint)bytes, reservedBlocks, out var geometry);
-        geometry.MaxTransfer = maxTransfer; Geometry = geometry;
+        geometry.MaxTransfer = maxTransfer;
+        if (sectorBytes != 0) geometry.SectorBytes = sectorBytes;
+        Geometry = geometry;
         BatchedWrites = batchedWrites;
         Ram = new byte[6 * bytes + 1024 * 1024 + 512 + 65536 + AmigaSmartFileSystemWriteCore.OverwriteReservationBytes];
         pending = new();
@@ -115,6 +133,11 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
         found.Data.AsSpan(offset - start, bytes).CopyTo(output);
         return true;
     }
+    public bool ReadSfs2PhysicalMetadata(uint block, APTR destination)
+    {
+        var saved = RedoOverlay; RedoOverlay = APTR.Null;
+        var result = ReadBlock(block, destination); RedoOverlay = saved; return result;
+    }
     public bool WriteBlock(uint block, APTR source)
     {
         deviceWrites++;
@@ -124,6 +147,7 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     {
         if (TrimCertificate.IsNotNull) WriteUInt32(TrimCertificate, 0, 0);
         if (RedoOverlay.IsNotNull) return AmigaSmartFileSystemRedoArena.Store(ref this, RedoOverlay, block, source);
+        if (Sfs2Context.IsNotNull && !Sfs2MetadataStore.Invalidate(ref this, Sfs2MountContext.Cache(ref this, Sfs2Context), block, 1)) return false;
         CheckBlock(block);
         if (block < Geometry.ReservedBlocks || block >= Geometry.BlockCount - 1)
             throw new InvalidOperationException($"Write to reserved block {block}");
@@ -131,6 +155,7 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
         writes++; Events++;
         if (Failed(Events, FailAtEvent)) return false;
         var value = Ram.AsSpan((int)source.Raw, bytes);
+        WrittenBlocks?.Add((block, value.ToArray()));
         var offset = checked((int)block * bytes);
         if (writes == TearAtWrite)
         {
@@ -154,6 +179,7 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
         if (RedoOverlay.IsNotNull) return true;
         flushes++; Events++;
         if (Failed(Events, FailAtEvent)) return false;
+        FlushWriteCounts?.Add(writes);
         foreach (var (block, versions) in pending) versions[^1].CopyTo(device, bytes + (int)block * bytes);
         pending.Clear();
         if (Events == CutAfterEvent) throw new StudyPowerCut();
@@ -262,5 +288,9 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     public readonly void WriteUInt32(APTR a, int offset, uint value) => BinaryPrimitives.WriteUInt32BigEndian(Ram.AsSpan((int)a.Raw + offset), value);
     public readonly bool IsMapped(APTR a, uint length) => a.Raw <= Ram.Length && length <= Ram.Length - a.Raw;
     public readonly void Clear(APTR a, uint length) => Ram.AsSpan((int)a.Raw, (int)length).Clear();
-    public readonly void Copy(APTR from, APTR to, uint length) => Ram.AsSpan((int)from.Raw, (int)length).CopyTo(Ram.AsSpan((int)to.Raw));
+    public readonly void Copy(APTR from, APTR to, uint length)
+    {
+        CopyRanges?.Add((from.Raw, to.Raw, length));
+        Ram.AsSpan((int)from.Raw, (int)length).CopyTo(Ram.AsSpan((int)to.Raw));
+    }
 }

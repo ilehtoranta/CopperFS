@@ -9,11 +9,19 @@ internal static class AmigaGeometryMath
 {
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static uint Divide(uint value, uint divisor)
-    { if (divisor == 0) return 0; return value / divisor; }
+    {
+        if (divisor == 512) return value >> 9;
+        if (value < divisor || divisor == 0) return 0;
+        return value / divisor;
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static uint Remainder(uint value, uint divisor)
-    { if (divisor == 0) return 0; return value % divisor; }
+    {
+        if (divisor == 512) return value & 511;
+        if (value < divisor) return value;
+        return divisor == 0 ? 0 : value % divisor;
+    }
 
     // Keep both operations together so native arithmetic selection can retain
     // both outputs of a single division, including the MC68000 software path.
@@ -22,6 +30,8 @@ internal static class AmigaGeometryMath
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static uint DivRem(uint value, uint divisor, out uint remainder)
     {
+        if (divisor == 512) { remainder = value & 511; return value >> 9; }
+        if (value < divisor) { remainder = value; return 0; }
         if (divisor == 0) { remainder = 0; return 0; }
         var quotient = value / divisor;
         remainder = value % divisor;

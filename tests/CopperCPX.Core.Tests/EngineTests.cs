@@ -6,6 +6,8 @@ namespace CopperCPX.Tests;
 
 internal struct Ram(byte[] bytes) : ICpxMemory
 {
+        public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
+        public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
     public byte[] Bytes=bytes;
     public byte Read8(uint p)=>Bytes[p]; public void Write8(uint p,byte value)=>Bytes[p]=value;
     public uint Read32(uint p)=>BinaryPrimitives.ReadUInt32BigEndian(Bytes.AsSpan((int)p));
@@ -48,7 +50,7 @@ public class EngineTests
     {
         Disk disk=Fresh(unit); var ram=new Ram(Enumerable.Repeat((byte)0xa5,100000).ToArray()); var engine=new CpxEngine<Ram>(ram,32);
         Assert.Equal(CpxError.None,engine.Initialize(512,(uint)unit,Wide.From(8192),1));
-        Assert.Equal(CpxError.None,engine.BeginOperation(CpxOperation.Mount)); Assert.True(Drive(ref engine,ram,disk)>30); Assert.True(engine.IsMounted);
+        Assert.Equal(CpxError.None,engine.BeginOperation(CpxOperation.Mount)); Assert.InRange(Drive(ref engine,ram,disk),1,30); Assert.True(engine.IsMounted);
         Assert.All(ram.Bytes[..32],b=>Assert.Equal(0xa5,b));
         Assert.All(ram.Bytes[(32+(int)CpxArena.Bytes((uint)Math.Max(unit,1024)))..],b=>Assert.Equal(0xa5,b));
     }

@@ -11,7 +11,7 @@ public static class AmigaFfsReadLinkCore
         => AmigaDiskFileSystemCore.Header(ref p, in g, key, block, true);
 
     private static byte Upper(byte c, uint dosType) => c is >= 97 and <= 122 ||
-        (dosType >= 0x444F5302 && c >= 224 && c != 247) ? unchecked((byte)(c - 32)) : c;
+        (dosType >= 0x444F5302 && c is >= 224 and <= 254 && c != 247) ? unchecked((byte)(c - 32)) : c;
 
     public static int Read<T>(ref T p, uint directory, APTR path, APTR output, int capacity,
         uint dosType, APTR metadata, APTR data, out DOS.Error error) where T : struct, IAmigaFileSystemPlatform
@@ -46,9 +46,8 @@ public static class AmigaFfsReadLinkCore
             while (offset < length && p.ReadUInt8(path, (int)offset) != '/') offset++;
             var count = offset - start;
             if (count > 30) { error = DOS.Error.InvalidComponentName; return -1; }
-            uint hash = count;
-            for (uint i = 0; i < count; i++) hash = (hash * 13 + Upper(p.ReadUInt8(path, (int)(start + i)), dosType)) & 0x7FF;
-            var key = p.ReadUInt32(metadata, 24 + (int)AmigaGeometryMath.Remainder(hash, geometry.TableEntries) * 4);
+            var key = p.ReadUInt32(metadata, 24 + (int)AmigaDiskFileSystemCore.NameBucket(ref p, APTR.FromPointer(path.Raw + start),
+                count, dosType, geometry.TableEntries) * 4);
             var matched = false;
             for (uint visited = 0; key != 0 && visited < geometry.BlockCount; visited++)
             {

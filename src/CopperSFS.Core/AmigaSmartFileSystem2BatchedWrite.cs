@@ -208,10 +208,13 @@ public static partial class AmigaSmartFileSystem2WriteCore
         first = count = 0;
         var bits = (p.BlockBytes - 12) * 8;
         var loaded = uint.MaxValue;
-        for (var block = start; block < p.BlockCount - 1; block++)
+        var map = start / bits;
+        var index = start % bits;
+        var limit = p.BlockCount - 1;
+        var marker = w.RootContainer + 2;
+        var searchImage = w.Bitmap;
+        for (var block = start; block < limit;)
         {
-            var map = block / bits;
-            var index = block % bits;
             if (map != loaded)
             {
                 if (oneMap && count != 0)
@@ -220,10 +223,52 @@ public static partial class AmigaSmartFileSystem2WriteCore
                     first = count = 0;
                     if (onlyPrefix) return true;
                 }
-                if (!FreeSearchMap(ref p, ref w, map)) return false;
+                if (w.RedoStaging && p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites && w.JournalHead == 0)
+                {
+                    // No undo reservations need to be intersected in a TRST
+                    // trial. Consume this view before another store access.
+                    var mapBlock = w.BitmapBase + map;
+                    if (mapBlock < w.BitmapBase) return Fail(ref w, DOS.Error.DiskNotValidated);
+                    searchImage = Sfs2Layout.View(ref p, mapBlock, BitmapId, w.Bitmap);
+                    if (searchImage.IsNull) return Fail(ref w, DOS.Error.DiskNotValidated);
+                }
+                else
+                {
+                    if (!FreeSearchMap(ref p, ref w, map)) return false;
+                    searchImage = w.Bitmap;
+                }
                 loaded = map;
             }
-            var free = (p.ReadUInt32(w.Bitmap, 12 + (int)(index / 32) * 4) & (1u << (int)(31 - index % 32))) != 0;
+            var within = index & 31;
+            var word = p.ReadUInt32(searchImage, 12 + (int)(index >> 5) * 4);
+            var span = 32 - within;
+            if (span > limit - block) span = limit - block;
+            var mask = uint.MaxValue >> (int)within;
+            var remaining = word & mask;
+            // Bitmap pages end on word boundaries. Uniform words can extend
+            // or reject a run together; explicit reservations keep scalar
+            // checks. Advance page/index scalars instead of dividing per bit.
+            if (w.AdminReservation == 0 && (marker < block || marker - block >= span) &&
+                (remaining == 0 || remaining == mask))
+            {
+                if (remaining != 0)
+                {
+                    if (count == 0) first = block;
+                    if (span > maximum - count) span = maximum - count;
+                    count += span;
+                    if (count == maximum) return true;
+                }
+                else
+                {
+                    if (count >= minimum) return true;
+                    first = count = 0;
+                    if (onlyPrefix) return true;
+                }
+                block += span; index += span;
+                if (index == bits) { index = 0; map++; }
+                continue;
+            }
+            var free = (word & (1u << (int)(31 - within))) != 0;
             if (w.AdminReservation != 0 && block >= w.AdminReservation && block - w.AdminReservation < 32) free = false;
             if (block == w.RootContainer + 2) free = false;
             if (free)
@@ -237,6 +282,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
                 first = count = 0;
                 if (onlyPrefix) return true;
             }
+            block++; index++;
+            if (index == bits) { index = 0; map++; }
         }
         if (count < minimum) first = count = 0;
         return true;
@@ -255,24 +302,27 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool MarkDataRun<T>(ref T p, ref Work w, uint first, uint count)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        if (w.RedoStaging && p.Sfs2Context.IsNotNull) return ChangeOwnedAllocationRun(ref p, ref w, first, count, false);
         if (!BitmapPosition(ref p, ref w, first, out var map, out _, out _) ||
-            !Read(ref p, ref w, map, BitmapId, w.Bitmap)) return false;
+            !EditMetadata(ref p, ref w, map, BitmapId, w.Bitmap, out var edit)) return false;
         var bits = (p.BlockBytes - 12) * 8;
-        if (count == 0 || count > bits - first % bits) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (count == 0 || count > bits - first % bits) return RejectMetadata(ref p, ref w, ref edit);
         for (var i = 0u; i < count; i++)
         {
             var bit = (first + i) % bits; var offset = 12 + (int)(bit / 32) * 4; var mask = 1u << (int)(31 - bit % 32);
-            var word = p.ReadUInt32(w.Bitmap, offset);
-            if ((word & mask) == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
-            p.WriteUInt32(w.Bitmap, offset, word & ~mask);
+            var word = p.ReadUInt32(edit.Image, offset);
+            if ((word & mask) == 0) return RejectMetadata(ref p, ref w, ref edit);
+            p.WriteUInt32(edit.Image, offset, word & ~mask);
         }
-        if (!Put(ref p, ref w, map, w.Bitmap)) return false;
+        if (!PublishMetadata(ref p, ref w, map, ref edit)) return false;
         w.FreeDelta -= (int)count;
         return true;
     }
     private static bool GrowExtentRun<T>(ref T p, ref Work w, uint key, uint nextBlock, uint added)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        if (w.RedoStaging && p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites)
+            return GrowOriginalExtent(ref p, ref w, key, nextBlock, added);
         if (!ExtentLeaf(ref p, ref w, key, out var leaf)) return false;
         var count = p.ReadUInt16(w.Meta, 12); var stride = p.ReadUInt8(w.Meta, 15);
         for (var i = 0; i < count; i++)

@@ -25,6 +25,7 @@ public sealed partial class Sfs2ReadOnlyTests
         public int Writes, Flushes, Reads;
         public uint PatternStart, PatternEnd;
         public uint BadBlock = uint.MaxValue;
+        public bool SupportsUnalignedDataReads { get; set; }
         public uint RetainedKey = uint.MaxValue, RetainedBlockReads;
         public APTR RetainedImage;
         public APTR BorrowSlot;

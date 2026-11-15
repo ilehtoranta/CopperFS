@@ -100,6 +100,24 @@ public static class AmigaFileSystemWriteCombiner
         return entries != 0 && count != 0 && IntersectsEntries(ref p, queue, entries, block, count);
     }
 
+    /// <summary>SFS2 has a different checksum seed. Keep its certificate distinct
+    /// from SFS, with the same replacement and sort lifetime as ReadMetadataView.</summary>
+    public static APTR ReadSfs2MetadataView<T>(ref T p, APTR queue, uint block, uint id)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        if (queue.IsNull || Count(ref p, queue) == 0) return APTR.Null;
+        var entry = Find(ref p, queue, block);
+        if (entry.IsNull || id == 0 || (id & 0x80000000) != 0) return APTR.Null;
+        var image = APTR.FromPointer(p.ReadUInt32(entry, QueueEntry.Image));
+        if (p.ReadUInt32(entry, QueueEntry.VerifiedId) != ~id)
+        {
+            if (p.ReadUInt32(image) != id || p.ReadUInt32(image, 8) != block ||
+                !AmigaFileSystemBlockIo.ValidSfs2Sum(ref p, image, p.ReadUInt32(queue, QueueHeader.BlockBytes))) return APTR.Null;
+            p.WriteUInt32(entry, QueueEntry.VerifiedId, ~id);
+        }
+        return image;
+    }
+
     private static bool IntersectsEntries<T>(ref T p, APTR queue, uint entries, uint block, uint count)
         where T : struct, IAmigaGuestMemory
     {

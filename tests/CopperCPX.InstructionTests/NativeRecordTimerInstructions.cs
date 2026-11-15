@@ -8,7 +8,7 @@ namespace CopperCPX.InstructionTests;
 
 public static class NativeRecordTimerProbe
 {
-    private const uint Arena=0x40000,Packet=0x8000;
+    private const uint Arena=0x70000,Packet=0x8000;
     private static uint Call(ref CpxDosDispatcher<NativeCpxMemory> dispatcher,uint action,uint owner,uint timeout=0)
     {
         APTR p=APTR.FromPointer(Packet); APTR.WriteUInt32(p,8,action); APTR.WriteUInt32(p,20,owner);

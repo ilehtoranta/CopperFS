@@ -39,27 +39,32 @@ public class StorageStopRecoveryTests
     [Theory][InlineData(false)][InlineData(true)]
     public void MultiChunkStopReportsOnlyRetiredPrefixAndPreservesItAfterRecovery(bool removed)
     {
-        using var d=new DispatcherDriver(512); uint h=RecordLockPacketTests.Open(d);
-        byte[] input=Enumerable.Range(0,1200).Select(n=>(byte)(n*13)).ToArray(); input.CopyTo(d.Ram.Bytes,100000);
-        InhibitLifecycleTests.Begin(d,87,h,100000,(uint)input.Length); bool stopped=false;
+        using var d=new DispatcherDriver(512);
+        byte[] expanded=new byte[260000]; d.Ram.Bytes.CopyTo(expanded,0); d.Ram=new Ram(expanded); d.Dispatcher=new(d.Ram,32);
+        uint h=RecordLockPacketTests.Open(d);
+        // Cross the documented 64 KiB run bound so cancellation is exercised
+        // between retired runs even when contiguous units are batched.
+        byte[] input=Enumerable.Range(0,65536+1200).Select(n=>(byte)(n*13)).ToArray(); input.CopyTo(d.Ram.Bytes,160000);
+        InhibitLifecycleTests.Begin(d,87,h,160000,(uint)input.Length); bool stopped=false; uint retired=0;
         for(int n=0;n<100000;n++)
         {
             d.Dispatcher=new(d.Ram,32); var step=d.Dispatcher.Step();
             var engine=new CpxEngine<Ram>(d.Ram,32);
-            if(engine.TransferredBytes==512)
+            if(engine.TransferredBytes>0&&engine.TransferredBytes<input.Length)
             {
+                retired=engine.TransferredBytes;
                 if(removed) d.Dispatcher.MediaRemoved(); else d.Dispatcher.RequestStorageCancellation();
                 if(step==StepResult.NeedIo)
                 { var io=d.Dispatcher.Request; Assert.Equal(StepResult.NeedIo,d.Dispatcher.Step()); d.Dispatcher.CompleteIo(io.Token,0,false); }
-                Assert.Equal(StepResult.Complete,d.Dispatcher.Step()); Assert.Equal(512u,d.Dispatcher.Result);
+                Assert.Equal(StepResult.Complete,d.Dispatcher.Step()); Assert.Equal(retired,d.Dispatcher.Result);
                 Assert.Equal(removed?226u:304u,d.Dispatcher.DosError); stopped=true; break;
             }
             Assert.NotEqual(StepResult.Complete,step); Assert.NotEqual(StepResult.Failed,step);
             if(step==StepResult.NeedIo) InhibitLifecycleTests.Service(d,d.Dispatcher.Request);
         }
-        Assert.True(stopped); Assert.Equal(0u,d.Ram.Read32(h+8)); Assert.Equal(512u,d.Ram.Read32(h+12));
+        Assert.True(stopped); Assert.Equal(0u,d.Ram.Read32(h+8)); Assert.Equal(retired,d.Ram.Read32(h+12));
         Assert.Equal((uint.MaxValue,0u),d.Packet(1007,h)); Assert.Equal((uint.MaxValue,0u),d.Packet(31));
-        var image=new IndependentImage(d.Image); Assert.Equal(input[..512],image.Read(image.Names[(1,"file")]));
+        var image=new IndependentImage(d.Image); Assert.Equal(input[..(int)retired],image.Read(image.Names[(1,"file")]));
         new CopperFS.Cpx4.Reference.Cpx4Volume<Disk>(new Disk{Bytes=d.Image},new byte[36864]).Check();
     }
 }

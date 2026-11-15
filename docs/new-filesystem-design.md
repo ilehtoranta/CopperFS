@@ -1,8 +1,14 @@
-# New Amiga filesystem design and safety review
+# CopperNova (CNFS) filesystem design and safety review
 
 Draft for implementation planning, 13 November 2026.
 
-This proposes a new filesystem with small allocation units, variable-length
+CopperNova is the new Amiga filesystem in the CopperFS umbrella project,
+alongside CopperFFS and CopperSFS. **CNFS** is the official abbreviation for
+CopperNova. **CPX4** identifies the experimental version 4 on-disk format
+used by the standalone `CopperCPX4` handler. CPX3 is the earlier reference
+prototype. CPX3 media require reformatting for CPX4.
+
+The design uses small allocation units, variable-length
 extents, inline file data, UTF-8 names with an explicit legacy charset interface,
 and first-class discard support. Its main design constraint is predictable work
 and bounded memory on a 68000. The format is not frozen: the review below identifies
@@ -10,7 +16,8 @@ several requirements that must be resolved before a production writer is built.
 
 The new format must have its own identity, core and handler. It does not change
 CopperFFS or CopperSFS formats, namespaces, packages, packet ABI or journal policy.
-No magic number, DosType, package name or private packet number is assigned here.
+CPX4 uses the experimental magic `CPX4` and DOS type `0x43505834`.
+Production format and packet identifiers remain unassigned in this design.
 Portable execution remains allocation-free, with caller-owned storage and one
 owner per mount. CopperStart supplies OS integration; CopperDisk/CopperScreen
 own host storage and sparse deallocation. Standalone native handlers must build
@@ -876,6 +883,10 @@ Release mount ownership between bounded batches. Saved cursors and ranges become
 hints and must be revalidated after foreground work or media-generation changes.
 An overflowing fixed hint queue may drop hints; manual scanning remains complete.
 No persistent trimmed-bit map is required. Losing progress only repeats work.
+The CPX4 handler uses a 30-second one-shot. At the next packet boundary it
+checks the mount epoch and admits at most one 4096-bit bitmap window and one
+allocation-unit discard. A busy packet delays this work. A backlog of queued
+packets cannot postpone it indefinitely once the active packet completes.
 Budget bitmap scanning as well as command size: finding a free run must not turn
 one maintenance turn into an unbounded volume scan. One synchronous command can
 still have unbounded device latency; CPU budgeting cannot promise a response-time

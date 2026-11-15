@@ -19,7 +19,8 @@ public static class AmigaDiskFileSystemFormatCore
         var entries = g.BlockBytes / 4 - 1;
         var extensions = maps <= 25 ? 0 : (maps - 26) / entries + 1;
         var first = g.RootBlock + 1;
-        var end = first + maps + extensions;
+        var cache = dosType >= 0x444F5304 ? first + maps + extensions : 0;
+        var end = first + maps + extensions + (cache != 0 ? 1u : 0u);
         error = DOS.Error.DiskNotValidated;
         p.Clear(scratch, g.BlockBytes);
         if (!p.WriteFormatBlock(0, scratch) || !p.WriteFormatBlock(g.BlockCount - 1, scratch) || !p.Flush()) return false;
@@ -51,7 +52,14 @@ public static class AmigaDiskFileSystemFormatCore
             if (extension + 1 < extensions) p.WriteUInt32(scratch, (int)g.BlockBytes - 4, first + maps + extension + 1);
             if (!p.WriteFormatBlock(first + maps + extension, scratch)) return false;
         }
+        if (cache != 0)
+        {
+            p.Clear(scratch, g.BlockBytes); p.WriteUInt32(scratch, 0, 33);
+            p.WriteUInt32(scratch, 4, cache); p.WriteUInt32(scratch, 8, g.RootBlock); Seal(ref p, scratch, 20);
+            if (!p.WriteFormatBlock(cache, scratch)) return false;
+        }
         p.Clear(scratch, g.BlockBytes); p.WriteUInt32(scratch, 0, 2); p.WriteUInt32(scratch, 12, g.TableEntries);
+        if (cache != 0) p.WriteUInt32(scratch, g.Tail + 504, cache);
         p.WriteUInt32(scratch, g.Tail + 312, uint.MaxValue);
         for (var i = 0u; i < maps && i < 25; i++) p.WriteUInt32(scratch, g.Tail + 316 + (int)i * 4, first + i);
         if (extensions != 0) p.WriteUInt32(scratch, g.Tail + 416, first + maps);
@@ -70,12 +78,13 @@ public static class AmigaDiskFileSystemFormatCore
     }
     public static bool CanFormat(AmigaVolumeGeometry g, uint dosType)
     {
-        if (dosType is not (0x444F5300 or 0x444F5301) ||
+        if (dosType is < 0x444F5300 or > 0x444F5305 ||
             !AmigaVolumeGeometry.Create(g.BlockCount, g.BlockBytes, g.ReservedBlocks, out _)) return false;
         var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
         var extensions = maps <= 25 ? 0 : (maps - 26) / (g.BlockBytes / 4 - 1) + 1;
         var first = g.RootBlock + 1;
-        return first < g.BlockCount && maps < g.BlockCount - first && extensions < g.BlockCount - first - maps;
+        var extra = dosType >= 0x444F5304 ? 1u : 0u;
+        return first < g.BlockCount && maps < g.BlockCount - first && extensions + extra < g.BlockCount - first - maps;
     }
 
     private static void Seal<T>(ref T p, APTR scratch, int checksum) where T : struct, IAmigaFileSystemPlatform

@@ -8,17 +8,33 @@ public struct Wide
     public uint High, Low;
     public Wide(uint high, uint low) { High=high; Low=low; }
     public static Wide From(uint low) => new(0,low);
-    public static int Compare(Wide a, Wide b) => WideMath32.Compare(a.High,a.Low,b.High,b.Low);
+    public static int Compare(Wide a, Wide b)
+    { if(a.High!=b.High) return a.High<b.High?-1:1; return a.Low==b.Low?0:a.Low<b.Low?-1:1; }
     public static bool Add(Wide a, Wide b, out Wide value)
-    { bool ok=WideMath32.Add(a.High,a.Low,b.High,b.Low,out uint h,out uint l); value=new(h,l); return ok; }
+    {
+        uint low=unchecked(a.Low+b.Low),carry=low<a.Low?1u:0u,sum=unchecked(a.High+b.High),high=unchecked(sum+carry);
+        value=new(high,low); return sum>=a.High&&high>=sum;
+    }
     public static bool Subtract(Wide a, Wide b, out Wide value)
-    { bool ok=WideMath32.Subtract(a.High,a.Low,b.High,b.Low,out uint h,out uint l); value=new(h,l); return ok; }
+    { value=new(unchecked(a.High-b.High-(a.Low<b.Low?1u:0u)),unchecked(a.Low-b.Low)); return Compare(a,b)>=0; }
     public static bool Left(Wide a,int shift,out Wide value)
-    { bool ok=WideMath32.ShiftLeft(a.High,a.Low,shift,out uint h,out uint l); value=new(h,l); return ok; }
+    {
+        if(shift<0||shift>=64) { value=default; return false; }
+        if(shift==0) { value=a; return true; }
+        if(shift>=32)
+        { int extra=shift-32; value=new(a.Low<<extra,0); return a.High==0&&(extra==0||(a.Low>>(32-extra))==0); }
+        value=new((a.High<<shift)|(a.Low>>(32-shift)),a.Low<<shift); return (a.High>>(32-shift))==0;
+    }
     public static Wide Right(Wide a,int shift)
-    { WideMath32.ShiftRight(a.High,a.Low,shift,out uint h,out uint l); return new(h,l); }
-    public static Wide operator +(Wide a,uint b) { Add(a,From(b),out var v); return v; }
-    public static Wide operator -(Wide a,uint b) { Subtract(a,From(b),out var v); return v; }
+    {
+        if(shift<=0) return a; if(shift>=64) return default;
+        if(shift>=32) return new(0,a.High>>(shift-32));
+        return new(a.High>>shift,(a.Low>>shift)|(a.High<<(32-shift)));
+    }
+    public static Wide operator +(Wide a,uint b)
+    { uint low=unchecked(a.Low+b); return new(unchecked(a.High+(low<a.Low?1u:0u)),low); }
+    public static Wide operator -(Wide a,uint b)
+    { return new(unchecked(a.High-(a.Low<b?1u:0u)),unchecked(a.Low-b)); }
     public static bool Equal(Wide a,Wide b) => a.High==b.High && a.Low==b.Low;
     public static Wide Multiply(uint a,uint b)
     {
@@ -27,6 +43,8 @@ public struct Wide
         Add(new(high,low),new(middle1>>16,middle1<<16),out var first);
         Add(first,new(middle2>>16,middle2<<16),out var value); return value;
     }
+    public static implicit operator ulong(Wide value) => ((ulong)value.High<<32)|value.Low;
+    public static implicit operator Wide(ulong value) => new((uint)(value>>32),(uint)value);
     public bool IsZero => (High|Low)==0;
 }
 
@@ -34,6 +52,8 @@ public interface ICpxMemory
 {
     byte Read8(uint address);
     void Write8(uint address,byte value);
+    uint Read16(uint address);
+    void Write16(uint address,uint value);
     uint Read32(uint address);
     void Write32(uint address,uint value);
 }
@@ -61,7 +81,8 @@ public static class CpxArena
     public const uint IndexBytes=64*32;
     public const uint Scratch=MountBytes+OperationBytes;
     public const uint Magic=0x43505834, Version=4, Images=64, TransactionImages=42, MaxHeight=8;
-    public static uint Bytes(uint pageBytes) => Scratch+6*pageBytes+IndexBytes+PoolBytes;
+    public const uint CrcTableBytes=4096;
+    public static uint Bytes(uint pageBytes) => Scratch+6*pageBytes+IndexBytes+PoolBytes+CrcTableBytes;
     public static bool ValidUnit(uint n) => n>=512 && n<=4096 && (n&(n-1))==0;
     public static int Shift(uint n) { int shift=0; while(n>1) { n>>=1; shift++; } return shift; }
 }

@@ -93,7 +93,7 @@ public sealed class SequentialReadThroughputTests(ITestOutputHelper output)
             uint.Parse(Environment.GetEnvironmentVariable("COPPERFS_KICKSTART_PROFILE_PACKET") ?? "0");
         var profileAllTrials = profiler != null && Environment.GetEnvironmentVariable("COPPERFS_KICKSTART_PROFILE_ALL_TRIALS") == "1";
         Assert.True(profilePacket is 0 or 64 or 512 or 4096 or 65536, "Unknown profiling packet size.");
-        hook.ObserveRead = command => profiler?.ObserveRead(command);
+        hook.ObserveRead = command => profiler?.ObserveTransfer(command);
         uint control = 0, packet = 0, length = 0, trial = 0, buffer = 0;
         long sessionBus = 0, sessionCpu = 0, readBus = 0, readCpu = 0, stopBus = 0, stopCpu = 0;
         int baselineRequests = 0; long baselineBytes = 0;

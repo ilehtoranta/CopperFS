@@ -9,7 +9,7 @@ internal static class NativeCpxLifecycle
     private enum Phase : uint
     {
         Idle, ProbeWide, ProbeNarrow, Mount, Timers, Publish, Register,
-        Flush, Detach, FailedStartupDetach, CloseTimers, ReleaseVolume, Drain, Exit, Retain
+        Flush, Detach, FailedStartupDetach, CloseTimers, ReleaseVolume, Drain, Exit, Retain, MaintenanceTimer
     }
     private const int Message=4, Packet=8, Failure=12, Volume=16, Node=20, Registered=24;
     private const int ProbePage=28,BackupCopy=32,FoundUnit=36,FoundHigh=40,FoundLow=44,ReadFault=48;
@@ -52,7 +52,7 @@ internal static class NativeCpxLifecycle
         // mounted dispatcher. After removal is submitted it must be reaped.
         if(phase==Phase.Register) { if(error==226) dispatcher.MediaRemoved(); return; }
         if(phase is Phase.Detach or Phase.Flush && error==226) dispatcher.MediaRemoved();
-        if(phase is not (Phase.ProbeWide or Phase.ProbeNarrow or Phase.Mount or Phase.Timers or Phase.Publish or Phase.Flush)) return;
+        if(phase is not (Phase.ProbeWide or Phase.ProbeNarrow or Phase.Mount or Phase.Timers or Phase.MaintenanceTimer or Phase.Publish or Phase.Flush)) return;
         if(Error(arena)==0||error==226) APTR.WriteUInt32(state,Failure,error);
         if(phase is Phase.Mount or Phase.Flush)
             new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).Cancel();
@@ -83,9 +83,13 @@ internal static class NativeCpxLifecycle
                 if(failure!=0) return Refuse(state,port,failure,true);
                 StepResult opened=NativeCpxRecordTimers.OpenOne(arena);
                 if(opened==StepResult.Failed) return Refuse(state,port,103,true);
-                return opened==StepResult.Complete?Next(state,Phase.Publish):StepResult.Pending;
+                return opened==StepResult.Complete?Next(state,Phase.MaintenanceTimer):StepResult.Pending;
+            case Phase.MaintenanceTimer:
+                if(failure!=0) return Refuse(state,port,failure,true);
+                return NativeCpxMaintenance.Open(arena)?Next(state,Phase.Publish):Refuse(state,port,103,true);
             case Phase.Publish:
                 if(failure!=0) return Refuse(state,port,failure,true);
+                PrepareBufferedStorage(ref engine);
                 APTR volume=DOS.MakeDosEntry(CString.FromLiteral("CopperCPX4"),(int)DosListType.Volume);
                 if(volume.IsNull) return Refuse(state,port,103,true);
                 NativeCpxVolume.Initialize(arena,volume,engine.VolumeLabelAddress);
@@ -114,6 +118,8 @@ internal static class NativeCpxLifecycle
                 }
                 return Next(state,Phase.CloseTimers);
             case Phase.CloseTimers:
+                StepResult timer=NativeCpxMaintenance.CloseOne(arena);
+                if(timer!=StepResult.Complete) return timer;
                 if(NativeCpxRecordTimers.CloseOne(arena)==StepResult.Pending) return StepResult.Pending;
                 return Next(state,Phase.ReleaseVolume);
             case Phase.ReleaseVolume:
@@ -190,10 +196,23 @@ internal static class NativeCpxLifecycle
         uint chosen=APTR.ReadUInt32(state,FoundUnit);
         if(chosen==0&&APTR.ReadUInt32(state,ReadFault)!=0) return Refuse(state,port,213,true);
         if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1)!=CpxError.None) return Refuse(state,port,213,true);
+        PrepareBufferedStorage(ref engine);
         if(chosen==0) return Next(state,Phase.Timers); // readable unformatted medium, explicit DOS Format remains available
         if(engine.BeginMountFromDiscoveredAnchor(new(APTR.ReadUInt32(state,FoundHigh),APTR.ReadUInt32(state,FoundLow)))!=CpxError.None)
             return Refuse(state,port,213,true);
         return Next(state,Phase.Mount);
+    }
+    private static void PrepareBufferedStorage(ref CpxEngine<NativeCpxMemory> engine)
+    {
+        if(engine.BufferedStorageAddress!=0) return;
+        uint bytes=CpxEngine<NativeCpxMemory>.BufferedStorageBytes(engine.MetadataPageBytes);
+        uint storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
+        if(storage==0)
+        {
+            bytes=CpxEngine<NativeCpxMemory>.CompactBufferedStorageBytes(engine.MetadataPageBytes);
+            storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
+        }
+        if(storage!=0&&engine.EnableBufferedWrites(storage,bytes)!=CpxError.None) Exec.FreeMem(storage,bytes);
     }
 }
 #endif
