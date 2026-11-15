@@ -2,14 +2,20 @@
 
 [Filesystem reference for CopperFFS, CopperSFS and CopperNova](https://ilehtoranta.github.io/CopperFS/)
 
-CopperFS is the umbrella repository for CopperFFS (OFS/FFS), CopperSFS
-(classic SFS/SFS2), their shared native handler sources and CopperTrim.
-The formats retain separate allocation, validation and recovery implementations.
+CopperFS is the umbrella project for CopperFFS (OFS/FFS), CopperSFS
+(classic SFS/SFS2), and CopperNova (CNFS). It also hosts the shared native
+handler sources and CopperTrim.
+
+CopperNova is the new Amiga filesystem under development here. Its official
+abbreviation is **CNFS**. **CPX4** identifies its experimental version 4
+on-disk format. The standalone handler for that format is `CopperCPX4`.
+See the [CopperNova design](docs/new-filesystem-design.md).
 
 | Component | Location |
 | --- | --- |
 | OFS/FFS core | `src/CopperFFS.Core` |
 | Classic SFS and SFS2 cores | `src/CopperSFS.Core` |
+| CopperNova experimental CPX4 core | `src/CopperCPX.Core` |
 | Standalone Amiga handler project and shared sources | `src/CopperFS.Amiga` |
 | CopperTrim and compatibility command | `tools/CopperSFS.Trim` |
 | Managed filesystem tests | `tests/CopperFFS.Core.Tests`, `tests/CopperSFS.Core.Tests` |
