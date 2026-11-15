@@ -145,6 +145,16 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity) { capacity = 0; return APTR.Null; }
     void ReleaseSfsJournalPages(APTR pages) { }
     bool WriteRetainedBlock(uint block, APTR source) => false;
+#if COPPERFS_SFS_POOL
+    /// <summary>Install a sealed redo slot after journal publication. Raw data
+    /// slots have a zero verification ID. The default preserves ordinary home writes.</summary>
+    bool WriteTrstHomeSlot(APTR slot)
+    {
+        var block = ReadUInt32(slot);
+        var source = APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
+        return SupportsRetainedBlockWrites ? WriteRetainedBlock(block, source) : WriteBlock(block, source);
+    }
+#endif
     /// <summary>Maximum adjacent TRST home images the platform can gather using
     /// existing storage. Each entry in slots points at a redo slot, with its
     /// image at SlotHeaderBytes. Only called after durable journal publication.</summary>

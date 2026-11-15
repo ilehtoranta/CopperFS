@@ -430,7 +430,11 @@ public static partial class AmigaSmartFileSystemWriteCore
         for (var i = 0u; i < staged.Count; i++)
         {
             slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, staged.Arena, i);
+#if COPPERFS_SFS_POOL
+            if (!p.WriteTrstHomeSlot(slot))
+#else
             if (!TrstWriteBlock(ref p, p.ReadUInt32(slot), APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)))
+#endif
                 return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         return CompleteNative(ref p, ref w, marker);
@@ -462,7 +466,11 @@ public static partial class AmigaSmartFileSystemWriteCore
             while (count < capacity && count < staged.Count - i &&
                 p.ReadUInt32(APTR.FromPointer(p.ReadUInt32(slots, (int)count * 4))) == first + count) count++;
             var success = count == 1
+#if COPPERFS_SFS_POOL
+                ? p.WriteTrstHomeSlot(slot)
+#else
                 ? TrstWriteBlock(ref p, first, APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes))
+#endif
                 : p.WriteRetainedRun(first, count, slots);
             if (!success) return Fail(ref w, DOS.Error.DiskNotValidated);
             i += count;

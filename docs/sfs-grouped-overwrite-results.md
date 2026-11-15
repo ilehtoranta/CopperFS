@@ -141,3 +141,36 @@ Growth had four device flushes on all three handlers. Original SFS needed eight 
 The standalone build reproduced the 177,136-byte HotMethods handler byte for byte. CopperStart passed 186 native transfer, cache, deletion and geometry replays and 77 link replays. Full Kickstart ROM runs passed 63 functional and timing cases, including grouped cut and failure recovery, partial journal and home writes, original-reader handoff, deferred close and explicit flush, foreign mounts, TRIM, and the five read-placement cases (30 guest runs). Separate Fast and Chip instruction traces completed for all three handlers. The paired workload shows growth and overwrite still exceed the release gate. Physical-device qualification remains outstanding.
 
 Two follow-up experiments used the existing memory budget. Inlining the journal planner, emitter and stream commit as well raised Fast growth to 1,102,790 cycles and overwrite to 555,433. Combining HotMethods with the terminal-extent relocation shortcut raised Fast growth to 1,098,727 and overwrite to 550,397, despite a small improvement in verification. Both experimental configurations were excluded.
+
+### Per-call overwrite costs
+
+The diagnostic profiler now accounts for exclusive handler cycles by method inside each guest DOS call. On both Fast and Chip, the method totals matched the handler tally for each of the 15 calls on all three binaries. The original handler has no method map. The underlying measurements are in artifacts/sfs-flush-scope.
+
+For the selective CILica build on Fast RAM, the first write used 154,838 cycles (141,033 in the handler). Native metadata views took 17,379 exclusive cycles, block copies 10,012, and block sums 7,252. The explicit flush used 118,878 cycles (111,806 in the handler). Planning deltas for three home blocks took 24,602 cycles, five cache copies took 12,555, and journal emission took 5,395. Kickstart took 109,699 cycles over the whole overwrite, versus 158,125 with original SFS 1.279.
+
+The original Fast first write and explicit flush took 23,854 and 14,088 cycles in this trace. At the pushed candidate's ordinary Fast timing, the rest of the overwrite consumes approximately 266,000 cycles. To match the original without further reducing that work, the combined first write and flush would need to fit in approximately 59,000 cycles. The candidate spent about 274,000 on those two calls. Timer placement can alter individual samples. For example, original SFS's Chip flush took 71,506 cycles in this trace and 14,084 in the earlier trace; the ordinary alternating trials remain the acceptance measurement.
+
+Retaining the checksum certificate when a single sealed TRST slot reaches its home block removed one of three full metadata validations on the next overwrite. In the native trace the first write fell to 152,876 cycles and explicit flush took 118,632. A zero certificate on raw data, a mismatched block or type, and an incomplete transfer all prevent reuse. The 68000 and 68020 instruction replays exercise those cases on the actual HUNK.
+
+| Single-slot cache experiment | Original SFS 1.279 | Pushed selective CILica control | Single-slot certification |
+|---|---:|---:|---:|
+| Fast growth and flush | 1,048,147 | 1,070,897 | 1,070,837 |
+| Fast overwrite and flush | 324,620 | 539,780 | 537,353 |
+| Fast verification | 4,070,477 | 3,993,667 | 3,989,270 |
+| Fast total | 5,768,167 | 5,934,283 | 5,927,467 |
+| Chip growth and flush | 1,045,313 | 1,070,883 | 1,071,043 |
+| Chip overwrite and flush | 324,817 | 556,670 | 552,697 |
+| Chip verification | 4,073,477 | 3,982,427 | 3,980,060 |
+| Chip total | 5,768,577 | 5,939,880 | 5,933,357 |
+
+The 177,072-byte pooled HUNK is 64 bytes smaller than its immediate control. At 32 DOS buffers, guest allocations remained 126,008 bytes after mount and 138,888 after mutation. Overwrite issued 17 writes and four flushes against original SFS's twelve writes and one flush. Raw measurements are in artifacts/sfs-home-slot.
+
+The captured publication cut identifies three changed 512-byte sectors. Bitmap block 34 changes 13 words. Extent leaf 11 changes 11 words, replacing two 96-block source extents with one 192-block destination extent and keeping the neighboring eight-block extent. Object container 10 changes two words, the first extent reference and checksum. A prototype used 32-byte skip/literal records for those images. Its explicit-flush trace fell to 112,892 cycles and original SFS recovered the published journal, but ordinary Fast growth rose from 1,070,897 to 1,085,237 cycles and overwrite rose from 539,803 to 545,467. The prototype was excluded.
+
+On the final Fast growth trace, one commit used 393,707 of 1,070,950 cycles (36.8%). Planning eleven journal records took 143,537 cycles, emitting them took 116,081, and installing home runs took 77,177. These times are inclusive. Fifteen private metadata edits spent 37,515 cycles copying blocks and sixteen home-run copies spent 38,928. All three handlers issued four flushes during growth. Extending checksum reuse to whole contiguous home runs improved overwrite further but raised Chip growth by 0.17%, beyond the per-phase tolerance. The narrower single-slot change preserved growth in both placements.
+
+Mixed mutation and verification passed the original-handler gate on both placements. Fast mutation took 17,185,517 cycles against 17,502,380 for original SFS, and verification took 19,842,877 against 20,071,117. Chip mutation took 17,190,950 against 17,506,473, and verification took 19,929,827 against 20,137,147. Growth and overwrite still miss the +0.1% gate, so the profile remains opt-in.
+
+The Release solution build passed. The solution run on the single-slot source passed 2,177 tests with five conditional skips. CopperStart passed 186 native replays and the separate 77-case link and size suite. Sixteen additional 68000/68020 instruction cases checked cache identity and transfer failures. Kickstart 3.1 passed 63 qualification cases, including twelve grouped recovery cases, explicit flush, partial journal and home writes, original SFS handoff, and five read-placement cases comprising 30 guest runs. Two additional per-call diagnostic traces passed. Physical devices were not exercised.
+
+After restricting the change to shared-pool builds, the standalone M68000 shared-pool binary reproduced the qualified 177,072-byte image (SHA-256 2B89A2C3D1BE6D509D97AA4D66BD4108137293EFFC9C9E2BF5F6DD65F0E05F83). The strict default reproduced its 160,544-byte control (EA64E976D4BC4C807940B6CE52A734105A7EE007FC3DBBEED8D9911E9A9F998E).

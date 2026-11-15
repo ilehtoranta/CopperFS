@@ -11,6 +11,65 @@ public sealed class NativeCacheInvalidationInstructionTests
     private const uint Load = 0x100000, Platform = 0x1800, State = 0x2000;
     private const uint File = 0x4000, Directory = 0x4200, Enumeration = 0x5000, Entries = 0x6000;
 
+    public static IEnumerable<object[]> HomeCases()
+    {
+        const uint bitmap = 0x42544D50, tree = 0x424E4443, block = 34;
+        foreach (var cpu in new[] { M68kCpuModel.M68000, M68kCpuModel.M68020 })
+        foreach (var success in new[] { true, false })
+        {
+            yield return [cpu, success, bitmap, bitmap, block, bitmap];
+            yield return [cpu, success, 0u, bitmap, block, 0u];
+            yield return [cpu, success, bitmap, tree, block, 0u];
+            yield return [cpu, success, bitmap, bitmap, block + 1, 0u];
+        }
+    }
+
+    [SharedSfsHomeTheory]
+    [MemberData(nameof(HomeCases))]
+    public void HomeTransferPreservesOnlyMatchingSlotVerification(M68kCpuModel model, bool success,
+        uint slotId, uint imageId, uint imageBlock, uint expectedId)
+    {
+        const uint block = 34, slot = 0x5000, image = slot + 8;
+        const uint geometry = State + 1600, bucket = State + 1760 + 4 * (block & 63);
+        const uint stack = 0xF00000, returned = 0xF10000;
+        var path = Environment.GetEnvironmentVariable("COPPERSFS_HANDLER_PATH")!;
+        var bus = NativeParityBus.LoadHunk(System.IO.File.ReadAllBytes(path), Load);
+        bus.WriteLong(Platform, State);
+        bus.WriteLong(geometry, 512); bus.WriteLong(geometry + 4, 512); bus.WriteLong(geometry + 8, 1);
+        bus.WriteLong(geometry + 32, 1); bus.WriteLong(geometry + 36, uint.MaxValue);
+        bus.WriteLong(State + 44, Entries); bus.WriteLong(State + 48, 1); bus.WriteLong(State + 2016, Entries);
+        bus.WriteLong(bucket, Entries); bus.WriteLong(Entries + 4, block); bus.WriteLong(Entries + 16, 0x42544D50);
+        bus.WriteLong(slot, block); bus.WriteLong(slot + 4, slotId);
+        for (var i = 0; i < 512; i++) bus.Memory[image + i] = (byte)(31 * i + 3);
+        bus.WriteLong(image, imageId); bus.WriteLong(image + 4, 0); bus.WriteLong(image + 8, imageBlock);
+        var sum = 0u;
+        for (var i = 0u; i < 512; i += 4) sum = unchecked(sum + bus.ReadLong(image + i));
+        bus.WriteLong(image + 4, ~sum);
+
+        var transfers = 0;
+        bus.RegisterGateway(Load + Entry(path, "CopperStart.Dos.NativeFileSystemPlatform::TransferBlock"), state =>
+        {
+            transfers++;
+            state.D[0] = success ? 1u : 0u;
+            state.ProgramCounter = bus.ReadLong(state.A[7]);
+            state.A[7] += 4;
+        });
+        using var core = M68kCoreFactory.Default.Create(model, bus);
+        core.Reset(Load + Entry(path, "CopperStart.Dos.NativeFileSystemPlatform::WriteTrstHomeSlot"), stack);
+        bus.WriteLong(stack, returned);
+        core.State.D[0] = Platform; core.State.A[0] = slot;
+        for (var step = 0; step < 80000 && !core.State.Halted && core.State.ProgramCounter != returned; step++)
+            core.ExecuteInstruction();
+        Assert.Equal(returned, core.State.ProgramCounter);
+        Assert.Equal(1, transfers);
+        Assert.Equal(success, core.State.D[0] != 0);
+        if (success)
+        {
+            Assert.Equal(expectedId, bus.ReadLong(Entries + 16));
+            Assert.Equal(bus.Memory.AsSpan((int)image, 512).ToArray(), bus.Memory.AsSpan((int)Entries + 20, 512).ToArray());
+        }
+        else Assert.Equal(0u, bus.ReadLong(bucket));
+    }
     [CacheHandlerTheory]
     [InlineData(0, 32)] [InlineData(1, 32)] [InlineData(2, 32)] [InlineData(3, 32)]
     [InlineData(4, 32)] [InlineData(4, 96)]
@@ -254,5 +313,16 @@ public sealed class CacheHandlerTheoryAttribute : Xunit.TheoryAttribute
         var path = Environment.GetEnvironmentVariable("COPPERSFS_HANDLER_PATH");
         if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
             Skip = "Set COPPERSFS_HANDLER_PATH to the freshly built classic SFS handler.";
+    }
+}
+
+public sealed class SharedSfsHomeTheoryAttribute : Xunit.TheoryAttribute
+{
+    public SharedSfsHomeTheoryAttribute()
+    {
+        var path = Environment.GetEnvironmentVariable("COPPERSFS_HANDLER_PATH");
+        if (!System.IO.File.Exists(path) ||
+            !System.IO.File.ReadAllText(path + ".map").Contains("CopperStart.Dos.NativeFileSystemPlatform::BorrowSfsJournalPages"))
+            Skip = "Requires a compiled shared-pool CopperSFS handler.";
     }
 }

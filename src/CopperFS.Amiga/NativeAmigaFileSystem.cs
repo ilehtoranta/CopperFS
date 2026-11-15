@@ -3563,7 +3563,21 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return true;
     }
 #endif
+#if COPPERFS_SFS_POOL
+    public bool WriteTrstHomeSlot(APTR slot)
+    {
+        var block = ReadUInt32(slot);
+        var image = APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
+        var id = ReadUInt32(slot, 4);
+        if (id != 0 && (ReadUInt32(image) != id || ReadUInt32(image, 8) != block)) id = 0;
+        return WriteRetainedImage(block, image, id);
+    }
+
+    public bool WriteRetainedBlock(uint block, APTR source) => WriteRetainedImage(block, source, 0);
+    private bool WriteRetainedImage(uint block, APTR source, uint id)
+#else
     public bool WriteRetainedBlock(uint block, APTR source)
+#endif
     {
 #if COPPERFS_FFS_HANDLER
         BeforeFfsWrite();
@@ -3594,19 +3608,30 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             if (cached.IsNotNull) ForgetCached(cached);
             return false;
         }
+#if COPPERFS_SFS_POOL
+        RetainWrittenImage(block, source, cached, bytes, id);
+#else
         RetainWrittenImage(block, source, cached, bytes);
+#endif
         return true;
     }
 
+#if COPPERFS_SFS_POOL
+    private void RetainWrittenImage(uint block, APTR source, APTR cached, uint bytes, uint verifiedId = 0)
+#else
     private void RetainWrittenImage(uint block, APTR source, APTR cached, uint bytes)
+#endif
     {
+#if !COPPERFS_SFS_POOL
+        const uint verifiedId = 0;
+#endif
         if (cached.IsNotNull)
         {
             CopyBlock(source, APTR.FromPointer(cached.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes), bytes);
-            APTR.WriteUInt32(cached, NativeFileSystemCacheEntryCodec.VerificationOffset, 0);
+            APTR.WriteUInt32(cached, NativeFileSystemCacheEntryCodec.VerificationOffset, verifiedId);
             TouchCached(cached);
         }
-        else CacheBlock(block, 0, source, bytes);
+        else CacheBlock(block, verifiedId, source, bytes);
     }
 
     // Streaming data bypasses the metadata LRU. Preserve the DMA bounce path,
