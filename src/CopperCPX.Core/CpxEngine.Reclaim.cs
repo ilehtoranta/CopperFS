@@ -8,34 +8,47 @@ public partial struct CpxEngine<TMemory>
 
     private StepResult ReclaimStep()
     {
-        uint p = Page(3), obj = CleanupObject, extent = CleanupExtent;
-        switch (memory.Read32(Arena + (Phase)))
+        uint cpxArenaBase = Arena;
+        uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), obj = (cpxArenaBase + 13500), extent = (cpxArenaBase + 13756);
+        switch (memory.Read32(cpxArenaBase + (Phase)))
         {
             case 0:
-                return ReadStaged(Anchor + 3 * Q, p, 1);
+                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
             case 1:
-                if (!Control(p, 3, Anchor + 3 * Q) || !ReadableGeneration(p))
+                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
-                WW(CleanupId, GetWide(p + 88));
-                if ((((ulong)(RW(CleanupId))) == 0))
+            {
+                uint cpxWideAddress = cpxArenaBase + (uint)(CleanupId);
+                ulong cpxWideValue = ((((ulong)(memory.Read32(((uint)(p + 88))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 88)) + 4)))));
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
+                if ((((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4)))))))) == 0))
                     return Done();
-                return LoadObject(RW(CleanupId), 2);
+                return LoadObject(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4)))))), 2);
             case 2:
-                if (memory.Read32(Arena + (SourcePage)) == 0)
+                if (memory.Read32(cpxArenaBase + (SourcePage)) == 0)
                     return Fail(CpxError.Corrupt);
-                Copy(obj, ObjectRecord, 256);
+                Copy(obj, (cpxArenaBase + CpxArena.MountBytes), 256);
                 uint flag = memory.Read16(obj + 86), links = memory.Read32(obj + 76);
                 if (flag is < 1 or > 2 || flag == 1 && links != 0 || flag == 2 && (links == 0 || memory.Read8(obj + 84) != 1))
                     return Fail(CpxError.Corrupt);
-                memory.Write32(Arena + (CleanupUnlink), flag == 1 ? 1u : 0u);
-                ulong size = GetWide(obj + 8), keep = Scalar64.Right(size, (int)memory.Read32(Arena + (UnitShift)));
-                if ((((uint)((ulong)(size))) & ((1u << (int)memory.Read32(Arena + (UnitShift))) - 1)) != 0)
+                memory.Write32(cpxArenaBase + (CleanupUnlink), flag == 1 ? 1u : 0u);
+                ulong size = ((((ulong)(memory.Read32(((uint)(obj + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 8)) + 4))))), keep = Scalar64.Right(size, (int)memory.Read32(cpxArenaBase + (UnitShift)));
+                if ((((uint)((ulong)(size))) & ((1u << (int)memory.Read32(cpxArenaBase + (UnitShift))) - 1)) != 0)
                     keep += 1;
-                WW(CleanupKeep, flag == 1 ? default : keep);
+            {
+                uint cpxWideAddress = cpxArenaBase + (uint)(CleanupKeep);
+                ulong cpxWideValue = flag == 1 ? default : keep;
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
                 byte storage = memory.Read8(obj + 85);
                 if (memory.Read8(obj + 84) != 1 || storage == 0)
                 {
-                    memory.Write32(Arena + (Phase), 20);
+                    memory.Write32(cpxArenaBase + (Phase), 20);
                     return StepResult.Pending;
                 }
 
@@ -46,57 +59,57 @@ public partial struct CpxEngine<TMemory>
                         return Fail(CpxError.Corrupt);
                     if (count == 0)
                     {
-                        memory.Write32(Arena + (Phase), 20);
+                        memory.Write32(cpxArenaBase + (Phase), 20);
                         return StepResult.Pending;
                     }
 
                     Copy(extent, obj + 96 + (count - 1) * 24, 24);
-                    memory.Write32(Arena + (Phase), 4);
+                    memory.Write32(cpxArenaBase + (Phase), 4);
                     return StepResult.Pending;
                 }
 
                 if (storage != 2)
                     return Fail(CpxError.Corrupt);
-                StartSeek(CpxTreeKind.Extent, GetWide(obj + 24), RW(CleanupId), (((ulong)(uint.MaxValue)) << 32 | ((ulong)(uint.MaxValue))), default, CpxSeek.Floor);
+                StartSeek(CpxTreeKind.Extent, ((((ulong)(memory.Read32(((uint)(obj + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 24)) + 4))))), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4)))))), (((ulong)(uint.MaxValue)) << 32 | ((ulong)(uint.MaxValue))), default, CpxSeek.Floor);
                 return Call(CpxOperation.ReadTree, 3);
             case 3:
-                if (!TreeFound)
+                if (!(memory.Read32(cpxArenaBase + (SeekFound)) != 0))
                 {
-                    memory.Write32(Arena + (Phase), 20);
+                    memory.Write32(cpxArenaBase + (Phase), 20);
                     return StepResult.Pending;
                 }
 
-                Copy(extent, TreeRecord, 24);
-                memory.Write32(Arena + (Phase), 4);
+                Copy(extent, ((cpxArenaBase + CpxArena.MountBytes) + 512), 24);
+                memory.Write32(cpxArenaBase + (Phase), 4);
                 return StepResult.Pending;
             case 4:
                 uint length = memory.Read32(extent + 16);
-                ulong physical = GetWide(extent + 8), logical = GetWide(extent);
+                ulong physical = ((((ulong)(memory.Read32(((uint)(extent + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(extent + 8)) + 4))))), logical = ((((ulong)(memory.Read32(((uint)(extent))))) << 32 | ((ulong)(memory.Read32(((uint)(extent)) + 4)))));
                 if (length == 0 || length > 65536 || !Scalar64.Add(logical, ((ulong)(length)), out var end) || !Scalar64.Add(physical, ((ulong)(length - 1)), out var last) || ((uint)(((ulong)(physical)) >> 32)) != ((uint)(((ulong)(last)) >> 32)) || (((uint)((ulong)(physical))) >> 16) != (((uint)((ulong)(last))) >> 16) || memory.Read32(extent + 20) > 1)
                     return Fail(CpxError.Corrupt);
-                if ((end) <= (RW(CleanupKeep)))
+                if ((end) <= (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)) + 4))))))))
                 {
-                    memory.Write32(Arena + (Phase), 20);
+                    memory.Write32(cpxArenaBase + (Phase), 20);
                     return StepResult.Pending;
                 }
 
                 uint take = (((uint)((ulong)(last))) & 4095) + 1;
                 if (take > length)
                     take = length;
-                if ((logical) < (RW(CleanupKeep)))
+                if ((logical) < (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)) + 4))))))))
                 {
-                    Scalar64.Subtract(end, RW(CleanupKeep), out var excess);
+                    Scalar64.Subtract(end, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)) + 4)))))), out var excess);
                     if (((uint)(((ulong)(excess)) >> 32)) == 0 && take > ((uint)((ulong)(excess))))
                         take = ((uint)((ulong)(excess)));
                 }
 
-                memory.Write32(Arena + (CleanupTake), take);
+                memory.Write32(cpxArenaBase + (CleanupTake), take);
                 return BeginTx(9, 5);
             case 5:
-                return ChangeAllocation(GetWide(extent + 8) + memory.Read32(extent + 16) - memory.Read32(Arena + (CleanupTake)), memory.Read32(Arena + (CleanupTake)), false, 6);
+                return ChangeAllocation(((((ulong)(memory.Read32(((uint)(extent + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(extent + 8)) + 4))))) + memory.Read32(extent + 16) - memory.Read32(cpxArenaBase + (CleanupTake)), memory.Read32(cpxArenaBase + (CleanupTake)), false, 6);
             case 6:
-                uint left = memory.Read32(extent + 16) - memory.Read32(Arena + (CleanupTake));
-                if (!AdjustWide(obj + 16, memory.Read32(Arena + (CleanupTake)), false))
+                uint left = memory.Read32(extent + 16) - memory.Read32(cpxArenaBase + (CleanupTake));
+                if (!AdjustWide(obj + 16, memory.Read32(cpxArenaBase + (CleanupTake)), false))
                     return Fail(CpxError.Corrupt);
                 if (memory.Read8(obj + 85) == 1)
                 {
@@ -112,64 +125,88 @@ public partial struct CpxEngine<TMemory>
                 }
 
                 memory.Write32(extent + 16, left);
-                return MutateTree(CpxTreeKind.Extent, GetWide(obj + 24), RW(CleanupId), extent, left == 0 ? 2u : 1u, 7);
+                return MutateTree(CpxTreeKind.Extent, ((((ulong)(memory.Read32(((uint)(obj + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 24)) + 4))))), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4)))))), extent, left == 0 ? 2u : 1u, 7);
             case 7:
                 return SaveObject(obj, 8);
             case 8:
                 return Call(CpxOperation.CommitTransaction, 0);
             case 20:
-                ulong tree = GetWide(obj + (memory.Read8(obj + 84) == 2 ? 32u : 24u));
-                WW(CleanupRoot, tree);
+                ulong tree = ((((ulong)(memory.Read32(((uint)(obj + (memory.Read8(obj + 84) == 2 ? 32u : 24u)))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + (memory.Read8(obj + 84) == 2 ? 32u : 24u))) + 4)))));
+            {
+                uint cpxWideAddress = cpxArenaBase + (uint)(CleanupRoot);
+                ulong cpxWideValue = tree;
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
                 if ((((ulong)(tree)) == 0))
                 {
-                    memory.Write32(Arena + (Phase), 30);
+                    memory.Write32(cpxArenaBase + (Phase), 30);
                     return StepResult.Pending;
                 }
 
-                memory.Write32(Arena + (CleanupTree), memory.Read8(obj + 84) == 2 ? 1u : 2u);
+                memory.Write32(cpxArenaBase + (CleanupTree), memory.Read8(obj + 84) == 2 ? 1u : 2u);
                 return BeginTx(27, 21);
             case 21:
-                return PruneTree((CpxTreeKind)memory.Read32(Arena + (CleanupTree)), RW(CleanupRoot), RW(CleanupId), 22);
+                return PruneTree((CpxTreeKind)memory.Read32(cpxArenaBase + (CleanupTree)), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupRoot)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupRoot)) + 4)))))), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4)))))), 22);
             case 22:
-                if (memory.Read32(Arena + (PruneChanged)) == 0)
+                if (memory.Read32(cpxArenaBase + (PruneChanged)) == 0)
                 {
-                    if (memory.Read32(Arena + (CleanupUnlink)) != 0)
+                    if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0)
                         return Fail(CpxError.Corrupt);
                     return Call(CpxOperation.AbortTransaction, 30);
                 }
 
-                PutWide(obj + (memory.Read32(Arena + (CleanupTree)) == 1 ? 32u : 24u), RW(PruneRoot));
+            {
+                uint cpxWideAddress = (uint)(obj + (memory.Read32(cpxArenaBase + (CleanupTree)) == 1 ? 32u : 24u));
+                ulong cpxWideValue = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(PruneRoot)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(PruneRoot)) + 4))))));
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
                 return SaveObject(obj, 23);
             case 23:
                 return Call(CpxOperation.CommitTransaction, 0);
             case 30:
                 return BeginTx(9, 31);
             case 31:
-                if (memory.Read32(Arena + (CleanupUnlink)) != 0 && !(((ulong)(GetWide(obj + 48))) == 0))
-                    return ReleaseMetadata(GetWide(obj + 48), 32);
-                memory.Write32(Arena + (Phase), 32);
+                if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0 && !(((ulong)(((((ulong)(memory.Read32(((uint)(obj + 48))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 48)) + 4))))))) == 0))
+                    return ReleaseMetadata(((((ulong)(memory.Read32(((uint)(obj + 48))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 48)) + 4))))), 32);
+                memory.Write32(cpxArenaBase + (Phase), 32);
                 return StepResult.Pending;
             case 32:
-                if (memory.Read32(Arena + (CleanupUnlink)) != 0 && memory.Read8(obj + 84) == 3 && memory.Read8(obj + 85) == 3)
-                    return ReleaseMetadata(GetWide(obj + 96), 33);
-                memory.Write32(Arena + (Phase), 33);
+                if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0 && memory.Read8(obj + 84) == 3 && memory.Read8(obj + 85) == 3)
+                    return ReleaseMetadata(((((ulong)(memory.Read32(((uint)(obj + 96))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 96)) + 4))))), 33);
+                memory.Write32(cpxArenaBase + (Phase), 33);
                 return StepResult.Pending;
             case 33:
-                return ReadStaged(Anchor + 3 * Q, p, 34);
+                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 34);
             case 34:
-                if (!Control(p, 3, Anchor + 3 * Q) || !(((ulong)(GetWide(p + 88))) == ((ulong)(RW(CleanupId)))))
+                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 88))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 88)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4))))))))))
                     return Fail(CpxError.Corrupt);
-                WW(CleanupRoot, GetWide(p + 80));
-                PutWide(p + 88, GetWide(obj + 40));
-                return StagePage(p, Anchor + 3 * Q, 35);
+            {
+                uint cpxWideAddress = cpxArenaBase + (uint)(CleanupRoot);
+                ulong cpxWideValue = ((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4)))));
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
+            {
+                uint cpxWideAddress = (uint)(p + 88);
+                ulong cpxWideValue = ((((ulong)(memory.Read32(((uint)(obj + 40))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 40)) + 4)))));
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
+                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 35);
             case 35:
-                if (memory.Read32(Arena + (CleanupUnlink)) != 0)
-                    return MutateTree(CpxTreeKind.Object, RW(CleanupRoot), default, obj, 2, 36);
+                if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0)
+                    return MutateTree(CpxTreeKind.Object, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupRoot)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupRoot)) + 4)))))), default, obj, 2, 36);
                 // A fully reclaimed extent tree must not strand an empty file
                 // in a storage mode that requires a nonexistent tree to write.
-                if ((((ulong)(GetWide(obj + 16))) == 0) && (((ulong)(GetWide(obj + 24))) == 0))
+                if ((((ulong)(((((ulong)(memory.Read32(((uint)(obj + 16))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 16)) + 4))))))) == 0) && (((ulong)(((((ulong)(memory.Read32(((uint)(obj + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 24)) + 4))))))) == 0))
                 {
-                    ulong finalSize = GetWide(obj + 8);
+                    ulong finalSize = ((((ulong)(memory.Read32(((uint)(obj + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 8)) + 4)))));
                     bool inline = ((uint)(((ulong)(finalSize)) >> 32)) == 0 && ((uint)((ulong)(finalSize))) <= 160;
                     Clear(obj + 96, 160);
                     memory.Write8(obj + 85, inline ? (byte)0 : (byte)1);
@@ -177,15 +214,21 @@ public partial struct CpxEngine<TMemory>
                     memory.Write16(obj + 88, inline ? ((uint)((ulong)(finalSize))) : 0);
                 }
 
-                PutWide(obj + 40, default);
+            {
+                uint cpxWideAddress = (uint)(obj + 40);
+                ulong cpxWideValue = default;
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
                 memory.Write16(obj + 86, 0);
                 return SaveObject(obj, 36);
             case 36:
                 return Call(CpxOperation.CommitTransaction, 37);
             case 37:
-                if (memory.Read32(Arena + (CleanupUnlink)) != 0)
+                if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0)
                     return Call(CpxOperation.PruneObjects, 0);
-                memory.Write32(Arena + (Phase), 0);
+                memory.Write32(cpxArenaBase + (Phase), 0);
                 return StepResult.Pending;
             default:
                 return Fail(CpxError.Corrupt);

@@ -24,15 +24,16 @@ public partial struct CpxEngine<TMemory>
 
     private void DefaultLabel()
     {
-        Clear(VolumeLabelAddress, 32);
-        memory.Write8(VolumeLabelAddress, 10);
-        memory.Write8(VolumeLabelAddress + 1, 67);
-        memory.Write32(VolumeLabelAddress + 2, 0x6f707065);
-        memory.Write8(VolumeLabelAddress + 6, 114);
-        memory.Write8(VolumeLabelAddress + 7, 67);
-        memory.Write8(VolumeLabelAddress + 8, 80);
-        memory.Write8(VolumeLabelAddress + 9, 88);
-        memory.Write8(VolumeLabelAddress + 10, 52);
+        uint cpxArenaBase = Arena;
+        Clear((cpxArenaBase + 3864), 32);
+        memory.Write8((cpxArenaBase + 3864), 10);
+        memory.Write8((cpxArenaBase + 3864) + 1, 67);
+        memory.Write32((cpxArenaBase + 3864) + 2, 0x6f707065);
+        memory.Write8((cpxArenaBase + 3864) + 6, 114);
+        memory.Write8((cpxArenaBase + 3864) + 7, 67);
+        memory.Write8((cpxArenaBase + 3864) + 8, 80);
+        memory.Write8((cpxArenaBase + 3864) + 9, 88);
+        memory.Write8((cpxArenaBase + 3864) + 10, 52);
     }
 
     // State payload 48 is the legacy unlabeled representation. LBL1 is a
@@ -74,35 +75,37 @@ public partial struct CpxEngine<TMemory>
 
     private void CacheStateLabel(uint p)
     {
-        memory.Write32(Arena + (OwnershipFeature), memory.Read16(p + 52) == 136 ? 1u : 0u);
+        uint cpxArenaBase = Arena;
+        memory.Write32(cpxArenaBase + (OwnershipFeature), memory.Read16(p + 52) == 136 ? 1u : 0u);
         if (memory.Read16(p + 52) == 48)
         {
             DefaultLabel();
             return;
         }
 
-        Clear(VolumeLabelAddress, 32);
+        Clear((cpxArenaBase + 3864), 32);
         uint count = 0, bytes = memory.Read16(p + 116);
         for (uint n = 0; n < bytes; n++)
         {
             uint c = memory.Read8(p + 120 + n);
             if (c >= 128)
                 c = ((c & 3) << 6) | ((uint)memory.Read8(p + 120 + (++n)) & 63);
-            memory.Write8(VolumeLabelAddress + 1 + count++, (byte)c);
+            memory.Write8((cpxArenaBase + 3864) + 1 + count++, (byte)c);
         }
 
-        memory.Write8(VolumeLabelAddress, (byte)count);
+        memory.Write8((cpxArenaBase + 3864), (byte)count);
     }
 
     private void EncodeStateLabel(uint p)
     {
+        uint cpxArenaBase = Arena;
         Clear(p + 112, 80);
         memory.Write32(p + 112, 0x4c424c31);
         memory.Write16(p + 118, 1);
         uint bytes = 0;
-        for (uint n = 0; n < memory.Read32(Arena + (LabelLength)); n++)
+        for (uint n = 0; n < memory.Read32(cpxArenaBase + (LabelLength)); n++)
         {
-            uint c = memory.Read8(LabelInput + n);
+            uint c = memory.Read8((cpxArenaBase + 16000) + n);
             if (c >= 128)
             {
                 memory.Write8(p + 120 + bytes++, (byte)(0xc0 | (c >> 6)));
@@ -119,36 +122,40 @@ public partial struct CpxEngine<TMemory>
 
     private void CacheInputLabel()
     {
-        Clear(VolumeLabelAddress, 32);
-        memory.Write8(VolumeLabelAddress, (byte)memory.Read32(Arena + (LabelLength)));
-        Copy(VolumeLabelAddress + 1, LabelInput, memory.Read32(Arena + (LabelLength)));
+        uint cpxArenaBase = Arena;
+        Clear((cpxArenaBase + 3864), 32);
+        memory.Write8((cpxArenaBase + 3864), (byte)memory.Read32(cpxArenaBase + (LabelLength)));
+        Copy((cpxArenaBase + 3864) + 1, (cpxArenaBase + 16000), memory.Read32(cpxArenaBase + (LabelLength)));
     }
 
     public CpxError BeginLabel(uint latin1, uint length)
     {
+        uint cpxArenaBase = Arena;
         if (!ValidLabelInput(latin1, length))
             return CpxError.InvalidArgument;
         CpxError error = StartOperation(CpxOperation.SetLabel);
         if (error != CpxError.None)
             return error;
-        Copy(LabelInput, latin1, length);
-        memory.Write32(Arena + (LabelLength), length);
+        Copy((cpxArenaBase + 16000), latin1, length);
+        memory.Write32(cpxArenaBase + (LabelLength), length);
         return error;
     }
 
     public CpxError BeginReformat(uint latin1, uint length)
     {
-        if (IsReadOnly)
+        uint cpxArenaBase = Arena;
+        if ((memory.Read32(cpxArenaBase + (ReadOnlyAt)) != 0))
             return CpxError.ReadOnly;
-        if (!Scalar64.Add(RW(Identity), ((ulong)(1)), out var identity) || memory.Read32(Arena + (MountEpoch)) == uint.MaxValue)
+        if (!Scalar64.Add(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Identity)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Identity)) + 4)))))), ((ulong)(1)), out var identity) || memory.Read32(cpxArenaBase + (MountEpoch)) == uint.MaxValue)
             return CpxError.ResourceExhausted;
-        return BeginFormat(1u << (int)memory.Read32(Arena + (SectorShift)), 1u << (int)memory.Read32(Arena + (UnitShift)), RW(Capacity), identity, memory.Read32(Arena + (MountEpoch)) + 1, latin1, length);
+        return BeginFormat(1u << (int)memory.Read32(cpxArenaBase + (SectorShift)), 1u << (int)memory.Read32(cpxArenaBase + (UnitShift)), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Capacity)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Capacity)) + 4)))))), identity, memory.Read32(cpxArenaBase + (MountEpoch)) + 1, latin1, length);
     }
 
     private StepResult LabelStep()
     {
-        uint p = Page(4);
-        switch (memory.Read32(Arena + (Phase)))
+        uint cpxArenaBase = Arena;
+        uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(4)) * 4)));
+        switch (memory.Read32(cpxArenaBase + (Phase)))
         {
             case 0:
                 return BeginTx(1, 1);

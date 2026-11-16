@@ -3,98 +3,120 @@ public partial struct CpxEngine<TMemory>
     where TMemory : struct, ICpxMemory
 {
     public uint ObjectRecord => Arena + CpxArena.MountBytes;
-    public bool ObjectFound => memory.Read32(Arena + (OperationAt)) == (uint)CpxOperation.ReadObject && memory.Read32(Arena + (Finished)) != 0 && memory.Read32(Arena + (ErrorAt)) == 0 && memory.Read32(Arena + (SourcePage)) != 0;
+
+    public bool ObjectFound
+    {
+        get
+        {
+            uint cpxArenaBase = Arena;
+            return memory.Read32(cpxArenaBase + (OperationAt)) == (uint)CpxOperation.ReadObject && memory.Read32(cpxArenaBase + (Finished)) != 0 && memory.Read32(cpxArenaBase + (ErrorAt)) == 0 && memory.Read32(cpxArenaBase + (SourcePage)) != 0;
+        }
+    }
 
     private StepResult ReadStaged(ulong at, uint buffer, uint nextPhase)
     {
+        uint cpxArenaBase = Arena;
         int staged = FindStaged(at);
-        if (staged >= 0 && BufferedWrites)
+        if (staged >= 0 && (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1))
         {
-            Copy(buffer, BufferedImage((uint)staged), P);
+            Copy(buffer, (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)((uint)staged)) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (PageBytes))));
             TrustBufferedPage(buffer, at);
-            memory.Write32(Arena + (Phase), nextPhase);
+            memory.Write32(cpxArenaBase + (Phase), nextPhase);
             return StepResult.Pending;
         }
 
-        if (staged < 0 && BufferedWrites && ReadBufferedClean(at, buffer))
+        if (staged < 0 && (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && ReadBufferedClean(at, buffer))
         {
-            memory.Write32(Arena + (Phase), nextPhase);
+            memory.Write32(cpxArenaBase + (Phase), nextPhase);
             return StepResult.Pending;
         }
 
-        return Issue(IoKind.Read, staged < 0 ? at : Image(RW(Generation) + 1, (uint)staged), buffer, P, nextPhase);
+        return Issue(IoKind.Read, staged < 0 ? at : Image(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))) + 1, (uint)staged), buffer, (memory.Read32(cpxArenaBase + (PageBytes))), nextPhase);
     }
 
     private StepResult ObjectStep()
     {
-        uint p = Page(0);
-        switch (memory.Read32(Arena + (Phase)))
+        uint cpxArenaBase = Arena;
+        uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4)));
+        switch (memory.Read32(cpxArenaBase + (Phase)))
         {
             case 0:
-                memory.Write32(Arena + (SourcePage), 0);
-                memory.Write32(Arena + (TreeDepth), 0);
-                memory.Write32(Arena + (ExpectedLevel), uint.MaxValue);
-                if (BufferedWrites && (CpxOperation)memory.Read32(Arena + (OperationAt))is CpxOperation.ReadObject or CpxOperation.ReadFile or CpxOperation.WriteMapped or CpxOperation.Lookup && ReadBufferedObject(RW(ObjectKey)))
+                memory.Write32(cpxArenaBase + (SourcePage), 0);
+                memory.Write32(cpxArenaBase + (TreeDepth), 0);
+                memory.Write32(cpxArenaBase + (ExpectedLevel), uint.MaxValue);
+                if ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && (CpxOperation)memory.Read32(cpxArenaBase + (OperationAt))is CpxOperation.ReadObject or CpxOperation.ReadFile or CpxOperation.WriteMapped or CpxOperation.Lookup && ReadBufferedObject(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)) + 4))))))))
                     return Done();
-                return ReadStaged(Anchor + 3 * Q, p, 1);
+                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
             case 1:
-                if (!Control(p, 3, Anchor + 3 * Q) || !ReadableGeneration(p))
+                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
-                WW(TreeAddress, GetWide(p + 80));
-                memory.Write32(Arena + (Phase), 2);
+            {
+                uint cpxWideAddress = cpxArenaBase + (uint)(TreeAddress);
+                ulong cpxWideValue = ((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4)))));
+                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+            }
+
+                memory.Write32(cpxArenaBase + (Phase), 2);
                 return StepResult.Pending;
             case 2:
-                if (memory.Read32(Arena + (TreeDepth)) == 8 || !Allocatable(RW(TreeAddress)))
+                if (memory.Read32(cpxArenaBase + (TreeDepth)) == 8 || !Allocatable(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)) + 4))))))))
                     return Fail(CpxError.Corrupt);
-                memory.Write32(Arena + (TreeDepth), memory.Read32(Arena + (TreeDepth)) + 1);
-                return ReadStaged(RW(TreeAddress), p, 3);
+                memory.Write32(cpxArenaBase + (TreeDepth), memory.Read32(cpxArenaBase + (TreeDepth)) + 1);
+                return ReadStaged(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)) + 4)))))), p, 3);
             case 3:
                 uint level = memory.Read16(p + 50), count = memory.Read16(p + 48), width = level == 0 ? 256u : 16u;
-                if (!Control(p, level == 0 ? 11u : 12u, RW(TreeAddress)) || !ReadableGeneration(p) || !(((ulong)(GetWide(p + 40))) == 0) || level >= 8 || (memory.Read32(Arena + (ExpectedLevel)) != uint.MaxValue && level != memory.Read32(Arena + (ExpectedLevel))) || count > (P - 64) / width || (level != 0 && count == 0) || memory.Read16(p + 52) != count * width)
+                if (!Control(p, level == 0 ? 11u : 12u, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)) + 4))))))) || !ReadableGeneration(p) || !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 40))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 40)) + 4))))))) == 0) || level >= 8 || (memory.Read32(cpxArenaBase + (ExpectedLevel)) != uint.MaxValue && level != memory.Read32(cpxArenaBase + (ExpectedLevel))) || count > ((memory.Read32(cpxArenaBase + (PageBytes))) - 64) / width || (level != 0 && count == 0) || memory.Read16(p + 52) != count * width)
                     return Fail(CpxError.Corrupt);
-                memory.Write32(Arena + (TreeCount), count);
-                memory.Write32(Arena + (TreeLevel), level);
-                memory.Write32(Arena + (ScanIndex), 0);
-                memory.Write32(Arena + (TreeSlot), 0);
-                memory.Write32(Arena + (Phase), 4);
+                memory.Write32(cpxArenaBase + (TreeCount), count);
+                memory.Write32(cpxArenaBase + (TreeLevel), level);
+                memory.Write32(cpxArenaBase + (ScanIndex), 0);
+                memory.Write32(cpxArenaBase + (TreeSlot), 0);
+                memory.Write32(cpxArenaBase + (Phase), 4);
                 return StepResult.Pending;
             case 4:
-                uint size = memory.Read32(Arena + (TreeLevel)) == 0 ? 256u : 16u, index = memory.Read32(Arena + (ScanIndex)), end = index + 64;
-                if (end > memory.Read32(Arena + (TreeCount)))
-                    end = memory.Read32(Arena + (TreeCount));
+                uint size = memory.Read32(cpxArenaBase + (TreeLevel)) == 0 ? 256u : 16u, index = memory.Read32(cpxArenaBase + (ScanIndex)), end = index + 64;
+                if (end > memory.Read32(cpxArenaBase + (TreeCount)))
+                    end = memory.Read32(cpxArenaBase + (TreeCount));
                 for (; index < end; index++)
                 {
-                    ulong key = GetWide(p + 64 + index * size);
-                    if (index > 0 && (GetWide(p + 64 + (index - 1) * size)) >= (key))
+                    ulong key = ((((ulong)(memory.Read32(((uint)(p + 64 + index * size))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64 + index * size)) + 4)))));
+                    if (index > 0 && (((((ulong)(memory.Read32(((uint)(p + 64 + (index - 1) * size))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64 + (index - 1) * size)) + 4)))))) >= (key))
                         return Fail(CpxError.Corrupt);
-                    if (memory.Read32(Arena + (TreeLevel)) != 0)
+                    if (memory.Read32(cpxArenaBase + (TreeLevel)) != 0)
                     {
-                        if (!Allocatable(GetWide(p + 64 + index * size + 8)))
+                        if (!Allocatable(((((ulong)(memory.Read32(((uint)(p + 64 + index * size + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64 + index * size + 8)) + 4)))))))
                             return Fail(CpxError.Corrupt);
-                        if ((key) <= (RW(ObjectKey)))
-                            memory.Write32(Arena + (TreeSlot), index);
+                        if ((key) <= (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)) + 4))))))))
+                            memory.Write32(cpxArenaBase + (TreeSlot), index);
                     }
-                    else if ((((ulong)(key)) == ((ulong)(RW(ObjectKey)))))
-                        memory.Write32(Arena + (TreeSlot), index + 1);
+                    else if ((((ulong)(key)) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)) + 4))))))))))
+                        memory.Write32(cpxArenaBase + (TreeSlot), index + 1);
                 }
 
-                memory.Write32(Arena + (ScanIndex), index);
-                if (index < memory.Read32(Arena + (TreeCount)))
+                memory.Write32(cpxArenaBase + (ScanIndex), index);
+                if (index < memory.Read32(cpxArenaBase + (TreeCount)))
                     return StepResult.Pending;
-                if (memory.Read32(Arena + (TreeLevel)) != 0)
+                if (memory.Read32(cpxArenaBase + (TreeLevel)) != 0)
                 {
-                    WW(TreeAddress, GetWide(p + 64 + memory.Read32(Arena + (TreeSlot)) * size + 8));
-                    memory.Write32(Arena + (ExpectedLevel), memory.Read32(Arena + (TreeLevel)) - 1);
-                    memory.Write32(Arena + (Phase), 2);
+                    {
+                        uint cpxWideAddress = cpxArenaBase + (uint)(TreeAddress);
+                        ulong cpxWideValue = ((((ulong)(memory.Read32(((uint)(p + 64 + memory.Read32(cpxArenaBase + (TreeSlot)) * size + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64 + memory.Read32(cpxArenaBase + (TreeSlot)) * size + 8)) + 4)))));
+                        memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
+                        memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
+                    }
+
+                    memory.Write32(cpxArenaBase + (ExpectedLevel), memory.Read32(cpxArenaBase + (TreeLevel)) - 1);
+                    memory.Write32(cpxArenaBase + (Phase), 2);
                     return StepResult.Pending;
                 }
 
-                CacheBufferedObjects(p, RW(TreeAddress));
-                if (memory.Read32(Arena + (TreeSlot)) != 0)
+                CacheBufferedObjects(p, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)) + 4)))))));
+                if (memory.Read32(cpxArenaBase + (TreeSlot)) != 0)
                 {
-                    uint source = p + 64 + (memory.Read32(Arena + (TreeSlot)) - 1) * 256;
-                    Copy(ObjectRecord, source, 256);
-                    memory.Write32(Arena + (SourcePage), 1);
+                    uint source = p + 64 + (memory.Read32(cpxArenaBase + (TreeSlot)) - 1) * 256;
+                    Copy((cpxArenaBase + CpxArena.MountBytes), source, 256);
+                    memory.Write32(cpxArenaBase + (SourcePage), 1);
                 }
 
                 return Done();

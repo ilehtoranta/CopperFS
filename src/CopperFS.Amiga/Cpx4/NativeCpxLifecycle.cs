@@ -213,6 +213,8 @@ internal static class NativeCpxLifecycle
             storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
         }
         if(storage!=0&&engine.EnableBufferedWrites(storage,bytes)!=CpxError.None) Exec.FreeMem(storage,bytes);
+        engine.EnableAlternatingCheckpoints();
+        engine.EnableCpuBatching();
     }
 }
 #endif

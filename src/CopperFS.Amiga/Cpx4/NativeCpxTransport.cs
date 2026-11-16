@@ -109,33 +109,24 @@ public static class NativeCpxTransport
         APTR.WriteUInt32(APTR.FromPointer(arena+2304),0,0); return true;
     }
     public static StepResult Service(uint arena,CpxIo io,out uint completed,out bool unsupported)
+        => ServiceRequest(arena,in io,out completed,out unsupported);
+    internal static StepResult ServiceRequest(uint arena,in CpxIo io,out uint completed,out bool unsupported)
     {
         completed=0; unsupported=false; APTR s=State(arena),request=APTR.FromPointer(APTR.ReadUInt32(s,16));
         APTR.WriteUInt32(s,72,0);
         if(APTR.ReadUInt32(s,64)!=0) return Quiesce(arena)==StepResult.Pending?StepResult.Pending:StepResult.Failed;
         if(io.Kind is IoKind.Discard or IoKind.QueryDiscard) return NativeCpxUnmap.Service(arena,io,out completed,out unsupported);
-        if(Waiting(arena))
-        {
-            if(!NativeCpxIo.Reap(request,s,out uint token,out uint actual,out CpxError error)) return StepResult.Pending;
-            if(token!=io.Token) return StepResult.Failed;
-            if(error!=CpxError.None) { APTR.WriteUInt32(s,72,1); return StepResult.Failed; }
-            uint prior=APTR.ReadUInt32(s,52),take=APTR.ReadUInt32(s,56);
-            if(io.Kind==IoKind.Read&&APTR.ReadUInt32(s,60)!=0)
-                Copy(APTR.ReadUInt32(s,Bounce),io.Buffer+prior,take);
-            completed=prior+take; APTR.WriteUInt32(s,52,completed);
-            if(io.Kind==IoKind.Flush||completed==io.Bytes) { APTR.WriteUInt32(s,48,0); return StepResult.Complete; }
-            return StepResult.Pending;
-        }
+        if(Waiting(arena)) return ReapTransfer(arena,s,request,in io,out completed);
         if(APTR.ReadUInt32(s,48)!=io.Token) { APTR.WriteUInt32(s,48,io.Token); APTR.WriteUInt32(s,52,0); }
         if(io.Kind==IoKind.Flush)
         {
             APTR.WriteUInt32(s,56,0);
             if(NativeCpxIo.SubmitFlush(request,s,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
-            return APTR.ReadUInt32(s,0)==3?Service(arena,io,out completed,out unsupported):StepResult.Pending;
+            return APTR.ReadUInt32(s,0)==3?ReapTransfer(arena,s,request,in io,out completed):StepResult.Pending;
         }
         uint done=APTR.ReadUInt32(s,52);
         if(done>io.Bytes) return StepResult.Failed;
-        if(!TryDirect(s,io,out var command))
+        if(!TryDirect(s,in io,out var command))
         {
         var cursor=new Td64Transfer();
         int shift=SectorShift(arena);
@@ -147,9 +138,25 @@ public static class NativeCpxTransport
         APTR.WriteUInt32(s,56,command.Length); APTR.WriteUInt32(s,60,command.Bounced?1u:0u);
         if(io.Kind==IoKind.Write&&command.Bounced) Copy(io.Buffer+done,command.Buffer,command.Length);
         if(NativeCpxIo.Submit(request,s,command,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
-        return APTR.ReadUInt32(s,0)==3?Service(arena,io,out completed,out unsupported):StepResult.Pending;
+        return APTR.ReadUInt32(s,0)==3?ReapTransfer(arena,s,request,in io,out completed):StepResult.Pending;
     }
-    private static bool TryDirect(APTR s,CpxIo io,out DeviceRequest command)
+    private static StepResult ReapTransfer(uint arena,APTR s,APTR request,in CpxIo io,out uint completed)
+    {
+        completed=0; APTR.WriteUInt32(s,72,0);
+        if(APTR.ReadUInt32(s,64)!=0) return Quiesce(arena)==StepResult.Pending?StepResult.Pending:StepResult.Failed;
+
+            if(!NativeCpxIo.Reap(request,s,out uint token,out uint actual,out CpxError error)) return StepResult.Pending;
+            if(token!=io.Token) return StepResult.Failed;
+            if(error!=CpxError.None) { APTR.WriteUInt32(s,72,1); return StepResult.Failed; }
+            uint prior=APTR.ReadUInt32(s,52),take=APTR.ReadUInt32(s,56);
+            if(io.Kind==IoKind.Read&&APTR.ReadUInt32(s,60)!=0)
+                Copy(APTR.ReadUInt32(s,Bounce),io.Buffer+prior,take);
+            completed=prior+take; APTR.WriteUInt32(s,52,completed);
+            if(io.Kind==IoKind.Flush||completed==io.Bytes) { APTR.WriteUInt32(s,48,0); return StepResult.Complete; }
+            return StepResult.Pending;
+
+    }
+    private static bool TryDirect(APTR s,in CpxIo io,out DeviceRequest command)
     {
         command=default;
         uint shift=APTR.ReadUInt32(s,68);

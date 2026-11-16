@@ -140,7 +140,7 @@ public static class NativeCpxHandler
                 if(result==StepResult.NeedIo)
                 {
                     CpxIo io=dispatcher.Request;
-                    StepResult transfer=NativeCpxTransport.Service(arena,io,out uint actual,out bool unsupported);
+                    StepResult transfer=NativeCpxTransport.ServiceRequest(arena,in io,out uint actual,out bool unsupported);
                     if(transfer is StepResult.Complete or StepResult.Failed)
                     {
                         APTR deviceRequest=APTR.FromPointer(APTR.ReadUInt32(APTR.FromPointer(arena+2048),16));
