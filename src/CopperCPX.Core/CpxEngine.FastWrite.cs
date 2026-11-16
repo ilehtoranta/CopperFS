@@ -218,7 +218,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(leaf + 20, length);
         memory.Write32(leaf + 112, length);
         NoteBufferedAllocation(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NewPhysical)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NewPhysical)) + 4)))))), count, true);
-        RememberAllocationEnd(RW(NewPhysical) + count);
+        RememberAllocationEnd(((((ulong)(memory.Read32((Arena) + ((NewPhysical))))) << 32 | ((ulong)(memory.Read32((Arena) + ((NewPhysical) + 4)))))) + count);
         memory.Write32(cpxArenaBase + (FileValue), memory.Read32(cpxArenaBase + (FileBytes)));
         return Done();
     }

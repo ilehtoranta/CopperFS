@@ -354,3 +354,13 @@ The unchanged workloads pass at **5,530,480 mixed** and **370,413,290 streaming*
 cycles, preserving both persisted image hashes. These remain screening results;
 both original handlers still win both workloads. No complete Release rerun is
 claimed for this intermediate candidate.
+
+A21 expands pure scalar address/value helpers in metadata, inode, checkpoint and
+DOS paths. Computed arguments with calls, indexing or mutations retain their
+original evaluation. The default 68000 build passes at **5,466,380 mixed** and
+**370,327,190 streaming** cycles with unchanged persisted image hashes. Focused
+coverage passes 36 host and 27 compiled filesystem/engine/event-loop cases.
+The full CPX host snapshot is running; no complete solution rerun is claimed.
+A separate 68020 build passes both workloads at 5,840,740 and 370,941,180 cycles,
+but is slower and lacks separate native stack qualification. It is not retained
+as the default. The original performance objective remains unmet.

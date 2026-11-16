@@ -1923,6 +1923,84 @@
         "fullRom": "separate gate not run",
         "physicalMedia": "not run"
       }
+    },
+    "A21": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Expand pure scalar address and wide-value reads in owned metadata, inode, checkpoint and DOS packet paths",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1104,
+          "CompletedFrames": 1104,
+          "HostSeconds": 4.8886255,
+          "PhaseCycles": {
+            "mutationCycles": 2603970,
+            "flushCycles": 745280,
+            "remountCycles": 762170,
+            "verifyCycles": 1354960
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3734,
+          "CompletedFrames": 3734,
+          "HostSeconds": 25.3319258,
+          "PhaseCycles": {
+            "mutationCycles": 3190280,
+            "flushCycles": 877930,
+            "remountCycles": 778360,
+            "verifyCycles": 365480620
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "2E01F886237EA12A9288C76A22032F56701E7BD4FFC2B7B8A015622FB1000AD1",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHost": 36,
+        "compiledFilesystemEngineAndEventLoop": 27,
+        "fullCpxHost": "running",
+        "fullSolution": "not run for this intermediate candidate",
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run"
+      }
     }
   },
   "shadowProtocol": {
@@ -2106,6 +2184,71 @@
           "InitialMediaSha256": "6F29119DEB2C10ABD8C6BC4851B9EDCD952F87E0E818A292A57A1C302468B16E",
           "ResultMediaSha256": "DD4D64FF03BBA664F38D66E986D693BB8F1A73D8E109149E3A9D2185C2494BE9",
           "IndependentCheck": null,
+          "Detail": 0
+        }
+      }
+    },
+    "A2168020": {
+      "acceptance": false,
+      "description": "Both unchanged workloads pass and persisted image hashes match, but slower than default 68000; native stack qualification not run for this target",
+      "native": {
+        "cpu": "68020",
+        "hunkSha256": "E9F0BE3A2E5147608E5EE1464C89FD8BB1AFFA8CB8FFA478C2EF3C8C681F20E0",
+        "managedAllocationSiteCount": 0
+      },
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1164,
+          "CompletedFrames": 1164,
+          "HostSeconds": 5.0492616,
+          "PhaseCycles": {
+            "mutationCycles": 2733270,
+            "flushCycles": 827420,
+            "remountCycles": 911210,
+            "verifyCycles": 1368840
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3795,
+          "CompletedFrames": 3795,
+          "HostSeconds": 25.6260399,
+          "PhaseCycles": {
+            "mutationCycles": 3416440,
+            "flushCycles": 970070,
+            "remountCycles": 913900,
+            "verifyCycles": 365640770
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
           "Detail": 0
         }
       }

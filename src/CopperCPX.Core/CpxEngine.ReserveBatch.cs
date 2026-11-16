@@ -6,10 +6,10 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     // the authenticated bitmap. Crossing a bitmap boundary yields for I/O.
     private StepResult RecoverReserveBatch(bool bitmapArrived)
     {
-        uint arena = Arena, bitmap = Page(5), reserve = Page(3), table = Index;
+        uint arena = Arena, bitmap = (memory.Read32(Arena + (GeometryPages + (5) * 4))), reserve = (memory.Read32(Arena + (GeometryPages + (3) * 4))), table = Index;
         uint cursor = memory.Read32(arena + Cursor), count = memory.Read32(arena + Count);
         uint windowShift = memory.Read32(arena + PageBytes) == 512 ? 11u : 12u;
-        ulong previous = RW(Target);
+        ulong previous = ((((ulong)(memory.Read32((Arena) + ((Target))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Target) + 4))))));
         if (bitmapArrived)
         {
             ulong owner = previous & 0xffffffffffff0000UL;
@@ -21,7 +21,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         {
             if (cursor == count)
             {
-                if (ShadowVolume && R(ReadOnlyAt) == 0)
+                if (ShadowVolume && (memory.Read32(Arena + (ReadOnlyAt))) == 0)
                 {
                     if (!CanCacheMetadata) return Fail(CpxError.ResourceExhausted);
                     W(BufferEnabled, 1);
@@ -33,7 +33,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                 if (memory.Read32(arena + ReadOnlyAt) != 0) return DirectInodes ? LoadObject(1, 32) : Done();
                 return Call(CpxOperation.Reclaim, 30);
             }
-            ulong address = GetWide(reserve + 72 + cursor * 8);
+            ulong address = ((((ulong)(memory.Read32((reserve + 72 + cursor * 8)))) << 32 | ((ulong)(memory.Read32((reserve + 72 + cursor * 8) + 4)))));
             if (!Allocatable(address)) return Fail(CpxError.Corrupt);
             uint hash = (((uint)address >> (int)(memory.Read32(arena + GeometryShift) - memory.Read32(arena + UnitShift))) ^ (uint)(address >> 32)) & 127;
             bool inserted = false;
@@ -47,7 +47,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                     inserted = true;
                     break;
                 }
-                if (GetWide(entry) == address) return Fail(CpxError.Corrupt);
+                if (((((ulong)(memory.Read32((entry)))) << 32 | ((ulong)(memory.Read32((entry) + 4))))) == address) return Fail(CpxError.Corrupt);
                 hash = (hash + 1) & 127;
             }
             if (!inserted) return Fail(CpxError.Corrupt);

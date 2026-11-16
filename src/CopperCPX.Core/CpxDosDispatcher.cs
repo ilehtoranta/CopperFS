@@ -178,7 +178,7 @@ public partial struct CpxDosDispatcher<TMemory>
         uint p = bptr << 2;
         if (!ValidResource(p, ResourceKind.Lock))
             return false;
-        id = G(p + 20);
+        id = (new CopperCPX.Wide(memory.Read32((p + 20)), memory.Read32((p + 20) + 4)));
         return true;
     }
 
@@ -188,9 +188,9 @@ public partial struct CpxDosDispatcher<TMemory>
         for (uint n = 0; n < 32; n++)
         {
             uint h = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + n * 64, l = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + 2048 + n * 48;
-            if (memory.Read32(h) == 1 && Wide.Equal(G(h + 8), id) && (exclusive || memory.Read32(h + 24) == uint.MaxValue))
+            if (memory.Read32(h) == 1 && Wide.Equal((new CopperCPX.Wide(memory.Read32((h + 8)), memory.Read32((h + 8) + 4))), id) && (exclusive || memory.Read32(h + 24) == uint.MaxValue))
                 return true;
-            if (memory.Read32(l) == 1 && Wide.Equal(G(l + 28), id) && (exclusive || memory.Read32(l + 16) == uint.MaxValue))
+            if (memory.Read32(l) == 1 && Wide.Equal((new CopperCPX.Wide(memory.Read32((l + 28)), memory.Read32((l + 28) + 4))), id) && (exclusive || memory.Read32(l + 16) == uint.MaxValue))
                 return true;
         }
 
@@ -289,14 +289,14 @@ public partial struct CpxDosDispatcher<TMemory>
                 return NewLinkComponent();
             uint at = memory.Read32(cpxArenaBase + 512 + (PathAt)), end = at;
             if (at == memory.Read32(cpxArenaBase + 512 + (PathLength)))
-                return Start(engine.BeginOperation(CpxOperation.ReadObject, G((cpxArenaBase + 512) + Object)), 12);
+                return Start(engine.BeginOperation(CpxOperation.ReadObject, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4)))), 12);
             while (end < memory.Read32(cpxArenaBase + 512 + (PathLength)) && memory.Read8((cpxArenaBase + 1024) + end) != 47)
                 end++;
             if (end == at)
-                return Start(engine.BeginOperation(CpxOperation.ReadObject, G((cpxArenaBase + 512) + Object)), 14);
-            Put((cpxArenaBase + 512) + ParentId, G((cpxArenaBase + 512) + Object));
+                return Start(engine.BeginOperation(CpxOperation.ReadObject, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4)))), 14);
+            Put((cpxArenaBase + 512) + ParentId, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))));
             memory.Write32(cpxArenaBase + 512 + (PathEnd), end);
-            return Start(engine.BeginLookup(G((cpxArenaBase + 512) + Object), (cpxArenaBase + 1024) + at, end - at), 11);
+            return Start(engine.BeginLookup((new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))), (cpxArenaBase + 1024) + at, end - at), 11);
         }
 
         StepResult result = engine.Step();
@@ -320,7 +320,7 @@ public partial struct CpxDosDispatcher<TMemory>
 
                 if (!engine.LookupFound)
                     return Finish(0, 205);
-                Put((cpxArenaBase + 512) + EntryId, G(engine.TreeRecord + 8));
+                Put((cpxArenaBase + 512) + EntryId, (new CopperCPX.Wide(memory.Read32((engine.TreeRecord + 8)), memory.Read32((engine.TreeRecord + 8) + 4))));
                 memory.Write32(cpxArenaBase + 512 + (LinkPrefix), memory.Read32(cpxArenaBase + 512 + (PathAt)));
                 memory.Write32(cpxArenaBase + 512 + (LinkSuffix), memory.Read32(cpxArenaBase + 512 + (PathEnd)));
                 Put((cpxArenaBase + 512) + Object, engine.LookupId);
@@ -335,10 +335,10 @@ public partial struct CpxDosDispatcher<TMemory>
             case 14:
                 if (!engine.ObjectFound)
                     return Finish(0, 205);
-                Wide ancestor = memory.Read8(engine.ObjectRecord + 84) == 2 ? G(engine.ObjectRecord + 40) : G((cpxArenaBase + 512) + ParentId);
-                if (action == 26406 && Wide.Equal(G((cpxArenaBase + 512) + Object), Wide.From(1)))
+                Wide ancestor = memory.Read8(engine.ObjectRecord + 84) == 2 ? (new CopperCPX.Wide(memory.Read32((engine.ObjectRecord + 40)), memory.Read32((engine.ObjectRecord + 40) + 4))) : (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + ParentId)), memory.Read32(((cpxArenaBase + 512) + ParentId) + 4)));
+                if (action == 26406 && Wide.Equal((new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))), Wide.From(1)))
                     ancestor = Wide.From(1);
-                else if (ancestor.IsZero || Wide.Equal(G((cpxArenaBase + 512) + Object), Wide.From(1)))
+                else if (ancestor.IsZero || Wide.Equal((new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))), Wide.From(1)))
                     return Finish(0, 205);
                 Put((cpxArenaBase + 512) + Object, ancestor);
                 Put((cpxArenaBase + 512) + ParentId, default);
@@ -353,24 +353,24 @@ public partial struct CpxDosDispatcher<TMemory>
                     return Start(engine.BeginOperation(CpxOperation.TrimFree), 26);
                 return Finish(uint.MaxValue);
             case 22:
-                return Finish(Arg(1));
+                return Finish((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)));
             case 23:
                 return SeekFinish();
             case 24:
                 if (!engine.ObjectFound)
                     return Finish(0, 205);
-                Wide parent = memory.Read8(engine.ObjectRecord + 84) == 2 ? G(engine.ObjectRecord + 40) : G((cpxArenaBase + 512) + ParentId);
+                Wide parent = memory.Read8(engine.ObjectRecord + 84) == 2 ? (new CopperCPX.Wide(memory.Read32((engine.ObjectRecord + 40)), memory.Read32((engine.ObjectRecord + 40) + 4))) : (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + ParentId)), memory.Read32(((cpxArenaBase + 512) + ParentId) + 4)));
                 if (parent.IsZero)
                     return Finish(0, 213);
                 return Start(engine.BeginOperation(CpxOperation.ReadObject, parent), 70);
             case 25:
                 memory.Write32(memory.Read32(cpxArenaBase + 512 + (Handle)) + 40, 1);
-                Wide resized = G((cpxArenaBase + 512) + ResizeResult);
+                Wide resized = (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + ResizeResult)), memory.Read32(((cpxArenaBase + 512) + ResizeResult) + 4)));
                 if (Wide.Compare(G(memory.Read32(cpxArenaBase + 512 + (Handle)) + 8), resized) > 0)
                     Put(memory.Read32(cpxArenaBase + 512 + (Handle)) + 8, resized);
                 if (action == 26401)
                 {
-                    Put(Arg(3), resized);
+                    Put((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4)), resized);
                     return Finish(uint.MaxValue);
                 }
 
@@ -382,7 +382,7 @@ public partial struct CpxDosDispatcher<TMemory>
                 Put((cpxArenaBase + 512) + EntryId, engine.CreatedEntryId);
                 if (action == 22)
                 {
-                    MarkNotificationChange(engine.MutatedObject, G((cpxArenaBase + 512) + ParentId), default);
+                    MarkNotificationChange(engine.MutatedObject, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + ParentId)), memory.Read32(((cpxArenaBase + 512) + ParentId) + 4))), default);
                     return MakeLock(engine.MutatedObject, 0xfffffffe);
                 }
 
@@ -404,7 +404,7 @@ public partial struct CpxDosDispatcher<TMemory>
             memory.Write32(p + 40, 1);
         if (count != 0)
         {
-            Wide.Add(G(p + 8), Wide.From(count), out var next);
+            Wide.Add((new CopperCPX.Wide(memory.Read32((p + 8)), memory.Read32((p + 8) + 4))), Wide.From(count), out var next);
             Put(p + 8, next);
         }
 
@@ -415,7 +415,7 @@ public partial struct CpxDosDispatcher<TMemory>
     {
         uint cpxArenaBase = arena;
         uint action = memory.Read32(cpxArenaBase + 512 + (Action)), record = engine.ObjectRecord;
-        Wide id = G((cpxArenaBase + 512) + Object);
+        Wide id = (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4)));
         if (memory.Read8(record + 84) == 3 && (action is 8 or 1004 or 1005 or 1006))
             return Finish(0, 233);
         if (action == 1024)
@@ -423,7 +423,7 @@ public partial struct CpxDosDispatcher<TMemory>
         switch (action)
         {
             case 8:
-                return MakeLock(id, Arg(2));
+                return MakeLock(id, (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4)));
             case 4097:
                 return Finish(uint.MaxValue);
             case 1004:
@@ -433,22 +433,22 @@ public partial struct CpxDosDispatcher<TMemory>
                     return Finish(0, 212);
                 if ((memory.Read32(record + 72) & (action == 1005 ? 8u : action == 1006 ? 5u : 12u)) != 0)
                     return Finish(0, action == 1005 ? 224u : 223u);
-                if (Arg(0) == 0 || Arg(0) > 0x3fffffff)
+                if ((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (0) * 4)) == 0 || (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (0) * 4)) > 0x3fffffff)
                     return Finish(0, 115);
                 memory.Write32(cpxArenaBase + 512 + (Phase), 81);
                 return StepResult.Pending;
             case 21:
-                return Start(engine.BeginProtection(id, Arg(3)), 21);
+                return Start(engine.BeginProtection(id, (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4))), 21);
             case 1036:
-                return Start(engine.BeginOwner(id, Arg(3)), 21);
+                return Start(engine.BeginOwner(id, (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4))), 21);
             case 28:
-                uint comment = Arg(3);
+                uint comment = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4));
                 if (comment == 0 || comment > 0x3fffffff)
                     return Finish(0, 115);
                 uint text = comment << 2;
                 return Start(engine.BeginComment(id, text + 1, memory.Read8(text)), 21);
             case 34:
-                uint date = Arg(3);
+                uint date = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4));
                 if (date == 0 || (date & 1) != 0)
                     return Finish(0, 115);
                 return Start(engine.BeginDate(id, memory.Read32(date), memory.Read32(date + 4), memory.Read32(date + 8)), 21);
@@ -479,14 +479,14 @@ public partial struct CpxDosDispatcher<TMemory>
         if (handle == 0)
             return Finish(0, 103);
         memory.Write32(cpxArenaBase + 512 + (Reserved), 0);
-        Put(handle, G((cpxArenaBase + 512) + Object));
+        Put(handle, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))));
         memory.Write32(handle + 16, memory.Read32(cpxArenaBase + 512 + (Action)) == 1006 ? uint.MaxValue : 0xfffffffe);
         memory.Write32(handle + 20, memory.Read32(cpxArenaBase + 512 + (Action)) == 1005 ? 0u : 1u);
-        Put(handle + 24, G((cpxArenaBase + 512) + ParentId));
-        Put(handle + 32, G((cpxArenaBase + 512) + EntryId));
+        Put(handle + 24, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + ParentId)), memory.Read32(((cpxArenaBase + 512) + ParentId) + 4))));
+        Put(handle + 32, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + EntryId)), memory.Read32(((cpxArenaBase + 512) + EntryId) + 4))));
         if (memory.Read32(cpxArenaBase + 512 + (Phase))is 30 or 32)
             memory.Write32(handle + 40, 1);
-        uint fh = Arg(0) << 2;
+        uint fh = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (0) * 4)) << 2;
         memory.Write32(fh + 8, memory.Read32(cpxArenaBase + 512 + (Port)));
         memory.Write32(fh + 36, handle);
         return Finish(uint.MaxValue);
@@ -496,7 +496,7 @@ public partial struct CpxDosDispatcher<TMemory>
     {
         uint cpxArenaBase = arena;
         uint action = memory.Read32(cpxArenaBase + 512 + (Action)), at = memory.Read32(cpxArenaBase + 512 + (PathAt)), length = memory.Read32(cpxArenaBase + 512 + (PathLength)) - at;
-        Wide parent = G((cpxArenaBase + 512) + ParentId);
+        Wide parent = (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + ParentId)), memory.Read32(((cpxArenaBase + 512) + ParentId) + 4)));
         if (action == 1021)
             return CreateLink();
         if (action == 17 && memory.Read32(cpxArenaBase + 512 + (Destination)) != 0)
@@ -511,7 +511,7 @@ public partial struct CpxDosDispatcher<TMemory>
         {
             if (engine.LookupFound)
                 return Finish(0, 203);
-            if (action != 22 && (Arg(0) == 0 || Arg(0) > 0x3fffffff))
+            if (action != 22 && ((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (0) * 4)) == 0 || (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (0) * 4)) > 0x3fffffff))
                 return Finish(0, 115);
             if (!Reserve(action == 22 ? ResourceKind.Lock : ResourceKind.Handle))
                 return Finish(0, 103);
@@ -520,7 +520,7 @@ public partial struct CpxDosDispatcher<TMemory>
 
         if (!engine.LookupFound)
             return Finish(0, 205);
-        Put((cpxArenaBase + 512) + EntryId, G(engine.TreeRecord + 8));
+        Put((cpxArenaBase + 512) + EntryId, (new CopperCPX.Wide(memory.Read32((engine.TreeRecord + 8)), memory.Read32((engine.TreeRecord + 8) + 4))));
         if (action is 16 or 17)
         {
             if (Conflicts(engine.LookupId, true))
@@ -540,22 +540,22 @@ public partial struct CpxDosDispatcher<TMemory>
         uint failure = wide ? 0u : uint.MaxValue;
         if (!engine.ObjectFound)
             return Finish(failure, 205);
-        uint h = memory.Read32(cpxArenaBase + 512 + (Handle)), mode = Arg(2);
-        Wide old = G(h + 8), basis, offset;
+        uint h = memory.Read32(cpxArenaBase + 512 + (Handle)), mode = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4));
+        Wide old = (new CopperCPX.Wide(memory.Read32((h + 8)), memory.Read32((h + 8) + 4))), basis, offset;
         if (wide)
         {
-            if (Arg(1) == 0 || Arg(3) == 0 || ((Arg(1) | Arg(3)) & 1) != 0 || Arg(1) > uint.MaxValue - 8 || Arg(3) > uint.MaxValue - 8)
+            if ((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)) == 0 || (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4)) == 0 || (((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)) | (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4))) & 1) != 0 || (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)) > uint.MaxValue - 8 || (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4)) > uint.MaxValue - 8)
                 return Finish(0, 115);
-            offset = G(Arg(1));
+            offset = G((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)));
         }
         else
-            offset = new((Arg(1) & 0x80000000) != 0 ? uint.MaxValue : 0, Arg(1));
+            offset = new(((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)) & 0x80000000) != 0 ? uint.MaxValue : 0, (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)));
         if (mode == uint.MaxValue)
             basis = default;
         else if (mode == 0)
             basis = old;
         else if (mode == 1)
-            basis = G(engine.ObjectRecord + 8);
+            basis = (new CopperCPX.Wide(memory.Read32((engine.ObjectRecord + 8)), memory.Read32((engine.ObjectRecord + 8) + 4)));
         else
             return Finish(failure, 219);
         Wide next;
@@ -577,13 +577,13 @@ public partial struct CpxDosDispatcher<TMemory>
             for (uint n = 0; n < 32; n++)
             {
                 uint other = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + n * 64 + 8;
-                if (other != h && memory.Read32(other - 8) == 1 && Wide.Equal(G(other), G(h)) && Wide.Compare(G(other + 8), next) > 0)
-                    next = G(other + 8);
+                if (other != h && memory.Read32(other - 8) == 1 && Wide.Equal((new CopperCPX.Wide(memory.Read32((other)), memory.Read32((other) + 4))), (new CopperCPX.Wide(memory.Read32((h)), memory.Read32((h) + 4)))) && Wide.Compare((new CopperCPX.Wide(memory.Read32((other + 8)), memory.Read32((other + 8) + 4))), next) > 0)
+                    next = (new CopperCPX.Wide(memory.Read32((other + 8)), memory.Read32((other + 8) + 4)));
             }
 
             if (!wide && (next.High != 0 || next.Low > int.MaxValue))
                 return Finish(failure, 219);
-            CpxError err = engine.BeginResize(G(h), next);
+            CpxError err = engine.BeginResize((new CopperCPX.Wide(memory.Read32((h)), memory.Read32((h) + 4))), next);
             if (err != CpxError.None)
                 return Finish(failure, ToDosError(err));
             Put((cpxArenaBase + 512) + ResizeResult, next);
@@ -591,10 +591,10 @@ public partial struct CpxDosDispatcher<TMemory>
             return StepResult.Pending;
         }
 
-        if (Wide.Compare(next, G(engine.ObjectRecord + 8)) > 0)
+        if (Wide.Compare(next, (new CopperCPX.Wide(memory.Read32((engine.ObjectRecord + 8)), memory.Read32((engine.ObjectRecord + 8) + 4)))) > 0)
             return Finish(failure, 219);
         if (wide)
-            Put(Arg(3), old);
+            Put((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4)), old);
         Put(h + 8, next);
         return Finish(wide ? uint.MaxValue : old.Low);
     }
@@ -602,7 +602,7 @@ public partial struct CpxDosDispatcher<TMemory>
     private StepResult Dispatch()
     {
         uint cpxArenaBase = arena;
-        uint a = Arg(0), action = memory.Read32(cpxArenaBase + 512 + (Action));
+        uint a = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (0) * 4)), action = memory.Read32(cpxArenaBase + 512 + (Action));
         Wide id;
         if (!(!(memory.Read32(cpxArenaBase + 512 + (Inhibited)) != 0) && memory.Read32(cpxArenaBase + 512 + (MediaReason)) == 0 && engine.IsMounted))
         {
@@ -637,26 +637,26 @@ public partial struct CpxDosDispatcher<TMemory>
             case 16:
             case 17:
             case 22:
-                return StartPath(a, Arg(1));
+                return StartPath(a, (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)));
             case 1004:
             case 1005:
             case 1006:
-                return StartPath(Arg(1), Arg(2));
+                return StartPath((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)), (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4)));
             case 21:
             case 28:
             case 34:
             case 1036:
-                return StartPath(Arg(1), Arg(2));
+                return StartPath((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)), (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4)));
             case 82:
             case 87:
                 if (!ValidResource(a, ResourceKind.Handle))
                     return Finish(uint.MaxValue, 211);
                 if (action == 87 && memory.Read32(a + 20) == 0)
                     return Finish(uint.MaxValue, 223);
-                if (Arg(2) > int.MaxValue)
+                if ((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4)) > int.MaxValue)
                     return Finish(uint.MaxValue, 115);
                 memory.Write32(cpxArenaBase + 512 + (Handle), a);
-                return Start(action == 82 ? engine.BeginFileRead(G(a), G(a + 8), Arg(1), Arg(2)) : engine.BeginMappedWrite(G(a), G(a + 8), Arg(1), Arg(2)), 20);
+                return Start(action == 82 ? engine.BeginFileRead((new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4))), (new CopperCPX.Wide(memory.Read32((a + 8)), memory.Read32((a + 8) + 4))), (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)), (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4))) : engine.BeginMappedWrite((new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4))), (new CopperCPX.Wide(memory.Read32((a + 8)), memory.Read32((a + 8) + 4))), (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)), (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4))), 20);
             case 1007:
                 if (!ValidResource(a, ResourceKind.Handle))
                     return Finish(0, 211);
@@ -679,7 +679,7 @@ public partial struct CpxDosDispatcher<TMemory>
                 if (!ValidResource(a, ResourceKind.Handle))
                     return Finish(action >= 26400 ? 0u : uint.MaxValue, 211);
                 memory.Write32(cpxArenaBase + 512 + (Handle), a);
-                return Start(engine.BeginOperation(CpxOperation.ReadObject, G(a)), 23);
+                return Start(engine.BeginOperation(CpxOperation.ReadObject, (new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4)))), 23);
             case 15:
                 if (a == 0)
                     return Finish(uint.MaxValue);
@@ -715,7 +715,7 @@ public partial struct CpxDosDispatcher<TMemory>
                 if (!ValidResource(a, ResourceKind.Handle))
                     return Finish(0, 211);
                 Context(a + 24, a + 32);
-                id = G(a);
+                id = (new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4)));
                 if (action == 1030)
                     return MakeLock(id, 0xfffffffe);
                 return Start(engine.BeginOperation(CpxOperation.ReadObject, id), 24);
@@ -733,7 +733,7 @@ public partial struct CpxDosDispatcher<TMemory>
             case 18:
                 return Finish(0); // No persistent cache; all six pages are fixed operation scratch.
             case 40:
-                if (!LockId(a, out id) || !LockId(Arg(1), out var second))
+                if (!LockId(a, out id) || !LockId((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (1) * 4)), out var second))
                     return Finish(0, 211);
                 return Finish(Wide.Equal(id, second) ? uint.MaxValue : 0u);
             case 23:
@@ -754,7 +754,7 @@ public partial struct CpxDosDispatcher<TMemory>
                 {
                     if (!ValidResource(a, ResourceKind.Handle))
                         return Finish(0, 211);
-                    id = G(a);
+                    id = (new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4)));
                     Context(a + 24, a + 32);
                 }
 
