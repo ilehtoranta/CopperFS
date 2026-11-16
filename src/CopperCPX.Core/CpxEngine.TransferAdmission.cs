@@ -6,7 +6,9 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     {
         if (memory.Read32(Arena + Signature) != CpxArena.Magic) return false;
         uint fast = memory.Read32(Arena + FastPointer);
-        return fast != 0 && memory.Read32(fast) == (write ? 1u : 3u);
+        if (fast == 0) return false;
+        uint kind = memory.Read32(fast);
+        return write ? kind is 1 or 4 : kind == 3;
     }
 
     // Only already-authenticated read/append capabilities may enter here.

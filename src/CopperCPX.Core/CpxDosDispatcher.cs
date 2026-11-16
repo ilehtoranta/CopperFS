@@ -100,7 +100,8 @@ public partial struct CpxDosDispatcher<TMemory>
         // Preserve the complete packet reset, but avoid a separate dispatch
         // phase when the existing capability admits this transfer outright.
         // Begin still issues no I/O; Step retains cancellation and phase bounds.
-        if (action is 82 or 87) TryBeginCachedTransferPacket(packet, action);
+        bool transferred = action is 82 or 87 && TryBeginCachedTransferPacket(packet, action);
+        if (!transferred) engine.RetireAppendLease();
         return CpxError.None;
     }
 

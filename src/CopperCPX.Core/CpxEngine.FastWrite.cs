@@ -9,7 +9,10 @@ public partial struct CpxEngine<TMemory>
     {
         uint p = memory.Read32(Arena + (FastPointer));
         if (p != 0)
+        {
+            if (memory.Read32(p) == 4) RetireOwnedAppendLease(p);
             memory.Write32(p, 0);
+        }
     }
 
     private void ArmFastAppend()
@@ -70,6 +73,7 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         uint h = memory.Read32(cpxArenaBase + (FastPointer));
+        if (h != 0 && memory.Read32(h) == 4) return BeginLeasedAppend(h, id, position, bytes);
         uint idHigh = (uint)(id >> 32), idLow = (uint)id, offset = (uint)position;
         if (h == 0 || memory.Read32(h) != 1 || memory.Read32(cpxArenaBase + BufferEnabled) != 1 ||
             memory.Read32(cpxArenaBase + Active) == 0 || memory.Read32(cpxArenaBase + StagedCount) == 0 ||
@@ -116,6 +120,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (WriteRunUnits), count);
         memory.Write32(cpxArenaBase + (BufferSnapshot), 0);
         memory.Write32(cpxArenaBase + (Phase), first < count ? 502u : 500u);
+        if (first == count && bytes >= 8192) ArmAppendLease(h, count);
         return true;
     }
 
@@ -143,6 +148,8 @@ public partial struct CpxEngine<TMemory>
     private StepResult FinishFastAppend()
     {
         uint cpxArenaBase = Arena;
+        uint lease = memory.Read32(cpxArenaBase + FastPointer);
+        if (lease != 0 && memory.Read32(lease) == 4) return FinishLeasedAppend(lease);
         uint h = memory.Read32(cpxArenaBase + (FastPointer)), bitmap = memory.Read32(h + 20), count = memory.Read32(cpxArenaBase + (WriteRunUnits)), bit = memory.Read32(cpxArenaBase + (NewPhysical + 4)) & BitmapWindowMask;
         uint firstCount = memory.Read32(h + 44) == 0 ? count : memory.Read32(h + 48);
         SetBitmapRange(bitmap, bit, firstCount, true);

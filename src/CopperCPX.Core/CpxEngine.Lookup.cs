@@ -348,7 +348,11 @@ public partial struct CpxEngine<TMemory>
                 found = entry;
         }
 
-        Copy((cpxArenaBase + CpxArena.MountBytes), record, 256);
+        // Fused lookup continues directly into the target's object read, which
+        // replaces this scratch record. Standalone lookup still returns its
+        // parent record to the caller exactly as before.
+        if (memory.Read32(cpxArenaBase + LookupObjectMode) != 1)
+            Copy((cpxArenaBase + CpxArena.MountBytes), record, 256);
         memory.Write32(cpxArenaBase + (SourcePage), 1);
         if (found != 0)
         {
