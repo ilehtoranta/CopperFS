@@ -9868,6 +9868,1090 @@
         "physicalMedia": "not run"
       },
       "correctedBy": "A72 resets the mode only after successful operation admission; 107 focused host cases pass, including both recoverable-rejection cases"
+    },
+    "A72": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Resolve a non-mutating pathname component and read its object under one bounded engine admission; preserve the entry key before object traversal and reset private mode after successful admission",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1111,
+          "CompletedFrames": 1111,
+          "HostSeconds": 4.5814506,
+          "PhaseCycles": {
+            "mutationCycles": 2390800,
+            "flushCycles": 516320,
+            "remountCycles": 541880,
+            "verifyCycles": 1297670
+          },
+          "ReadCommands": 27,
+          "WriteCommands": 13,
+          "ReadRequests": 73,
+          "WriteRequests": 36,
+          "ReadBytes": 37376,
+          "WriteBytes": 18432,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3739,
+          "CompletedFrames": 3739,
+          "HostSeconds": 21.5194876,
+          "PhaseCycles": {
+            "mutationCycles": 2814240,
+            "flushCycles": 590140,
+            "remountCycles": 549870,
+            "verifyCycles": 365331350
+          },
+          "ReadCommands": 59,
+          "WriteCommands": 46,
+          "ReadRequests": 4159,
+          "WriteRequests": 4118,
+          "ReadBytes": 2129408,
+          "WriteBytes": 2108416,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkBytes": 270420,
+        "hunkSha256": "4AC1D58DF359859AF57887B245E7AE9CE75C91ED9D1409F7F5579AC8C008FB2D",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0,
+        "sourceInputCount": 84,
+        "clrPolicy": "always",
+        "baseCandidate": "A68"
+      },
+      "coverage": {
+        "focusedHost": 107,
+        "compiledFilesystemStartupEventLoopTransportAndCachedResize": 66,
+        "fullRomAllocationGates": {
+          "legacyCpx4": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 900,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          },
+          "cpx5": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 1092,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          }
+        },
+        "fullSolution": "not run for this intermediate candidate",
+        "physicalMedia": "not run",
+        "lookupObjectDifferentialAndLifecycleCases": 10,
+        "recoverableRejectionBeforeFix": {
+          "failed": 2,
+          "passed": 0
+        },
+        "recoverableRejectionAfterFix": {
+          "failed": 0,
+          "passed": 2
+        }
+      },
+      "retained": false
+    },
+    "A73": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Unretained combination: A72 fused lookup plus A70 grouped proof comparison; omit the unused cached parent-record copy in the fused path. Mixed improves, streaming regresses.",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1110,
+          "CompletedFrames": 1110,
+          "HostSeconds": 4.6240917,
+          "PhaseCycles": {
+            "mutationCycles": 2364150,
+            "flushCycles": 534920,
+            "remountCycles": 540020,
+            "verifyCycles": 1297590
+          },
+          "ReadCommands": 27,
+          "WriteCommands": 13,
+          "ReadRequests": 73,
+          "WriteRequests": 36,
+          "ReadBytes": 37376,
+          "WriteBytes": 18432,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3738,
+          "CompletedFrames": 3738,
+          "HostSeconds": 19.3555602,
+          "PhaseCycles": {
+            "mutationCycles": 2791550,
+            "flushCycles": 603850,
+            "remountCycles": 547960,
+            "verifyCycles": 365373500
+          },
+          "ReadCommands": 59,
+          "WriteCommands": 46,
+          "ReadRequests": 4159,
+          "WriteRequests": 4118,
+          "ReadBytes": 2129408,
+          "WriteBytes": 2108416,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkBytes": 270648,
+        "hunkSha256": "B13348B2F1DA5863D73C80D1C100FDEA0F32F6DC1949AFC74941022BA90F8633",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0,
+        "sourceInputCount": 84,
+        "clrPolicy": "always",
+        "baseCandidate": "A72 plus A70"
+      },
+      "coverage": {
+        "focusedHost": 160,
+        "fullRomAllocationGates": {
+          "legacyCpx4": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 900,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          },
+          "cpx5": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 1092,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          }
+        },
+        "fullSolution": "not run for this intermediate candidate",
+        "physicalMedia": "not run",
+        "additionalCompiledNativeCases": "not run for this intermediate; 160 focused host cases, both actual-HUNK ROM allocation gates and both workload screens pass"
+      },
+      "retained": false
+    },
+    "A74": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Diagnostic only: nine scalar accessor inlining annotations on exact A68 logic produce a byte-identical HUNK; no new performance measurement",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "inheritedFrom": "A68",
+          "reason": "Identical native HUNK hash; no separate measurement",
+          "result": {
+            "Name": "CPX4",
+            "Trial": 1,
+            "Passed": true,
+            "Stage": 0,
+            "IoErr": 0,
+            "LoopFrames": 1112,
+            "CompletedFrames": 1112,
+            "HostSeconds": 5.4529929,
+            "PhaseCycles": {
+              "mutationCycles": 2383550,
+              "flushCycles": 519960,
+              "remountCycles": 541110,
+              "verifyCycles": 1324300
+            },
+            "ReadCommands": 27,
+            "WriteCommands": 13,
+            "ReadRequests": 73,
+            "WriteRequests": 36,
+            "ReadBytes": 37376,
+            "WriteBytes": 18432,
+            "Flushes": 2,
+            "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+            "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+            "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+            "Detail": 0
+          }
+        },
+        "stream": {
+          "inheritedFrom": "A68",
+          "reason": "Identical native HUNK hash; no separate measurement",
+          "result": {
+            "Name": "CPX4",
+            "Trial": 1,
+            "Passed": true,
+            "Stage": 0,
+            "IoErr": 0,
+            "LoopFrames": 3737,
+            "CompletedFrames": 3737,
+            "HostSeconds": 27.8911642,
+            "PhaseCycles": {
+              "mutationCycles": 2801620,
+              "flushCycles": 601780,
+              "remountCycles": 548760,
+              "verifyCycles": 365333460
+            },
+            "ReadCommands": 59,
+            "WriteCommands": 46,
+            "ReadRequests": 4159,
+            "WriteRequests": 4118,
+            "ReadBytes": 2129408,
+            "WriteBytes": 2108416,
+            "Flushes": 2,
+            "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+            "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+            "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+            "Detail": 0
+          }
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkBytes": 269652,
+        "hunkSha256": "9C1A90B6D6A0743C468D17ACFAB3CA46DD205602EF678A258E9091999C8F6689",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0,
+        "sourceInputCount": 83,
+        "clrPolicy": "always",
+        "baseCandidate": "A68",
+        "byteIdenticalTo": "A68",
+        "scalarAccessorAnnotations": 9
+      },
+      "coverage": {
+        "fullRomAllocationGates": {
+          "inheritedFrom": "A68",
+          "reason": "Identical native HUNK hash; no separate gate execution"
+        },
+        "fullSolution": "not run for this intermediate candidate",
+        "physicalMedia": "not run"
+      },
+      "retained": false
+    },
+    "A75": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Avoid interrupt masking when the media-change latch is empty; a late interrupt remains latched and the existing masked acknowledgement remains unchanged",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1112,
+          "CompletedFrames": 1112,
+          "HostSeconds": 3.9490115,
+          "PhaseCycles": {
+            "mutationCycles": 2381970,
+            "flushCycles": 519190,
+            "remountCycles": 539790,
+            "verifyCycles": 1322930
+          },
+          "ReadCommands": 27,
+          "WriteCommands": 13,
+          "ReadRequests": 73,
+          "WriteRequests": 36,
+          "ReadBytes": 37376,
+          "WriteBytes": 18432,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3737,
+          "CompletedFrames": 3737,
+          "HostSeconds": 18.7157346,
+          "PhaseCycles": {
+            "mutationCycles": 2783040,
+            "flushCycles": 600520,
+            "remountCycles": 547350,
+            "verifyCycles": 365320360
+          },
+          "ReadCommands": 59,
+          "WriteCommands": 46,
+          "ReadRequests": 4159,
+          "WriteRequests": 4118,
+          "ReadBytes": 2129408,
+          "WriteBytes": 2108416,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkBytes": 269664,
+        "hunkSha256": "9B082DBB05652192B61015FB4A48FD499DD7854B4E7E2FAB3F60A005362C3837",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0,
+        "sourceInputCount": 83,
+        "clrPolicy": "always",
+        "baseCandidate": "A68"
+      },
+      "coverage": {
+        "compiledFilesystemStartupEventLoopTransportAndCachedResize": 70,
+        "fullRomAllocationGates": {
+          "legacyCpx4": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 876,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          },
+          "cpx5": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 1068,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          }
+        },
+        "fullSolution": {
+          "passed": 2684,
+          "failed": 0,
+          "skipped": 10
+        },
+        "physicalMedia": "not run",
+        "compiledMediaLatchAndControlPollingCases": 8,
+        "newMediaLatchInterleavingCases": 4,
+        "fullReleaseBuild": "passed",
+        "copperStartRebuiltFilesystemReplay": 141,
+        "fullCpxHost": 714,
+        "fullNativePassed": 139,
+        "nativeRomSkipped": 7
+      },
+      "retained": true,
+      "comparison": {
+        "mixed": {
+          "Schema": 1,
+          "Machine": "Kickstart 3.1, emulated 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+          "Workload": "Create directory; write 8 KiB; two partial overwrites; truncate to 6003 twice; close and rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+          "Timing": "Emulated bus-cycle deltas; host wall time is informational only.",
+          "Trials": [
+            {
+              "Name": "CPX4",
+              "Trial": 1,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 1112,
+              "CompletedFrames": 1112,
+              "HostSeconds": 12.3659917,
+              "PhaseCycles": {
+                "mutationCycles": 2381800,
+                "flushCycles": 519190,
+                "remountCycles": 539810,
+                "verifyCycles": 1322940
+              },
+              "ReadCommands": 27,
+              "WriteCommands": 13,
+              "ReadRequests": 73,
+              "WriteRequests": 36,
+              "ReadBytes": 37376,
+              "WriteBytes": 18432,
+              "Flushes": 2,
+              "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+              "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+              "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+              "Detail": 0
+            },
+            {
+              "Name": "Kickstart FFS 40.1",
+              "Trial": 1,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 394,
+              "CompletedFrames": 394,
+              "HostSeconds": 2.8251067,
+              "PhaseCycles": {
+                "mutationCycles": 1684020,
+                "flushCycles": 20480,
+                "remountCycles": 108970,
+                "verifyCycles": 969890
+              },
+              "ReadCommands": 37,
+              "WriteCommands": 17,
+              "ReadRequests": 47,
+              "WriteRequests": 33,
+              "ReadBytes": 24064,
+              "WriteBytes": 16896,
+              "Flushes": 2,
+              "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+              "ResultMediaSha256": "6735B6BC39C633EF0F6EB813FDEF5E3C6F5B70679285455EC3480E25F519E52F",
+              "IndependentCheck": "root=16384; fileBytes=6003; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515; headerChecksumValid=True",
+              "Detail": 0
+            },
+            {
+              "Name": "SmartFilesystem 1.279",
+              "Trial": 1,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 598,
+              "CompletedFrames": 598,
+              "HostSeconds": 5.0747587,
+              "PhaseCycles": {
+                "mutationCycles": 2478940,
+                "flushCycles": 161230,
+                "remountCycles": 218790,
+                "verifyCycles": 1059680
+              },
+              "ReadCommands": 8,
+              "WriteCommands": 7,
+              "ReadRequests": 123,
+              "WriteRequests": 39,
+              "ReadBytes": 62976,
+              "WriteBytes": 19968,
+              "Flushes": 4,
+              "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+              "ResultMediaSha256": "3A1298810599E1099BB0CA0B29540497AB5B64A6397661DC402311FEF927352A",
+              "IndependentCheck": "entries=5; fileBytes=7027; freeBlocks=32710; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387788,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387788,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":6003,\"Protection\":15,\"Modified\":1542387788,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542387788,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+              "Detail": 0
+            },
+            {
+              "Name": "SmartFilesystem 1.279",
+              "Trial": 2,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 598,
+              "CompletedFrames": 598,
+              "HostSeconds": 4.2220011,
+              "PhaseCycles": {
+                "mutationCycles": 2478940,
+                "flushCycles": 161230,
+                "remountCycles": 218790,
+                "verifyCycles": 1059580
+              },
+              "ReadCommands": 8,
+              "WriteCommands": 7,
+              "ReadRequests": 123,
+              "WriteRequests": 39,
+              "ReadBytes": 62976,
+              "WriteBytes": 19968,
+              "Flushes": 4,
+              "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+              "ResultMediaSha256": "52A37BAAD7DD560253C74B5CCC60750158C5D875DBF03B103439A356C25E8B5D",
+              "IndependentCheck": "entries=5; fileBytes=7027; freeBlocks=32710; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387794,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387794,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":6003,\"Protection\":15,\"Modified\":1542387794,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542387794,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+              "Detail": 0
+            },
+            {
+              "Name": "CPX4",
+              "Trial": 2,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 1112,
+              "CompletedFrames": 1112,
+              "HostSeconds": 10.7885302,
+              "PhaseCycles": {
+                "mutationCycles": 2381890,
+                "flushCycles": 519180,
+                "remountCycles": 539790,
+                "verifyCycles": 1322920
+              },
+              "ReadCommands": 27,
+              "WriteCommands": 13,
+              "ReadRequests": 73,
+              "WriteRequests": 36,
+              "ReadBytes": 37376,
+              "WriteBytes": 18432,
+              "Flushes": 2,
+              "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+              "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+              "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+              "Detail": 0
+            },
+            {
+              "Name": "Kickstart FFS 40.1",
+              "Trial": 2,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 394,
+              "CompletedFrames": 394,
+              "HostSeconds": 3.3083446,
+              "PhaseCycles": {
+                "mutationCycles": 1683280,
+                "flushCycles": 20440,
+                "remountCycles": 108980,
+                "verifyCycles": 969660
+              },
+              "ReadCommands": 37,
+              "WriteCommands": 17,
+              "ReadRequests": 47,
+              "WriteRequests": 33,
+              "ReadBytes": 24064,
+              "WriteBytes": 16896,
+              "Flushes": 2,
+              "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+              "ResultMediaSha256": "8B8743D999C3DE8F907C768DE6CE883BB41C6A02BF98EB78162FC0EEF200E8DF",
+              "IndependentCheck": "root=16384; fileBytes=6003; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515; headerChecksumValid=True",
+              "Detail": 0
+            }
+          ],
+          "Summary": [
+            {
+              "Name": "CPX4",
+              "Trials": 2,
+              "AllPassed": true,
+              "MutationCyclesMedian": 2381845,
+              "MutationCyclesRange": [
+                2381800,
+                2381890
+              ],
+              "FlushCyclesMedian": 519185,
+              "FlushCyclesRange": [
+                519180,
+                519190
+              ],
+              "RemountCyclesMedian": 539800,
+              "RemountCyclesRange": [
+                539790,
+                539810
+              ],
+              "VerifyCyclesMedian": 1322930,
+              "VerifyCyclesRange": [
+                1322920,
+                1322940
+              ],
+              "TotalMeasuredCyclesMedian": 4763760,
+              "TotalMeasuredCyclesRange": [
+                4763740,
+                4763780
+              ]
+            },
+            {
+              "Name": "Kickstart FFS 40.1",
+              "Trials": 2,
+              "AllPassed": true,
+              "MutationCyclesMedian": 1683650,
+              "MutationCyclesRange": [
+                1683280,
+                1684020
+              ],
+              "FlushCyclesMedian": 20460,
+              "FlushCyclesRange": [
+                20440,
+                20480
+              ],
+              "RemountCyclesMedian": 108975,
+              "RemountCyclesRange": [
+                108970,
+                108980
+              ],
+              "VerifyCyclesMedian": 969775,
+              "VerifyCyclesRange": [
+                969660,
+                969890
+              ],
+              "TotalMeasuredCyclesMedian": 2782860,
+              "TotalMeasuredCyclesRange": [
+                2782360,
+                2783360
+              ]
+            },
+            {
+              "Name": "SmartFilesystem 1.279",
+              "Trials": 2,
+              "AllPassed": true,
+              "MutationCyclesMedian": 2478940,
+              "MutationCyclesRange": [
+                2478940,
+                2478940
+              ],
+              "FlushCyclesMedian": 161230,
+              "FlushCyclesRange": [
+                161230,
+                161230
+              ],
+              "RemountCyclesMedian": 218790,
+              "RemountCyclesRange": [
+                218790,
+                218790
+              ],
+              "VerifyCyclesMedian": 1059630,
+              "VerifyCyclesRange": [
+                1059580,
+                1059680
+              ],
+              "TotalMeasuredCyclesMedian": 3918590,
+              "TotalMeasuredCyclesRange": [
+                3918540,
+                3918640
+              ]
+            }
+          ],
+          "Ratios": {
+            "Cpx4MutationVsKickstartFfs": 1.4146912956968491,
+            "Cpx4MutationVsSfs1279": 0.9608320491823118,
+            "Cpx4TotalVsKickstartFfs": 1.7118216511071345,
+            "Cpx4TotalVsSfs1279": 1.2156821713932817
+          },
+          "Inputs": {
+            "Cpx4HandlerSha256": "9B082DBB05652192B61015FB4A48FD499DD7854B4E7E2FAB3F60A005362C3837",
+            "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+            "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+            "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+            "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+            "ProbeSha256": "0984E37B49A652D20E62ED24A524713C228E1071B8422A5676A78E177C0AD5B1",
+            "DiskBytes": 16777216,
+            "SectorBytes": 512
+          }
+        },
+        "stream": {
+          "Schema": 1,
+          "Machine": "Kickstart 3.1, emulated 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+          "Workload": "32 writes of 64 KiB (2 MiB); two partial overwrites; no-op truncates; rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+          "Timing": "Emulated bus-cycle deltas; host wall time is informational only.",
+          "Trials": [
+            {
+              "Name": "CPX4",
+              "Trial": 1,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 3737,
+              "CompletedFrames": 3737,
+              "HostSeconds": 53.9050425,
+              "PhaseCycles": {
+                "mutationCycles": 2783060,
+                "flushCycles": 600540,
+                "remountCycles": 547340,
+                "verifyCycles": 365320430
+              },
+              "ReadCommands": 59,
+              "WriteCommands": 46,
+              "ReadRequests": 4159,
+              "WriteRequests": 4118,
+              "ReadBytes": 2129408,
+              "WriteBytes": 2108416,
+              "Flushes": 2,
+              "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+              "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+              "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+              "Detail": 0
+            },
+            {
+              "Name": "Kickstart FFS 40.1",
+              "Trial": 1,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 3021,
+              "CompletedFrames": 3021,
+              "HostSeconds": 43.4043728,
+              "PhaseCycles": {
+                "mutationCycles": 2111540,
+                "flushCycles": 20340,
+                "remountCycles": 115050,
+                "verifyCycles": 365195910
+              },
+              "ReadCommands": 155,
+              "WriteCommands": 136,
+              "ReadRequests": 4190,
+              "WriteRequests": 4172,
+              "ReadBytes": 2145280,
+              "WriteBytes": 2136064,
+              "Flushes": 34,
+              "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+              "ResultMediaSha256": "D3861823C25BBC76AD3A88FD55D9C8518FD849A2D4B120CD40D120E9F1D49E9E",
+              "IndependentCheck": "root=16384; fileBytes=2097152; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733; headerChecksumValid=True",
+              "Detail": 0
+            },
+            {
+              "Name": "SmartFilesystem 1.279",
+              "Trial": 1,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 3236,
+              "CompletedFrames": 3236,
+              "HostSeconds": 41.7257632,
+              "PhaseCycles": {
+                "mutationCycles": 4572780,
+                "flushCycles": 174270,
+                "remountCycles": 215010,
+                "verifyCycles": 364911730
+              },
+              "ReadCommands": 38,
+              "WriteCommands": 38,
+              "ReadRequests": 4192,
+              "WriteRequests": 4120,
+              "ReadBytes": 2146304,
+              "WriteBytes": 2109440,
+              "Flushes": 4,
+              "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+              "ResultMediaSha256": "55D8FBC1487FE8E56D0CA33859B51283BA36B4BB3DE9A5AD1A7F2C5C5CE101E6",
+              "IndependentCheck": "entries=5; fileBytes=2098176; freeBlocks=28626; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387870,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387871,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":2097152,\"Protection\":15,\"Modified\":1542387871,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542387871,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+              "Detail": 0
+            },
+            {
+              "Name": "SmartFilesystem 1.279",
+              "Trial": 2,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 3236,
+              "CompletedFrames": 3236,
+              "HostSeconds": 41.1049476,
+              "PhaseCycles": {
+                "mutationCycles": 4550810,
+                "flushCycles": 169550,
+                "remountCycles": 219690,
+                "verifyCycles": 364911040
+              },
+              "ReadCommands": 38,
+              "WriteCommands": 38,
+              "ReadRequests": 4192,
+              "WriteRequests": 4120,
+              "ReadBytes": 2146304,
+              "WriteBytes": 2109440,
+              "Flushes": 4,
+              "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+              "ResultMediaSha256": "85911D646CB89A9B08AB7928835AA9E386C9F93C4FFAA4AC974410162364F192",
+              "IndependentCheck": "entries=5; fileBytes=2098176; freeBlocks=28626; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387913,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542387913,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":2097152,\"Protection\":15,\"Modified\":1542387913,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542387913,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+              "Detail": 0
+            },
+            {
+              "Name": "CPX4",
+              "Trial": 2,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 3737,
+              "CompletedFrames": 3737,
+              "HostSeconds": 34.8425172,
+              "PhaseCycles": {
+                "mutationCycles": 2783110,
+                "flushCycles": 600520,
+                "remountCycles": 547370,
+                "verifyCycles": 365320890
+              },
+              "ReadCommands": 59,
+              "WriteCommands": 46,
+              "ReadRequests": 4159,
+              "WriteRequests": 4118,
+              "ReadBytes": 2129408,
+              "WriteBytes": 2108416,
+              "Flushes": 2,
+              "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+              "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+              "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+              "Detail": 0
+            },
+            {
+              "Name": "Kickstart FFS 40.1",
+              "Trial": 2,
+              "Passed": true,
+              "Stage": 0,
+              "IoErr": 0,
+              "LoopFrames": 3021,
+              "CompletedFrames": 3021,
+              "HostSeconds": 30.2493628,
+              "PhaseCycles": {
+                "mutationCycles": 2110590,
+                "flushCycles": 20350,
+                "remountCycles": 114970,
+                "verifyCycles": 365196580
+              },
+              "ReadCommands": 155,
+              "WriteCommands": 136,
+              "ReadRequests": 4190,
+              "WriteRequests": 4172,
+              "ReadBytes": 2145280,
+              "WriteBytes": 2136064,
+              "Flushes": 34,
+              "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+              "ResultMediaSha256": "6E4EF05F9074AC26711814A3668B6D5555E8E165DBC0CB1D70747B10DA597634",
+              "IndependentCheck": "root=16384; fileBytes=2097152; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733; headerChecksumValid=True",
+              "Detail": 0
+            }
+          ],
+          "Summary": [
+            {
+              "Name": "CPX4",
+              "Trials": 2,
+              "AllPassed": true,
+              "MutationCyclesMedian": 2783085,
+              "MutationCyclesRange": [
+                2783060,
+                2783110
+              ],
+              "FlushCyclesMedian": 600530,
+              "FlushCyclesRange": [
+                600520,
+                600540
+              ],
+              "RemountCyclesMedian": 547355,
+              "RemountCyclesRange": [
+                547340,
+                547370
+              ],
+              "VerifyCyclesMedian": 365320660,
+              "VerifyCyclesRange": [
+                365320430,
+                365320890
+              ],
+              "TotalMeasuredCyclesMedian": 369251630,
+              "TotalMeasuredCyclesRange": [
+                369251370,
+                369251890
+              ]
+            },
+            {
+              "Name": "Kickstart FFS 40.1",
+              "Trials": 2,
+              "AllPassed": true,
+              "MutationCyclesMedian": 2111065,
+              "MutationCyclesRange": [
+                2110590,
+                2111540
+              ],
+              "FlushCyclesMedian": 20345,
+              "FlushCyclesRange": [
+                20340,
+                20350
+              ],
+              "RemountCyclesMedian": 115010,
+              "RemountCyclesRange": [
+                114970,
+                115050
+              ],
+              "VerifyCyclesMedian": 365196245,
+              "VerifyCyclesRange": [
+                365195910,
+                365196580
+              ],
+              "TotalMeasuredCyclesMedian": 367442665,
+              "TotalMeasuredCyclesRange": [
+                367442490,
+                367442840
+              ]
+            },
+            {
+              "Name": "SmartFilesystem 1.279",
+              "Trials": 2,
+              "AllPassed": true,
+              "MutationCyclesMedian": 4561795,
+              "MutationCyclesRange": [
+                4550810,
+                4572780
+              ],
+              "FlushCyclesMedian": 171910,
+              "FlushCyclesRange": [
+                169550,
+                174270
+              ],
+              "RemountCyclesMedian": 217350,
+              "RemountCyclesRange": [
+                215010,
+                219690
+              ],
+              "VerifyCyclesMedian": 364911385,
+              "VerifyCyclesRange": [
+                364911040,
+                364911730
+              ],
+              "TotalMeasuredCyclesMedian": 369862440,
+              "TotalMeasuredCyclesRange": [
+                369851090,
+                369873790
+              ]
+            }
+          ],
+          "Ratios": {
+            "Cpx4MutationVsKickstartFfs": 1.3183322162036697,
+            "Cpx4MutationVsSfs1279": 0.6100855036230256,
+            "Cpx4TotalVsKickstartFfs": 1.004923121815481,
+            "Cpx4TotalVsSfs1279": 0.9983485481791555
+          },
+          "Inputs": {
+            "Cpx4HandlerSha256": "9B082DBB05652192B61015FB4A48FD499DD7854B4E7E2FAB3F60A005362C3837",
+            "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+            "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+            "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+            "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+            "ProbeSha256": "31AF34F1FF54A5AB4EBFF9D74C612C3BA00CB20C845DEB8947896E619656F906",
+            "DiskBytes": 16777216,
+            "SectorBytes": 512
+          }
+        }
+      }
+    },
+    "A76": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Admit existing authenticated read/append capabilities after the complete DOS packet reset, retaining general fallback and deferring every I/O to Step; mixed regresses slightly while streaming improves",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1111,
+          "CompletedFrames": 1111,
+          "HostSeconds": 5.6828408,
+          "PhaseCycles": {
+            "mutationCycles": 2408690,
+            "flushCycles": 519570,
+            "remountCycles": 535240,
+            "verifyCycles": 1305510
+          },
+          "ReadCommands": 27,
+          "WriteCommands": 13,
+          "ReadRequests": 73,
+          "WriteRequests": 36,
+          "ReadBytes": 37376,
+          "WriteBytes": 18432,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3738,
+          "CompletedFrames": 3738,
+          "HostSeconds": 29.3026779,
+          "PhaseCycles": {
+            "mutationCycles": 2767940,
+            "flushCycles": 601660,
+            "remountCycles": 547750,
+            "verifyCycles": 365325470
+          },
+          "ReadCommands": 59,
+          "WriteCommands": 46,
+          "ReadRequests": 4159,
+          "WriteRequests": 4118,
+          "ReadBytes": 2129408,
+          "WriteBytes": 2108416,
+          "Flushes": 2,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkBytes": 271112,
+        "hunkSha256": "3BE18F08181CDBAEF9D76359890C14962BA96F537775D44FBD0BFDA2585D3A71",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0,
+        "sourceInputCount": 86,
+        "clrPolicy": "always",
+        "baseCandidate": "A72"
+      },
+      "coverage": {
+        "focusedHost": 113,
+        "fullRomAllocationGates": {
+          "legacyCpx4": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 900,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          },
+          "cpx5": {
+            "passed": true,
+            "chipRam": 524288,
+            "fastRam": 0,
+            "stackPeak": 1092,
+            "stackGuardIntact": true,
+            "operationExecAllocations": 0,
+            "sourceInputsMatched": true,
+            "partialPacketCoverage": true
+          }
+        },
+        "fullSolution": "not run for this intermediate candidate",
+        "physicalMedia": "not run",
+        "cachedTransferPacketCases": 6,
+        "compiledWarmReadAndResizeCases": 2,
+        "additionalCompiledNativeCases": "No separate 66-case suite for this intermediate; the actual MC68000 probe warms and exercises two cached packet reads, then resize/protection/remount/full payload checks in feature levels 4 and 5. Both ROM allocation gates and workload screens also pass."
+      },
+      "retained": false
     }
   },
   "shadowProtocol": {

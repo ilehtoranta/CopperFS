@@ -892,3 +892,59 @@ host cases pass, including cold/warm differential reads, long names, aliases,
 busy rejection, cancellation with the existing remount requirement, and both
 recoverable-rejection regressions. Native qualification and performance remain
 pending; these changes are not part of the retained A68 source.
+
+A72 completes the initial native qualification: all 107 focused host cases,
+66 compiled native cases (7 minutes 42 seconds) and both source-exact partial
+ROM allocation gates pass. The handler is 270,420 bytes with 84 exact production
+inputs. Both ROM gates observe zero operation-time Exec allocations and intact
+stack guards; the CPX5 peak is 1,092 bytes. Screens pass at 4,746,670 mixed and
+369,285,600 streaming cycles with the canonical durable image hashes unchanged.
+This improves mixed against A68 while streaming is effectively unchanged. It
+remains an intermediate; no full solution result is inherited from A68.
+
+A73 combines A72 with A70 and omits copying the cached parent object when a
+fused lookup consumes the child instead. All 160 focused host cases and both
+actual-HUNK ROM allocation gates pass. Screens pass at 4,736,680 / 369,316,860
+cycles: mixed improves but streaming regresses. It is not retained, and no
+separate broader instruction suite or full solution run is claimed.
+
+A74 requests inlining on nine scalar accessors without changing their bodies.
+Its 269,652-byte HUNK is byte-identical to A68 (SHA-256
+`9C1A90B6D6A0743C468D17ACFAB3CA46DD205602EF678A258E9091999C8F6689`).
+The report explicitly inherits A68 qualification by binary identity. No new
+benchmark or ROM execution is represented as a measurement for A74.
+
+A75 skips interrupt masking when the media-change latch is empty. A zero peek
+acknowledges nothing; a callback arriving after the peek stays pending for the
+next bounded visit. The existing masked read/clear is used for a set latch.
+All eight compiled media/control tests pass, including four new latch cases
+and an event injected just after a zero peek. All 70 focused compiled native
+cases and both source-exact partial ROM allocation gates pass. The CPX5 gate
+observes a 1,068-byte peak stack, intact guard, and zero operation-time Exec
+allocations. The 269,664-byte handler uses the same 83 production inputs.
+Release solution build and all 141 rebuilt CopperStart replay cases pass;
+the full Release solution passes 2,684 tests, zero failures and ten skips.
+This includes 714 CPX host cases and 139 compiled native cases; the native suite
+takes 23 minutes 38 seconds, with its seven ROM skips counted separately from
+the two executed partial ROM gates. Physical media are untested.
+
+Fresh two-trial medians, with every arm passing:
+
+| Workload | CopperNova A75 | Kickstart FFS 40.1 | SFS 1.279 |
+| --- | ---: | ---: | ---: |
+| Mixed | 4,763,760 | 2,782,860 | 3,918,590 |
+| Streaming | 369,251,630 | 367,442,665 | 369,862,440 |
+
+The performance objective remains unmet. A75 improves both totals against A68
+but still only beats SFS in streaming.
+
+A76 admits an already-authenticated read/append capability after the complete
+DOS packet state reset. It preserves ordinary admission for a miss and submits
+no I/O before Step. All 113 focused host cases and six new transfer cases pass;
+the latter cover EOF, bad buffers, busy rejection, stale tokens, protection,
+flush durability, full-width positions and object identities. The compiled
+MC68000 warm-read/resize probe passes both feature levels, including bytewise
+payload and 4 KiB stack checks. Both actual-HUNK ROM allocation gates pass.
+The 271,112-byte HUNK has 86 exact archived production inputs. Screens pass at
+4,769,010 / 369,242,820 cycles: streaming improves, but mixed regresses slightly.
+It is not retained and has no separate 66-case or full solution qualification.
