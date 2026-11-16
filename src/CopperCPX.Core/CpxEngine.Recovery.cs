@@ -198,7 +198,7 @@ public partial struct CpxEngine<TMemory>
                 return ReadStaged(Anchor + 8 * Q, Page(3), 27);
             case 27:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)));
-                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read16(reserve + 64) > 64 || memory.Read16(reserve + 52) != 520)
+                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read16(reserve + 64) > ReserveCapacity || memory.Read16(reserve + 52) != 520)
                     return Fail(CpxError.Corrupt);
                 // Journal replay no longer needs its descriptor index. Reuse
                 // those 2 KiB as 128 address buckets for at most 64 reserve
@@ -215,7 +215,12 @@ public partial struct CpxEngine<TMemory>
             case 29:
                 return RecoverReserveBatch(true);
             case 30:
+                if (DirectInodes) return LoadObject(1, 32);
                 return Call(CpxOperation.PruneObjects, 31);
+            case 32:
+                if (R(SourcePage) == 0 || memory.Read8(ObjectRecord + 84) != 2 || GetWide(ObjectRecord) != 1)
+                    return Fail(CpxError.Corrupt);
+                return Done();
             case 31:
                 return Done();
             default:
@@ -302,6 +307,12 @@ public partial struct CpxEngine<TMemory>
             case 7:
                 payload = 512;
                 break;
+            case 23:
+                if (!DirectInodes || count != 1 || memory.Read16(p + 50) != 0 || GetWide(p + 24) != GetWide(p + 64)) return false;
+                payload = 256;
+                break;
+            case 24:
+                return DirectInodes && count == 0 && memory.Read16(p + 52) == 0;
             case 11:
                 payload = count * 256;
                 break;
@@ -356,6 +367,7 @@ public partial struct CpxEngine<TMemory>
             return false;
         }
 
+        if (DirectInodes && type is 23 or 24) return owner != 0 && InodeAddress(owner, out var inode) && inode == address;
         return type >= 11 && type <= 19 && ((type is 11 or 12) ? (((ulong)(owner)) == 0) : !(((ulong)(owner)) == 0)) && Allocatable(address);
     }
 }

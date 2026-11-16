@@ -37,8 +37,10 @@ internal static class Program
             if (!File.Exists(path)) throw new FileNotFoundException("Required benchmark input is unavailable.", path);
 
         var cpx = new MemoryDevice(new byte[DiskBytes]);
-        if(Environment.GetEnvironmentVariable("CPX_BENCH_SHADOW")=="1")
-            Cpx4Volume<MemoryDevice>.FormatShadow(cpx, SectorBytes, new byte[40960], 0x43505842454E4348);
+        if(Environment.GetEnvironmentVariable("CPX_BENCH_INODES")=="1")
+            Cpx4Volume<MemoryDevice>.FormatDirectInodes(cpx, SectorBytes, new byte[49152], 0x43505842454E4348);
+        else if(Environment.GetEnvironmentVariable("CPX_BENCH_SHADOW")=="1")
+            Cpx4Volume<MemoryDevice>.FormatShadow(cpx, SectorBytes, new byte[49152], 0x43505842454E4348);
         else Cpx4Volume<MemoryDevice>.Format(cpx, SectorBytes, new byte[36864], 0x43505842454E4348);
         File.WriteAllBytes(Path.Combine(ArtifactRoot, "cpx4-empty-16m.hdf"), cpx.Bytes);
         var ffs = CreateEmptyFfs();

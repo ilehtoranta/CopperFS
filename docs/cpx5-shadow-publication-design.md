@@ -46,6 +46,38 @@ simultaneous damage to all current checkpoints or both copies of a metadata page
 Existing in-place file-data overwrite limitations remain: metadata snapshot
 publication does not make overwritten user data transactional.
 
+## Checkpoint volume controls
+
+The second experimental CPX5 layout advertises anchor feature value 2. Legacy
+feature value 1 continues to use the separate paired state/reserve pages.
+Feature 2 places these fields in each authenticated checkpoint:
+
+| Offset | Bytes | Meaning |
+|---:|---:|---|
+| 56 | 2 | State payload length: 48, 128 or 136 |
+| 58 | 2 | Reserve capacity, 32 |
+| 64 | 32 | Existing volume identity, generation and explicit mapping root |
+| 96 | 136 | State payload, unused bytes zero |
+| 232 | 264 | Reserve count/padding and up to 32 logical paired-page addresses |
+
+The checkpoint payload length is 432, ending at byte 496. Selected checkpoints
+at the same generation must agree on mapping root and controls. The immutable
+anchors still identify the explicit layout; no CPX4 sector is reinterpreted.
+
+The engine materializes private typed state/reserve views from the authenticated
+checkpoint. Dirty views participate in the existing rollback/admission machinery.
+Retirement copies their admitted contents into a pinned root template and omits
+them from ordinary metadata descriptors. Template mutation begins only after
+retirement has made rollback unavailable; an uncertain completion poisons the
+mount and recovery reloads the durable checkpoint. A control-only publication
+still performs the data barrier before its two checkpoint writes and final
+publication barrier. Explicit flush retains its separate device drain.
+
+The extra template is caller-owned. The engine accounts separately for four or
+eight usable clean-cache pages when native startup appends this context to one
+Exec allocation. A larger allocation size must not accidentally authorize cache
+pages that overlap the appended context.
+
 ## Prototype boundary
 
 `CpxShadowCommit<TMemory>` is an allocation-free, caller-owned continuation kernel.

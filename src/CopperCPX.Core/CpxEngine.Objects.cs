@@ -13,30 +13,35 @@ public partial struct CpxEngine<TMemory>
         }
     }
 
-    private StepResult ReadStaged(ulong at, uint buffer, uint nextPhase)
+    private StepResult ReadStaged(ulong at, uint buffer, uint nextPhase, bool requireInode = false)
     {
         uint cpxArenaBase = Arena;
         int staged = FindStaged(at);
+        if (DirectInodes) memory.Write32(ShadowStorage + 4, 1);
         if (staged >= 0 && (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1))
         {
             Copy(buffer, (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)((uint)staged)) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (PageBytes))));
             TrustBufferedPage(buffer, at);
+            if (DirectInodes) memory.Write32(ShadowStorage + 4, memory.Read16(buffer + 4) == 23 ? 1u : 0u);
             memory.Write32(cpxArenaBase + (Phase), nextPhase);
             return StepResult.Pending;
         }
 
         if (staged < 0 && (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && ReadBufferedClean(at, buffer))
         {
+            if (DirectInodes) memory.Write32(ShadowStorage + 4, memory.Read16(buffer + 4) == 23 ? 1u : 0u);
             memory.Write32(cpxArenaBase + (Phase), nextPhase);
             return StepResult.Pending;
         }
 
-        if (staged < 0 && ShadowVolume) return BeginShadowRead(at, buffer, nextPhase);
+        if (staged < 0 && ShadowRootControl && (at == StateAddress || at == Anchor + 8 * Q)) return ReadShadowControl(at, buffer, nextPhase);
+        if (staged < 0 && ShadowVolume) return BeginShadowRead(at, buffer, nextPhase, requireInode);
         return Issue(IoKind.Read, staged < 0 ? at : Image(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))) + 1, (uint)staged), buffer, (memory.Read32(cpxArenaBase + (PageBytes))), nextPhase);
     }
 
     private StepResult ObjectStep()
     {
+        if (DirectInodes) return DirectObjectStep();
         uint cpxArenaBase = Arena;
         uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4)));
         switch (memory.Read32(cpxArenaBase + (Phase)))

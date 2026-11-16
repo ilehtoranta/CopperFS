@@ -29,7 +29,8 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                 memory.Write32(arena + Mounted, 1);
                 memory.Write32(arena + Poisoned, 0);
                 Clear(table, CpxArena.IndexBytes);
-                return memory.Read32(arena + ReadOnlyAt) != 0 ? Done() : Call(CpxOperation.Reclaim, 30);
+                if (memory.Read32(arena + ReadOnlyAt) != 0) return DirectInodes ? LoadObject(1, 32) : Done();
+                return Call(CpxOperation.Reclaim, 30);
             }
             ulong address = GetWide(reserve + 72 + cursor * 8);
             if (!Allocatable(address)) return Fail(CpxError.Corrupt);

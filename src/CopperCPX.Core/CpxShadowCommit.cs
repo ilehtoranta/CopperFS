@@ -17,7 +17,7 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
         Cursor = 64, RootCursor = 68, FirstNewRoot = 72, Waiting = 76,
         Token = 80, NextToken = 84, ErrorAt = 88, Status = 92, CancelAt = 96,
         Kind = 100, PendingSector = 104, PendingBuffer = 112, PendingBytes = 116,
-        NextMappingRoot = 120, DurableMappingRootAt = 128, ChecksumTable = 136, ChecksumZeros = 140, ChecksumWord = 144, LogicalAddressShift = 148, OwnedImages = 152;
+        NextMappingRoot = 120, DurableMappingRootAt = 128, ChecksumTable = 136, ChecksumZeros = 140, ChecksumWord = 144, LogicalAddressShift = 148, OwnedImages = 152, ControlRoot = 156;
 
     public CpxShadowCommit(TMemory memory, uint arena) { this.memory = memory; Arena = arena; }
     private uint R(uint at) => memory.Read32(Arena + at);
@@ -58,11 +58,14 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
     // image address (u32), currently selected copy (u32), reserved zero (u64).
     // The caller owns allocation/namespace validation and pins this write set.
     public CpxError Begin(uint descriptors, uint count, Wide mappingRoot)
+        => BeginCore(descriptors, count, mappingRoot, false);
+
+    private CpxError BeginCore(uint descriptors, uint count, Wide mappingRoot, bool allowEmpty)
     {
         if (R(Signature) != ContextMagic) return CpxError.InvalidArgument;
         if (R(Waiting) != 0 || R(Status) == 1) return CpxError.Busy;
         if (R(Status) == 3) return Error;
-        if (G(Arena + Generation) == ulong.MaxValue || count == 0 || count > CpxArena.TransactionImages
+        if (G(Arena + Generation) == ulong.MaxValue || count == 0 && !allowEmpty || count > CpxArena.TransactionImages
             || !Buffer(descriptors, count * DescriptorBytes)
             || Overlap(descriptors, count * DescriptorBytes, Arena, StateBytes)
             || Overlap(descriptors, count * DescriptorBytes, R(Workspace), R(Page)))
@@ -80,9 +83,19 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
     // public untrusted-descriptor admission unnecessary here.
     internal CpxError BeginOwnedImages(uint descriptors, uint count, Wide mappingRoot)
     {
-        CpxError error = Begin(descriptors, count, mappingRoot);
+        CpxError error = BeginCore(descriptors, count, mappingRoot, true);
         if (error == CpxError.None) { W(OwnedImages, 1); W(Phase, 1); }
         return error;
+    }
+
+    internal CpxError UseOwnedControlRoot(uint control)
+    {
+        if (!Buffer(control, R(Page)) || Overlap(control, R(Page), Arena, StateBytes) ||
+            Overlap(control, R(Page), R(Workspace), R(Page)) || memory.Read32(control) != Magic ||
+            memory.Read16(control + 6) != 5 || memory.Read16(control + 52) != 432 ||
+            memory.Read16(control + 56) is not (48 or 128 or 136) || memory.Read16(control + 58) != 32 ||
+            memory.Read16(control + 232) > 32) return CpxError.Corrupt;
+        W(ControlRoot, control); return CpxError.None;
     }
 
     public CpxIo Request => new() { Kind = (IoKind)R(Kind), Sector = G(Arena + PendingSector),
@@ -117,6 +130,7 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
                 if (cursor + 1 == R(Count)) { W(Cursor, 0); W(Phase, 1); }
                 return StepResult.Pending;
             case 1:
+                if (R(Count) == 0) return Issue(IoKind.Flush, 0, 0, 0, 3);
                 return Issue(IoKind.Write, G(descriptor + 8) + (1 - memory.Read32(descriptor + 20)) * sectors,
                     memory.Read32(descriptor + 16), page, 2);
             case 2:
@@ -172,6 +186,12 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
         Put(buffer + 16, address >> (int)R(LogicalAddressShift)); Put(buffer + 32, transaction); memory.Write16(buffer + 52, 32);
         Put(buffer + 72, G(Arena + Identity)); Put(buffer + 80, transaction);
         Put(buffer + 88, G(Arena + NextMappingRoot));
+        uint control = R(ControlRoot);
+        if (control != 0)
+        {
+            memory.Write16(buffer + 52, 432); memory.Write16(buffer + 56, memory.Read16(control + 56)); memory.Write16(buffer + 58, 32);
+            for (uint at = 96; at < 496; at += 4) memory.Write32(buffer + at, memory.Read32(control + at));
+        }
         memory.Write32(buffer + 8, Crc(buffer, R(Page)));
     }
 

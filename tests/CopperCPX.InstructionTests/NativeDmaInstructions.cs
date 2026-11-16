@@ -31,7 +31,7 @@ public static class DmaAllocationProbe
     }
 }
 
-public class NativeDmaInstructions
+public class NativeDmaInstructions(Xunit.Abstractions.ITestOutputHelper output)
 {
     private static M68kCompilationResult Compile(Type entry,string method)=>AmigaM68kCompiler.Compile(new()
     {
@@ -100,13 +100,19 @@ public class NativeDmaInstructions
     [Theory][InlineData("arena")][InlineData("no dma")][InlineData("unreachable dma")][InlineData("open device")]
     public void FailedStartupRepliesNoFreeStoreAndReleasesEachOwnedBlock(string failure)
     {
-        var bus=new NativeTestBus(); const uint arena=0x40008;
+        var bus=new NativeTestBus(); var compiled=Handler.Value;
+        const uint codeBase=0x10000;
+        uint codeEnd=codeBase+(uint)compiled.Code.Length;
+        uint arena=(codeEnd+0x1007)&~7u;
+        uint unreachable=(arena+CpxArena.Bytes(4096)+0x1007)&~7u;
+        Assert.InRange(unreachable+512,0u,0xee000u);
+        output.WriteLine($"Handler code {codeBase:X8}..{codeEnd:X8}; owned arena {arena:X8}; rejected DMA block {unreachable:X8}.");
         bus.Put(0x830a,0x8320);bus.Put(0x8324,0x8100);bus.Put(0x8338,0x8380>>2);
         bus.Put(0x8384,0x83c0>>2);bus.Put(0x8388,0x8400>>2);
         bus.Put(0x8400,16);bus.Put(0x8404,128);bus.Put(0x840c,1);bus.Put(0x8410,1);bus.Put(0x8414,8192);
         bus.Put(0x8430,3);bus.Put(0x8434,4096);bus.Put(0x8438,0x1f000);
         var live=new Dictionary<uint,uint>(); int tries=0,opens=0,replies=0,deletePorts=0,deleteRequests=0;
-        uint result=Execute(Handler.Value,bus,(int lvo,IM68kCore cpu)=>
+        uint result=Execute(compiled,bus,(int lvo,IM68kCore cpu)=>
         {
             switch(lvo)
             {
@@ -119,9 +125,14 @@ public class NativeDmaInstructions
                     else
                     {
                         Assert.True(tries++<4); Assert.Equal(3u,cpu.State.D[1]);
-                        address=failure switch {"unreachable dma"=>0x30008u,"open device"=>0xa008u,_=>0};
+                        address=failure switch {"unreachable dma"=>unreachable,"open device"=>0xa008u,_=>0};
                     }
-                    if(address!=0) Assert.True(live.TryAdd(address,size));
+                    if(address!=0)
+                    {
+                        Assert.True(address+size<=codeBase||address>=codeEnd,"Fake Exec allocation overlaps the loaded handler.");
+                        Assert.True(live.TryAdd(address,size));
+                        if((cpu.State.D[1]&0x10000)!=0) bus.Bytes.AsSpan((int)address,(int)size).Clear();
+                    }
                     cpu.State.D[0]=address; break;
                 case 210:
                     Assert.True(live.Remove(cpu.State.A[1],out uint length)); Assert.Equal(length,cpu.State.D[0]); break;

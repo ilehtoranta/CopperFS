@@ -11,6 +11,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private Span<byte> scratch;
     private ulong generation;
     private ulong shadowRoot;
+    private bool shadowLeafPresent;
     private int imageCount, imageLimit, pageLimit, newPages;
     private bool active, poisoned, releasedMetadata;
     private ulong trimCursor;
@@ -45,7 +46,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     public static int RequiredScratchBytes(int pageBytes, bool shadow = false)
     {
         if (pageBytes is < 1024 or > 4096 || (pageBytes & (pageBytes - 1)) != 0) throw new ArgumentOutOfRangeException(nameof(pageBytes));
-        return (shadow ? 7 : 6) * pageBytes + 12 * 1024;
+        return (shadow ? 8 : 6) * pageBytes + 12 * 1024;
     }
     private void Ready() { if (poisoned || active || inCooperate) throw new InvalidOperationException("Mount needs recovery or is already owned by an operation."); }
     private void IoBoundary()
@@ -69,6 +70,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private void Load(ulong unit, scoped Span<byte> page)
     {
         if (!layout.PageAddress(unit)) { poisoned = true; throw new InvalidDataException("Unaligned/out-of-range metadata address."); }
+        if (layout.RootControl && (unit == layout.State || unit == layout.Reserve)) { LoadRootControl(unit, page); return; }
         int found = active ? FindStaged(unit) : -1;
         RawRead(found < 0 ? ShadowAddress(unit) : layout.Image(generation + 1, found), page);
         if (!VolumeCrc(page) || U64(page, 16) != unit || U64(page, 32) > generation + (active ? 1UL : 0UL))
@@ -95,9 +97,10 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
                 uint magic = U32(p, 0);
                 if (magic != Magic && magic != 0x43505835u || U32(p, 8) != Crc(p, true)) continue;
                 ushort version = magic == Magic ? (ushort)4 : (ushort)5;
-                if (U16(p, 6) != version || U16(p, 4) != (ushort)PageType.Anchor || U64(p, 96) != 1)
+                if (U16(p, 6) != version || U16(p, 4) != (ushort)PageType.Anchor ||
+                    U64(p, 96) != 1 && (version != 5 || U64(p, 96) is not (2 or 3)))
                     throw new InvalidDataException("Unsupported CPX format/features; old prototypes require reformatting.");
-                var candidate = new Layout((int)U32(p, 80), device.SectorSize, U64(p, 88), U64(p, 72), version);
+                var candidate = new Layout((int)U32(p, 80), device.SectorSize, U64(p, 88), U64(p, 72), version, U64(p, 96) >= 2, U64(p, 96) == 3);
                 try { candidate.Validate(); } catch (ArgumentException e) { throw new InvalidDataException("Invalid anchor geometry.", e); }
                 if (candidate.PageBytes != pageBytes || candidate.ByteOffset(candidate.Units) != bytes ||
                     U32(p, 84) != pageBytes || U32(p, 104) != device.SectorSize || U32(p, 108) != 1 ||
@@ -129,18 +132,22 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
 
     /// <summary>Experimental CPX5 paired-metadata fixture formatter. The reference
     /// decoder mounts this format read-only; production cursors perform mutations.</summary>
-    public static void FormatShadow(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId)
-        => FormatCore(device, allocationUnitBytes, scratch, volumeId, 5);
+    public static void FormatShadow(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, bool compactControl = true)
+        => FormatCore(device, allocationUnitBytes, scratch, volumeId, 5, compactControl);
 
-    private static void FormatCore(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, ushort version)
+    public static void FormatDirectInodes(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId)
+        => FormatCore(device, allocationUnitBytes, scratch, volumeId, 5, true, true);
+
+    private static void FormatCore(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, ushort version, bool compactControl = false, bool directInodes = false)
     {
         if (device.SectorSize <= 0 || device.SectorCount > AddressMath.Right(ulong.MaxValue, AddressMath.PowerShift((uint)device.SectorSize)) || allocationUnitBytes <= 0)
             throw new ArgumentException("Invalid geometry.");
         ulong bytes = AddressMath.Left(device.SectorCount, AddressMath.PowerShift((uint)device.SectorSize));
         if ((bytes & ((uint)allocationUnitBytes - 1)) != 0) throw new ArgumentException("Partial allocation unit.");
-        var l = new Layout(allocationUnitBytes, device.SectorSize, AddressMath.Right(bytes, AddressMath.PowerShift((uint)allocationUnitBytes)), volumeId, version); l.Validate();
+        var l = new Layout(allocationUnitBytes, device.SectorSize, AddressMath.Right(bytes, AddressMath.PowerShift((uint)allocationUnitBytes)), volumeId, version, compactControl, directInodes); l.Validate();
         if (scratch.Length < RequiredScratchBytes(l.PageBytes)) throw new ArgumentException("Insufficient scratch.");
-        Span<byte> p = scratch[..l.PageBytes], descriptor = scratch.Slice(l.PageBytes, l.PageBytes);
+        Span<byte> p = scratch[..l.PageBytes], descriptor = scratch.Slice(l.PageBytes, l.PageBytes), control = scratch.Slice(2 * l.PageBytes, l.PageBytes);
+        control.Clear();
         p.Clear();
         // Cover every supported old backup-page position before destructive reformat.
         for (int offset = 0; offset < 4096; offset += l.PageBytes)
@@ -169,26 +176,34 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             Put32(descriptor, 68, groupFree); free += groupFree; Seal(descriptor);
             device.Cooperate(); device.Write(l.DeviceSector(l.GroupDescriptor(group)), descriptor);
         }
-        l.MediaHeader(p, PageType.ObjectLeaf, root, 0, 0, 1);
+        l.MediaHeader(p, directInodes ? PageType.Inode : PageType.ObjectLeaf, root, directInodes ? 1UL : 0UL, directInodes ? 1UL : 0UL, 1);
         Put64(p, 64, RootDirectory); Put32(p, 64 + 76, 1); Put32(p, 64 + 80, 1); p[64 + 84] = 2;
         Seal(p); device.Cooperate(); device.Write(l.DeviceSector(root), p);
         l.MediaHeader(p, PageType.State, l.State, 0, 0);
         Put64(p, 64, 2); Put64(p, 72, 1); Put64(p, 80, root); Put64(p, 96, free);
         Seal(p); device.Cooperate(); device.Write(l.DeviceSector(l.State), p);
+        if (l.RootControl) { Put16(control, 56, U16(p, 52)); p.Slice(64, U16(p, 52)).CopyTo(control[96..]); }
         l.MediaHeader(p, PageType.Reserve, l.Reserve, 0, 0); Put16(p, 64, ReserveTarget);
-        for (int i = 0; i < ReserveTarget; i++) Put64(p, 72 + i * 8, root + (ulong)(i + 1) * l.MetadataSpan);
+        for (int i = 0; i < ReserveTarget; i++) Put64(p, 72 + i * 8, root + (ulong)(directInodes ? ReserveTarget - i : i + 1) * l.MetadataSpan);
         Seal(p); device.Cooperate(); device.Write(l.DeviceSector(l.Reserve), p);
+        if (l.RootControl) p.Slice(64, 264).CopyTo(control[232..]);
         // Profile 1 is normative Latin-1 plus the fixed fold table, with no mutable locale.
         l.MediaHeader(p, PageType.Charset, l.Charset, 0, 0); Put32(p, 64, 1); Seal(p); device.Cooperate(); device.Write(l.DeviceSector(l.Charset), p);
         if (!l.Shadow) { p.Clear(); device.Cooperate(); device.Write(l.DeviceSector(l.Commit(1)), p); device.Cooperate(); device.Write(l.DeviceSector(l.Commit(2)), p); }
+        ulong initialMapRoot = 0;
+        if (directInodes) initialMapRoot = FormatInodeCatalogue(device, l, root, p);
         for (int copy = 0; copy < (l.Shadow ? 3 : 2); copy++)
-        { ulong at = l.CheckpointA + (ulong)copy * l.Q; l.MediaHeader(p, PageType.Checkpoint, at, 0, 0); l.Identity(p); Put64(p, 80, 0); Seal(p); device.Cooperate(); device.Write(l.DeviceSector(at), p); }
+        {
+            ulong at = l.CheckpointA + (ulong)copy * l.Q; l.MediaHeader(p, PageType.Checkpoint, at, 0, directInodes ? 1UL : 0UL); l.Identity(p); Put64(p, 80, directInodes ? 1UL : 0UL); Put64(p, 88, l.DeviceSector(initialMapRoot));
+            if (l.RootControl) { control.Slice(96, 400).CopyTo(p[96..]); Put16(p, 52, 432); Put16(p, 56, U16(control, 56)); Put16(p, 58, 32); }
+            Seal(p); device.Cooperate(); device.Write(l.DeviceSector(at), p);
+        }
         device.Cooperate(); device.Flush();
         for (int copy = 0; copy < 2; copy++)
         {
             ulong at = copy == 0 ? l.Backup : l.Anchor;
             l.MediaHeader(p, PageType.Anchor, at, 0, 0); l.Identity(p); Put32(p, 80, (uint)l.UnitBytes);
-            Put32(p, 84, (uint)l.PageBytes); Put64(p, 88, l.Units); Put64(p, 96, 1);
+            Put32(p, 84, (uint)l.PageBytes); Put64(p, 88, l.Units); Put64(p, 96, l.Features);
             Put32(p, 104, (uint)l.SectorBytes); Put32(p, 108, 1); Put64(p, 112, l.Reserve); Put64(p, 120, l.State);
             Seal(p); device.Cooperate(); device.Write(l.DeviceSector(at), p); device.Cooperate(); device.Flush();
         }

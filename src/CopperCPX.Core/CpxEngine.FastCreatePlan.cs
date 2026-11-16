@@ -7,6 +7,7 @@ public partial struct CpxEngine<TMemory> where TMemory:struct,ICpxMemory
     private uint CreatePlan => NsNewName;
     private StepResult FastCreateStep()
     {
+        if (DirectInodes) return FastDirectCreateStep();
         if(memory.Read32(Arena+Phase)==601)
         {
             if(!Control(Page(3),4,Anchor+8*Q)||!ReadableGeneration(Page(3))) return Fail(CpxError.Corrupt);
@@ -31,7 +32,7 @@ public partial struct CpxEngine<TMemory> where TMemory:struct,ICpxMemory
         if(count==0||count>capacity||memory.Read16(objects+52)!=count*256||entries>=(P-64)>>7||GetWide(cached+8)!=entries||directory!=0&&FastFindName(directory,NsName,memory.Read32(Arena+NsLength))!=-1||(GetWide(state+64)>>32)!=0||(GetWide(state+72)>>32)!=0||memory.Read32(state+68)==uint.MaxValue||memory.Read32(state+76)==uint.MaxValue||!Scalar64.Add(GetWide(state+104),1,out _)||!Scalar64.Add(RW(Generation),1,out _)) return DeclineFastCreate();
         if(reserve==0){pending=ReadStaged(Anchor+8*Q,Page(3),601);return false;}
         uint need=(directory==0?1u:0u)+(count==capacity?2u:0u),available=memory.Read16(reserve+64);
-        if(available<=need||available>64||GetWide(state+64)<=GetWide(objects+64+(count-1)*256)) return DeclineFastCreate();
+        if(available<=need||available>ReserveCapacity||GetWide(state+64)<=GetWide(objects+64+(count-1)*256)) return DeclineFastCreate();
         uint parentSlot=uint.MaxValue;
         for(uint n=0;n<count;n++) if(GetWide(objects+64+n*256)==parent) parentSlot=n;
         if(parentSlot==uint.MaxValue) return DeclineFastCreate();

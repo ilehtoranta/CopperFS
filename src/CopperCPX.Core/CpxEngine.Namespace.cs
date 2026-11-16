@@ -349,6 +349,10 @@ public partial struct CpxEngine<TMemory>
             case 10:
                 return BeginTx(39, 11);
             case 11:
+                if (DirectInodes) return TakeMetadata(107);
+                return ReadStaged(StateAddress, p, 12);
+            case 107:
+                WW(NsInode, RW(MetadataResult));
                 return ReadStaged(StateAddress, p, 12);
             case 12:
                 if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
@@ -367,7 +371,14 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                if (!AdjustWide(p + 64, 1, true) || !AdjustWide(p + 72, 1, true) || !AdjustWide(p + 104, 1, true))
+                if (DirectInodes)
+                {
+                    if (!InodeCodec(out var codec)) return Fail(CpxError.Corrupt);
+                    CpxError assigned = codec.TryAssign(GetWide(p + 64), RW(NsInode) << (int)(R(UnitShift) - R(SectorShift)), out var id, out var following);
+                    if (assigned != CpxError.None) return Reject(assigned);
+                    WW(NsResult, id); PutWide(p + 64, following);
+                }
+                if ((!DirectInodes && !AdjustWide(p + 64, 1, true)) || !AdjustWide(p + 72, 1, true) || !AdjustWide(p + 104, 1, true))
                     return Reject(CpxError.ResourceExhausted);
                 Clear((cpxArenaBase + 11312), 256);
             {

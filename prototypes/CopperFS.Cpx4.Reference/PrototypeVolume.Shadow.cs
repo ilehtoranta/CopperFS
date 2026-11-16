@@ -4,6 +4,16 @@ namespace CopperFS.Cpx4.Reference;
 
 public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
 {
+    private Span<byte> ShadowControl => scratch.Slice(7 * layout.PageBytes + 12 * 1024, layout.PageBytes);
+    private void LoadRootControl(ulong unit, scoped Span<byte> page)
+    {
+        bool state = unit == layout.State;
+        layout.MediaHeader(page, state ? PageType.State : PageType.Reserve, unit, 0, generation);
+        int length = state ? U16(ShadowControl, 56) : 264;
+        ShadowControl.Slice(state ? 96 : 232, length).CopyTo(page[64..]);
+        if (state) Put16(page, 52, (ushort)length);
+        Seal(page);
+    }
     private bool VolumeCrc(scoped ReadOnlySpan<byte> page) => ValidCrc(page, layout.DiskVersion);
     private bool VolumePage(scoped ReadOnlySpan<byte> page, PageType type, ulong address, ulong owner)
         => IsPage(page, type, address, owner, layout.DiskVersion);
@@ -16,7 +26,9 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             ulong at = layout.CheckpointA + (ulong)copy * layout.Q;
             RawRead(at, B(5));
             if (!VolumePage(B(5), PageType.Checkpoint, at, 0) || !layout.IdentityMatches(B(5)) ||
-                U64(B(5), 32) != U64(B(5), 80)) continue;
+                U64(B(5), 32) != U64(B(5), 80) || U16(B(5), 52) != (layout.RootControl ? 432 : 32)) continue;
+            if (layout.RootControl && (U16(B(5), 56) is not (48 or 128 or 136) || U16(B(5), 58) != 32 || U16(B(5), 232) > 32))
+                throw new InvalidDataException("Invalid checkpoint volume controls.");
             ulong next = U64(B(5), 80), rootSector = U64(B(5), 88);
             ulong root = rootSector >> layout.DeviceShift;
             ulong expected = layout.ShadowNodePair(layout.ShadowHeight - 1, 0);
@@ -25,13 +37,23 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
                 throw new InvalidDataException("Invalid shadow checkpoint mapping root.");
             if (found && next == generation && shadowRoot != root)
                 throw new InvalidDataException("Conflicting shadow publication roots.");
-            if (!found || next > generation) { generation = next; shadowRoot = root; found = true; }
+            if (layout.RootControl && found && next == generation &&
+                (U32(B(5), 56) != U32(ShadowControl, 56) || !B(5).Slice(96, 400).SequenceEqual(ShadowControl.Slice(96, 400))))
+                throw new InvalidDataException("Conflicting checkpoint volume controls.");
+            if (!found || next > generation)
+            {
+                generation = next; shadowRoot = root; found = true;
+                if (layout.RootControl) B(5).CopyTo(ShadowControl);
+            }
         }
         if (!found) throw new InvalidDataException("No valid shadow checkpoint.");
     }
 
-    private ulong ShadowAddress(ulong unit)
+    private ulong ShadowAddress(ulong unit) => ShadowSelection(unit, out _);
+    private Span<byte> ShadowMapPage => scratch.Slice(6 * layout.PageBytes + 12 * 1024, layout.PageBytes);
+    private ulong ShadowSelection(ulong unit, out bool inode)
     {
+        inode = false; shadowLeafPresent = false;
         if (!layout.Shadow || unit == layout.Anchor || unit == layout.Backup || unit == layout.Charset ||
             unit >= layout.CheckpointA && unit <= layout.CheckpointC) return unit;
         if ((unit & (layout.MetadataSpan - 1)) != 0 || unit >= layout.ShadowMapBase && unit < layout.ShadowMapEnd)
@@ -45,17 +67,23 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             ulong total = level == 0 ? layout.ShadowPairs : layout.ShadowNodes(level - 1);
             int shift = level == 0 ? layout.ShadowLeafShift : layout.ShadowBranchShift;
             uint entries = (uint)Math.Min(1UL << shift, total - (node << shift));
-            uint payload = level == 0 ? (entries + 7) >> 3 : (entries + 3) >> 2;
+            uint payload = level == 0 && !layout.DirectInodes ? (entries + 7) >> 3 : (entries + 3) >> 2;
             RawRead(physical, page);
             if (!VolumeCrc(page) || U16(page, 4) != (level == 0 ? 20 : 21) ||
                 U64(page, 16) != (0x8000000000000000UL | layout.DeviceSector(pair)) ||
                 U64(page, 24) != layout.VolumeId || U64(page, 32) == 0 || U64(page, 32) > generation ||
-                U16(page, 48) != entries || U16(page, 50) != level || U16(page, 52) != payload)
+                U32(page, 12) != (level == 0 && layout.DirectInodes ? 2u : 0u) || U16(page, 48) != entries || U16(page, 50) != level || U16(page, 52) != payload)
                 throw new InvalidDataException("Invalid selected shadow map node.");
             if (level == 0)
             {
                 uint bit = (uint)(pairIndex & ((1UL << shift) - 1));
                 if (bit >= entries) throw new InvalidDataException("Shadow leaf index overflow.");
+                shadowLeafPresent = true;
+                if (layout.DirectInodes)
+                {
+                    int value = (page[64 + (int)(bit >> 2)] >> (int)(6 - (bit & 3) * 2)) & 3;
+                    inode = (value & 2) != 0; return unit + (uint)(value & 1) * layout.Q;
+                }
                 return unit + (ulong)((page[64 + (int)(bit >> 3)] >> (int)(7 - (bit & 7))) & 1) * layout.Q;
             }
             uint child = (uint)((pairIndex >> (layout.ShadowLeafShift + (level - 1) * layout.ShadowBranchShift)) & ((1UL << shift) - 1));

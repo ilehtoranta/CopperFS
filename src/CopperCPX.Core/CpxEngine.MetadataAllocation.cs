@@ -53,7 +53,7 @@ public partial struct CpxEngine<TMemory>
             case 0:
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
             case 1:
-                if (!Control(p, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p) || count > 64)
+                if (!Control(p, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p) || count > ReserveCapacity)
                     return Fail(CpxError.Corrupt);
                 if (memory.Read32(cpxArenaBase + (MetadataRelease)) == 0)
                 {
@@ -83,7 +83,7 @@ public partial struct CpxEngine<TMemory>
                     for (uint n = 0; n < count; n++)
                         if ((((ulong)(((((ulong)(memory.Read32(((uint)(p + 72 + n * 8))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 72 + n * 8)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4))))))))))
                             return Fail(CpxError.Corrupt);
-                    if (count == 64)
+                    if (count == ReserveCapacity)
                         return ChangeAllocation(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4)))))), MetadataSpan, false, 3);
                     {
                         uint cpxWideAddress = (uint)(p + 72 + count * 8);
@@ -95,6 +95,7 @@ public partial struct CpxEngine<TMemory>
                     memory.Write16(p + 64, count + 1);
                 }
 
+                if (DirectInodes && R(MetadataRelease) != 0) SortInodeReserve(p);
                 return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), 3);
             case 3:
                 return Done();
@@ -189,7 +190,7 @@ public partial struct CpxEngine<TMemory>
             case 0:
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
             case 1:
-                if (!Control(p, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p) || memory.Read16(p + 64) > 64)
+                if (!Control(p, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p) || memory.Read16(p + 64) > ReserveCapacity)
                     return Fail(CpxError.Corrupt);
                 if (memory.Read16(p + 64) >= memory.Read32(cpxArenaBase + (RefillMinimum)))
                     return Done();

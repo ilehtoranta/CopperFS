@@ -85,6 +85,8 @@ the final group-zero bitmap at 4 KiB metadata size and was corrected before use.
 | A5, corrected nested continuation | 9,773,520 | 378,005,590 | Guest, ownership and complete payload checks pass |
 | A6, retained geometry and authenticated map cache | 8,415,830 | 376,429,610 | Guest, ownership and complete payload checks pass |
 | A7, geometry only in mapping phases and admitted owned publication | 8,179,710 | 376,099,050 | Guest, ownership and complete payload checks pass |
+| A8, checkpoint volume controls | 8,238,830 | 376,048,480 | Guest, ownership and complete payload checks pass |
+| A9, cached controls and discard on idle | 7,524,330 | 375,185,490 | Guest, ownership and complete payload checks pass |
 
 A5 is a functional integration checkpoint, not a performance improvement. It
 uses the same guest probe bytes as A3 (SHA-256
@@ -113,6 +115,40 @@ The focused shadow host set passes 36 cases; five additional cancellation cases
 cover map reads/writes, ordinary metadata writes and both barriers, followed by
 quiescent remount and independent ownership validation. Both compiled filesystem
 cases pass again. This still misses the performance target substantially.
+
+A8 introduces an explicit CPX5 feature value 2. Its checkpoint authenticates the
+complete volume state and 32-entry metadata reserve list, alongside the mapping
+root. These occupy 496 bytes including the common header, so separate control
+page writes and selected-copy reads are unnecessary. Feature value 1 remains
+readable and writable through the earlier paired-control path. The independent
+formatter/decoder and production reader agree on the layout without sharing the
+implementation. The existing object tree and 1 KiB metadata size remain.
+
+The A8 shadow host set passes 48 cases and its 19 focused compiled cases pass.
+New cases include state-only publication with no ordinary metadata writes, all
+sector/barrier cuts for that path, ownership-state extensions, legacy fixtures,
+and appended context storage with the compact four-page cache. The first A8
+mixed trial regresses because synthesized controls do not populate the cache
+used by fast-create planning. A9 corrects that integration and moves optional
+post-flush discard to the existing idle-maintenance path. Its 49 focused host
+cases pass, including a DOS packet check that flush persists writes and later
+idle maintenance still discards free space. A9 still trails A3 and both references.
+The full host snapshot passes 539 CPX, 438 FFS, 1,343 SFS, 18 Amiga and 32 storage
+cases, with three SFS media skips. The native snapshot has 90 passes, three
+startup-fixture failures and six ROM skips. The failures were traced to the fake
+Exec allocator returning arena `0x40008` inside the expanded handler code range
+`0x10000..0x49044`. The fixture now derives a nonoverlapping arena and emulates
+MEMF_CLEAR; all seven DMA allocation/cleanup cases pass on replay. Four focused
+compiled filesystem cases now also cover control-only publication. A complete
+solution recheck passed 2,465 cases, with zero failures and nine skips, after that
+fixture correction. Its native portion passed 95 cases with six ROM skips.
+CopperStart's replay
+suite was rebuilt against this worktree and passed all 141 selected cases.
+
+An A8 streaming verification profile confirms the existing one-extent read fast
+path is used for all 32 reads. No idle-maintenance operation runs during that
+phase; timer polling is a small part of the measured handler CPU time. This
+rules out background discard as the principal streaming-read bottleneck.
 
 The initial generation-only selector failed a new crash/retry regression: an
 abandoned page could reappear when a different transaction reused its generation.
@@ -146,3 +182,32 @@ skipped and are not passes. The subsequent shared-checksum changes separately
 pass the 21 host and 17 HUNK component cases, including initialized table use.
 CopperStart's unchanged geometry/buffer replay binary was rerun: 141 passes.
 No full-ROM campaign or physical-media qualification is claimed for this branch.
+
+A10 introduces feature 3 with separate direct inode pages and a two-bit inode
+catalogue in the authenticated selector map. Full 64-bit IDs encode a slot hint
+and serial; owner and record IDs must match exactly, including after slot reuse.
+The independent formatter seeds the root catalogue at generation one. Its
+read-only decoder enumerates authenticated inode flags, retaining complete
+namespace, allocation ownership and payload verification without trusting raw
+data as metadata. Features 1 and 2 retain their original decoding and mutation
+paths. This candidate retains metadata pages of at least 1 KiB.
+
+A10 passes 31 focused host and six compiled filesystem cases, including crash
+and changed-write-set retry, deletion, stale identities, 4 KiB stack guards and
+zero managed allocation sites. It regresses to 9,853,040 mixed and 376,807,640
+streaming cycles because it declines the previous warm create path. A11 restores
+a bounded create plan for direct inodes and retains identity geometry across
+steps. It also constructs CRC tables from fixed polynomial basis values and
+prepares a discovery checksum table in unused caller-owned scratch; all on-disk
+checksum rules remain the same. Independent polynomial division validates every
+table entry. A11 passes 93 focused host, three additional checksum and one
+directory split/retirement/deletion case, plus 13 compiled filesystem/DMA cases.
+
+A11 single unprofiled screening results are **7,550,000 mixed** and
+**375,708,250 streaming** cycles. Both guest and persisted payload/ownership
+checks pass. These results still lose to both references and the earlier A3
+CPX4 candidate. The performance target remains unmet. Diagnostic profiles show
+cost spread across page copying, continuation/publication bookkeeping, selected
+map traversal and mount validation; the first direct-inode integration is not
+an accepted replacement. Separate full-ROM and physical-media gates have not
+been run for these candidates.

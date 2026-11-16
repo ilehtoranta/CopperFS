@@ -56,6 +56,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     private bool TreeGet(ulong root, TreeKind kind, ulong owner, ulong high, ulong low, scoped Span<byte> record)
     {
+        if (layout.DirectInodes && kind == TreeKind.Object) return GetDirectInode(root, high, record);
         if (root == 0) return false;
         int slot = Seek(root, kind, owner, high, low, out _), width = LeafBytes(kind);
         if (slot == U16(B(0), 48) || CompareKey(B(0).Slice(64 + slot * width, width), kind, high, low) != 0) return false;
@@ -132,7 +133,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     // Upper/lower-bound scan across leaves, using the scalar path rather than sibling links.
     private bool TreeNext(ulong root, TreeKind kind, ulong owner, ulong high, ulong low, bool inclusive, scoped Span<byte> record)
-        => WalkOne(root, kind, owner, high, low, inclusive, false, record);
+        => layout.DirectInodes && kind == TreeKind.Object ? NextDirectInode(root, high, inclusive, record, out _) : WalkOne(root, kind, owner, high, low, inclusive, false, record);
     private bool TreePruneEmpty(ref ulong root, TreeKind kind, ulong owner)
     {
         if (root == 0) return false;

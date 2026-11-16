@@ -147,7 +147,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (MountEpoch), epoch);
         memory.Write32(cpxArenaBase + (ReadOnlyAt), readOnly ? 1u : 0u);
         if (!previous) memory.Write32(Arena + CheckpointPolicy, 0);
-        if (ShadowVolume) memory.Write32(ShadowStorage, 0);
+        if (ShadowVolume) { memory.Write32(ShadowStorage, 0); memory.Write32(ShadowStorage + 56, 0); }
         InitializeGeometry();
         ResetBufferedContext(previous);
         if (!previous || previousPage != (memory.Read32(cpxArenaBase + (PageBytes))))
@@ -675,57 +675,7 @@ public partial struct CpxEngine<TMemory>
     // control pages have large zero-filled regions; the exact disk checksum is
     // unchanged. The optional table replaces eight clean cache pages and saves
     // memory overall. Enable runs only while all scratch is caller-owned.
-    private void InitializeZeroCrcTable()
-    {
-        uint cpxArenaBase = Arena;
-        uint columns = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(5)) * 4))), table = (memory.Read32(cpxArenaBase + (GeometryCrc))), zeros = memory.Read32(cpxArenaBase + (BufferAddress));
-        for (uint bit = 0; bit < 32; bit++)
-        {
-            uint crc = 1u << (int)bit;
-            for (uint n = 0; n < 64; n++)
-                crc = (crc >> 8) ^ memory.Read32(table + (crc & 255) * 4);
-            memory.Write32(columns + bit * 4, crc);
-        }
-
-        for (uint slice = 0; slice < 4; slice++)
-        {
-            uint start = zeros + slice * 1024;
-            memory.Write32(start, 0);
-            for (uint value = 1; value < 256; value++)
-            {
-                uint bit = 0, mask = value;
-                while ((mask & 1) == 0)
-                {
-                    bit++;
-                    mask >>= 1;
-                }
-
-                memory.Write32(start + value * 4, memory.Read32(start + (value & (value - 1)) * 4) ^ memory.Read32(columns + (slice * 8 + bit) * 4));
-            }
-        }
-    }
-
-    private void InitializeCrcTable()
-    {
-        uint table = (memory.Read32(Arena + (GeometryCrc)));
-        for (uint n = 0; n < 256; n++)
-        {
-            uint crc = n;
-            for (uint bit = 0; bit < 8; bit++)
-                crc = (crc >> 1) ^ (0x82f63b78u & (0u - (crc & 1)));
-            memory.Write32(table + n * 4, crc);
-        }
-
-        for (uint n = 0; n < 256; n++)
-        {
-            uint crc = memory.Read32(table + n * 4);
-            for (uint slice = 1; slice < 4; slice++)
-            {
-                crc = (crc >> 8) ^ memory.Read32(table + (crc & 255) * 4);
-                memory.Write32(table + slice * 1024 + n * 4, crc);
-            }
-        }
-    }
+    private void InitializeCrcTable() => InitializeCrcTableAt(CrcTable);
 
     // Anchor discovery precedes Initialize and may inspect a small standalone
     // buffer. It must not assume that a mount arena or checksum table exists.
@@ -890,14 +840,36 @@ public partial struct CpxEngine<TMemory>
     private bool AnchorFieldsValid(uint p)
     {
         uint cpxArenaBase = Arena;
-        return AnchorFieldsValid(p, 1u << (int)memory.Read32(cpxArenaBase + (UnitShift)), (memory.Read32(cpxArenaBase + (PageBytes))), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), 1u << (int)memory.Read32(cpxArenaBase + (SectorShift)));
+        bool valid = AnchorFieldsValid(p, 1u << (int)memory.Read32(cpxArenaBase + (UnitShift)), (memory.Read32(cpxArenaBase + (PageBytes))), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), 1u << (int)memory.Read32(cpxArenaBase + (SectorShift)));
+        if (valid && ShadowVolume)
+        {
+            uint features = (uint)GetWide(p + 96), previous = memory.Read32(ShadowStorage + 56);
+            if (previous != 0 && previous != features) return false;
+            memory.Write32(ShadowStorage + 56, features);
+            if (previous == 0 && features == 3)
+            {
+                if (CpxShadowMapGeometry.TryCreate(1u << (int)R(SectorShift), P, RW(Capacity),
+                    524288UL >> (int)R(SectorShift), out var geometry, true) != CpxError.None) return false;
+                geometry.Store(ref memory, ShadowStorage + 64);
+                ulong start = 2097152UL >> (int)R(UnitShift);
+                ulong end = (ulong)geometry.MapEndSector >> (int)(R(UnitShift) - R(SectorShift));
+                if (end > start) start = ((end + 65535) >> 16) << 16;
+                PutWide(ShadowStorage + 40, start);
+            }
+        }
+        return valid;
     }
 
     private bool AnchorFieldsValid(uint p, uint unit, uint page, ulong units, uint sector)
     {
         int shift = CpxArena.Shift(unit);
         uint anchor = 65536u >> shift, q = page >> shift;
-        return memory.Read32(p + 80) == unit && memory.Read32(p + 84) == page && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 88))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 88)) + 4))))))) == ((ulong)(units))) && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 96))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 96)) + 4))))))) == ((ulong)(((ulong)(1))))) && memory.Read32(p + 104) == sector && memory.Read32(p + 108) == 1 && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 64))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64)) + 4))))))) == 0) && !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 72))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 72)) + 4))))))) == 0) && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 112))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 112)) + 4))))))) == ((ulong)(((ulong)(anchor + 8 * q))))) && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 120))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 120)) + 4))))))) == ((ulong)(((ulong)(anchor + (memory.Read16(p + 6) == 5 ? 4u : 3u) * q)))));
+        bool shadow = memory.Read16(p + 6) == 5;
+        ulong features = GetWide(p + 96);
+        return memory.Read32(p + 80) == unit && memory.Read32(p + 84) == page && GetWide(p + 88) == units &&
+            (features == 1 || shadow && features is 2 or 3) && memory.Read32(p + 104) == sector && memory.Read32(p + 108) == 1 &&
+            GetWide(p + 64) == 0 && GetWide(p + 72) != 0 && GetWide(p + 112) == anchor + 8 * q &&
+            GetWide(p + 120) == anchor + (shadow ? 4u : 3u) * q;
     }
 
     // One CRC per candidate. A torn copy can be skipped. A CRC-valid CPX4
@@ -905,15 +877,24 @@ public partial struct CpxEngine<TMemory>
     public CpxError InspectAnchor(uint buffer, uint page, uint sector, Wide capacity, Wide location, out uint unit, out Wide identity)
         => InspectAnchor(buffer, page, sector, capacity, location, out unit, out identity, out _);
 
-    public CpxError InspectAnchor(uint buffer, uint page, uint sector, Wide capacity, Wide location, out uint unit, out Wide identity, out uint version)
+    public CpxError InspectAnchor(uint buffer, uint page, uint sector, Wide capacity, Wide location, out uint unit, out Wide identity, out uint version, uint preparedChecksum = 0)
     {
         unit = 0;
         identity = default;
         version = memory.Read32(buffer) == 0x43505835u ? 5u : 4u;
         if (!CpxArena.ValidUnit(page) || page < 1024 || !CpxArena.ValidUnit(sector) || sector > page)
             return CpxError.InvalidArgument;
-        if (memory.Read32(buffer) != CpxArena.Magic && memory.Read32(buffer) != 0x43505835u || memory.Read32(buffer + 8) != AnchorCrc(buffer, page))
+        if (memory.Read32(buffer) != CpxArena.Magic && memory.Read32(buffer) != 0x43505835u)
             return CpxError.NotFound;
+        if (preparedChecksum != 0 && ((preparedChecksum & 3) != 0 || preparedChecksum > uint.MaxValue - 4096)) return CpxError.InvalidArgument;
+        uint checksum;
+        if (preparedChecksum == 0) checksum = AnchorCrc(buffer, page);
+        else
+        {
+            var input = new CpxCrcInput { Buffer = buffer, Bytes = page, Table = preparedChecksum, Word = Arena + 4080, Page = true };
+            checksum = CrcKernel(ref memory, in input);
+        }
+        if (memory.Read32(buffer + 8) != checksum) return CpxError.NotFound;
         uint candidate = memory.Read32(buffer + 80);
         if (!CpxArena.ValidUnit(candidate) || candidate < sector || (candidate < 1024 ? 1024 : candidate) != page || memory.Read16(buffer + 4) != 1 || memory.Read16(buffer + 6) != version || memory.Read16(buffer + 52) != 64 || !(((ulong)(((((ulong)(memory.Read32(((uint)(buffer + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(buffer + 24)) + 4))))))) == 0))
             return CpxError.Corrupt;

@@ -134,7 +134,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (FastPointer), (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) ? (memory.Read32(cpxArenaBase + 4092)) + 448 : 0u);
         if (memory.Read32(cpxArenaBase + (BufferAddress)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))))
         {
-            memory.Write32((memory.Read32(cpxArenaBase + 4084)) + 4, memory.Read32(cpxArenaBase + (BufferBytes)) >= BufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))) ? 8u : 4u);
+            memory.Write32((memory.Read32(cpxArenaBase + 4084)) + 4, ShadowVolume ? memory.Read32(ShadowStorage + 48) : memory.Read32(cpxArenaBase + (BufferBytes)) >= BufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))) ? 8u : 4u);
             ClearBufferedObjects();
             ClearBufferedClean();
         }
@@ -208,7 +208,7 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         uint first = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), bytes = (memory.Read32(cpxArenaBase + (PageBytes)));
-        if (!(memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || p < first || p > (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(5)) * 4))) || ((p - first) & (bytes - 1)) != 0)
+        if (!(memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && !(ShadowRootControl && CanCacheMetadata) || p < first || p > (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(5)) * 4))) || ((p - first) & (bytes - 1)) != 0)
             return;
         memory.Write32(cpxArenaBase + (BufferTrustedMask), memory.Read32(cpxArenaBase + (BufferTrustedMask)) & ~(1u << (int)((p - first) >> (int)memory.Read32(cpxArenaBase + (GeometryShift)))));
     }
@@ -234,7 +234,7 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         uint first = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), bytes = (memory.Read32(cpxArenaBase + (PageBytes)));
-        if (!(memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || p < first || p > (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(5)) * 4))) || ((p - first) & (bytes - 1)) != 0)
+        if (!(memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && !(ShadowRootControl && CanCacheMetadata) || p < first || p > (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(5)) * 4))) || ((p - first) & (bytes - 1)) != 0)
             return false;
         uint slot = (p - first) >> (int)memory.Read32(cpxArenaBase + (GeometryShift));
         return (memory.Read32(cpxArenaBase + (BufferTrustedMask)) & (1u << (int)slot)) != 0 && (((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(BufferTrustedKeys + slot * 8)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(BufferTrustedKeys + slot * 8)) + 4)))))))) == ((ulong)(address)));

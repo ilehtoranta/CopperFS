@@ -12,7 +12,7 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
     public uint Arena;
     private const uint Signature = 0, Status = 4, ErrorAt = 8, Level = 12,
         Node = 16, Physical = 24, Pair = 32, Generation = 40, Identity = 48,
-        Scratch = 56, HaveRead = 60, Requested = 64, Copy = 68, ChecksumTable = 72, ChecksumZeros = 76, ChecksumWord = 80, Authenticated = 84;
+        Scratch = 56, HaveRead = 60, Requested = 64, Copy = 68, ChecksumTable = 72, ChecksumZeros = 76, ChecksumWord = 80, Authenticated = 84, Inode = 88;
 
     public CpxShadowMapReadCursor(TMemory memory, uint arena, CpxShadowMapGeometry geometry)
     { this.memory = memory; Arena = arena; this.geometry = geometry; }
@@ -22,6 +22,7 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
     private void Put(uint at, ulong value) { memory.Write32(at, (uint)(value >> 32)); memory.Write32(at + 4, (uint)value); }
     public CpxError Error => (CpxError)R(ErrorAt);
     public uint SelectedCopy => R(Copy);
+    public bool IsInode => R(Inode) != 0;
     public Wide ReadSector => G(Arena + Physical);
     public uint ReadBuffer => R(Scratch);
     public uint ReadBytes => geometry.PageBytes;
@@ -75,9 +76,10 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
         if (R(HaveRead) == 0) { W(Requested, 1); return StepResult.NeedIo; }
         uint buffer = R(Scratch), level = R(Level);
         ulong node = G(Arena + Node), pair = geometry.NodePairSector(level, node);
-        uint entries = geometry.Entries(level, node), payload = level == 0 ? (entries + 7) >> 3 : (entries + 3) >> 2;
+        uint entries = geometry.Entries(level, node), payload = level == 0 && !geometry.HasInodeCatalogue ? (entries + 7) >> 3 : (entries + 3) >> 2;
         if (entries == 0 || memory.Read32(buffer) != CpxShadowCommit<TMemory>.Magic || memory.Read16(buffer + 6) != 5
             || memory.Read16(buffer + 4) != (level == 0 ? 20u : 21u)
+            || memory.Read32(buffer + 12) != (level == 0 && geometry.HasInodeCatalogue ? 2u : 0u)
             || G(buffer + 16) != (0x8000000000000000ul | pair) || G(buffer + 24) != G(Arena + Identity)
             || G(buffer + 32) == 0 || G(buffer + 32) > G(Arena + Generation)
             || memory.Read16(buffer + 48) != entries || memory.Read16(buffer + 50) != level
@@ -88,7 +90,12 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
         {
             uint bit = (uint)(index & (geometry.LeafEntries - 1));
             if (bit >= entries) return Fail(CpxError.Corrupt);
-            W(Copy, ((uint)memory.Read8(buffer + 64 + (bit >> 3)) >> (int)(7 - (bit & 7))) & 1u);
+            if (geometry.HasInodeCatalogue)
+            {
+                uint value = ((uint)memory.Read8(buffer + 64 + (bit >> 2)) >> (int)(6 - (bit & 3) * 2)) & 3u;
+                W(Copy, value & 1); W(Inode, value >> 1);
+            }
+            else W(Copy, ((uint)memory.Read8(buffer + 64 + (bit >> 3)) >> (int)(7 - (bit & 7))) & 1u);
             W(Status, 2); return StepResult.Complete;
         }
         uint shift = geometry.LeafShift + (level - 1) * geometry.BranchShift;

@@ -46,7 +46,7 @@ public partial struct CpxEngine<TMemory>
             case 156:
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 151);
             case 151:
-                if (!Control((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)))) || memory.Read16((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))) + 64) > 64)
+                if (!Control((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)))) || memory.Read16((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))) + 64) > ReserveCapacity)
                     return Fail(CpxError.Corrupt);
                 if (memory.Read16((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))) + 64) < 30)
                     return Reject(CpxError.ReserveExhausted);

@@ -46,7 +46,7 @@ public partial struct CpxEngine<TMemory>
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 1);
             case 1:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), count = memory.Read16(reserve + 64);
-                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > 64 || memory.Read16(reserve + 52) != 520)
+                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > ReserveCapacity || memory.Read16(reserve + 52) != 520)
                     return Fail(CpxError.Corrupt);
                 return ReadStaged(Bitmap(at), p, 2);
             case 2:
@@ -152,7 +152,7 @@ public partial struct CpxEngine<TMemory>
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 1);
             case 1:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), count = memory.Read16(reserve + 64);
-                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > 64 || memory.Read16(reserve + 52) != 520)
+                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > ReserveCapacity || memory.Read16(reserve + 52) != 520)
                     return Fail(CpxError.Corrupt);
                 ulong end = at + memory.Read32(cpxArenaBase + (TrimCount));
                 for (uint n = 0; n < count; n++)

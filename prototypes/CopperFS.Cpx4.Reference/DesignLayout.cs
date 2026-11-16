@@ -3,12 +3,13 @@ using System.Buffers.Binary;
 namespace CopperFS.Cpx4.Reference;
 
 // CPX4 is an unregistered, incompatible research format. Addresses are allocation units.
-internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Units, ulong VolumeId, ushort DiskVersion = 4)
+internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Units, ulong VolumeId, ushort DiskVersion = 4, bool RootControl = false, bool DirectInodes = false)
 {
     internal const uint Magic = 0x43505834;
     internal const ushort Version = 4;
     internal bool Shadow => DiskVersion == 5;
     internal uint DiskMagic => Shadow ? 0x43505835u : Magic;
+    internal ulong Features => DirectInodes ? 3UL : RootControl ? 2UL : 1UL;
     internal const int HeaderBytes = 64, JournalImages = 64, OperationImages = 42;
     internal const int MaxHeight = 8, ReserveCapacity = 64, ReserveTarget = 32, ReserveMargin = 12;
     internal const int NameBytes = 768, InlineBytes = 160, GroupUnits = 65536, BitmapUnits = 4096;
@@ -55,7 +56,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     {
         if (SectorBytes is < 512 or > 4096 || (SectorBytes & (SectorBytes - 1)) != 0 ||
             UnitBytes < SectorBytes || UnitBytes > 4096 || (UnitBytes & (UnitBytes - 1)) != 0 ||
-            DiskVersion is not (4 or 5) || VolumeId == 0 || Units < (4194304UL >> UnitShift) || Units > AddressMath.Right(ulong.MaxValue, UnitShift) ||
+            DiskVersion is not (4 or 5) || RootControl && !Shadow || DirectInodes && !RootControl || VolumeId == 0 || Units < (4194304UL >> UnitShift) || Units > AddressMath.Right(ulong.MaxValue, UnitShift) ||
             Shadow && (ShadowHeight > MaxHeight || FirstMetadata + 33 * MetadataSpan >= Backup))
             throw new ArgumentException("Unsupported CPX4 geometry.");
     }
@@ -77,9 +78,10 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     }
     internal static int PayloadBytes(ReadOnlySpan<byte> p) => (PageType)U16(p, 4) switch
     {
-        PageType.Anchor => 64, PageType.Checkpoint => U16(p,6) == 5 ? 32 : 24, PageType.State => U16(p,52) is 128 or 136?U16(p,52):48,
+        PageType.Anchor => 64, PageType.Checkpoint => U16(p,6) == 5 ? U16(p,52) == 432 ? 432 : 32 : 24, PageType.State => U16(p,52) is 128 or 136?U16(p,52):48,
         PageType.Reserve => 520, PageType.Charset => 4, PageType.Group => 80, PageType.Bitmap => 512,
         PageType.JournalHeader or PageType.Commit => 40, PageType.Descriptor => U16(p, 48) * 32,
+        PageType.Inode => 256, PageType.Tombstone => 0,
         PageType.ObjectLeaf => U16(p, 48) * 256, PageType.DirectoryLeaf => U16(p, 48) * 128,
         PageType.ExtentLeaf => U16(p, 48) * 24, PageType.DirectoryBranch => U16(p, 48) * 24,
         PageType.ObjectBranch or PageType.ExtentBranch => U16(p, 48) * 16,
@@ -125,7 +127,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     // Independent arithmetic; this reference project intentionally has no dependency
     // on the production CPX5 map geometry or cursors.
     internal int ShadowPairShift => AddressMath.PowerShift((uint)(2 * PageBytes / UnitBytes));
-    internal int ShadowLeafShift => AddressMath.PowerShift((uint)PageBytes) + 2;
+    internal int ShadowLeafShift => AddressMath.PowerShift((uint)PageBytes) + (DirectInodes ? 1 : 2);
     internal int ShadowBranchShift => AddressMath.PowerShift((uint)PageBytes) + 1;
     internal ulong ShadowPairs => Units >> ShadowPairShift;
     internal ulong ShadowMapBase => 524288UL >> UnitShift;
@@ -151,7 +153,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
 internal enum PageType : ushort
 {
     Anchor = 1, Checkpoint, State, Reserve, Charset, Group, Bitmap, JournalHeader, Descriptor, Commit,
-    ObjectLeaf, ObjectBranch, DirectoryLeaf, DirectoryBranch, ExtentLeaf, ExtentBranch, Name, Attribute, Symlink
+    ObjectLeaf, ObjectBranch, DirectoryLeaf, DirectoryBranch, ExtentLeaf, ExtentBranch, Name, Attribute, Symlink, SelectorLeaf, SelectorBranch, BlobTail, Inode, Tombstone
 }
 internal enum TreeKind { Object, Directory, Extent }
 internal enum Operation { Create, Link, Rename, Unlink, Attribute, Data, Reclaim, Prune, Refill, Probe }

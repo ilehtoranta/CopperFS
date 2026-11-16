@@ -9,12 +9,14 @@ public readonly struct CpxShadowMapGeometry
     public uint PageSectors => PageBytes / SectorBytes;
     public uint LeafEntries => 1u << (int)LeafShift;
     public uint BranchEntries => 1u << (int)BranchShift;
+    public bool HasInodeCatalogue => LeafShift == BranchShift;
+    public uint LeafBits => HasInodeCatalogue ? 2u : 1u;
 
-    private CpxShadowMapGeometry(uint sector, uint page, uint height, ulong capacity, ulong start, ulong end)
+    private CpxShadowMapGeometry(uint sector, uint page, uint height, ulong capacity, ulong start, ulong end, uint leafShift)
     {
         SectorBytes = sector; PageBytes = page; Height = height;
         PairShift = (uint)(CpxArena.Shift(page) - CpxArena.Shift(sector) + 1);
-        LeafShift = (uint)CpxArena.Shift(page) + 2;
+        LeafShift = leafShift;
         BranchShift = (uint)CpxArena.Shift(page) + 1;
         CapacitySectors = capacity; MapBaseSector = start; MapEndSector = end;
         PairCount = capacity >> (int)PairShift;
@@ -47,13 +49,13 @@ public readonly struct CpxShadowMapGeometry
     { memory.Write32(at, (uint)(value >> 32)); memory.Write32(at + 4, (uint)value); }
 
     public static CpxError TryCreate(uint sectorBytes, uint pageBytes, Wide capacitySectors,
-        Wide mapBaseSector, out CpxShadowMapGeometry geometry)
+        Wide mapBaseSector, out CpxShadowMapGeometry geometry, bool inodeCatalogue = false)
     {
         geometry = default;
         if (!CpxArena.ValidUnit(sectorBytes) || !CpxArena.ValidUnit(pageBytes)
             || sectorBytes > pageBytes) return CpxError.InvalidArgument;
         int sectorShift = CpxArena.Shift(sectorBytes), pageShift = CpxArena.Shift(pageBytes);
-        int pairShift = pageShift - sectorShift + 1, leafShift = pageShift + 2, branchShift = pageShift + 1;
+        int pairShift = pageShift - sectorShift + 1, leafShift = pageShift + (inodeCatalogue ? 1 : 2), branchShift = pageShift + 1;
         ulong capacity = capacitySectors, start = mapBaseSector;
         if (capacity == 0 || capacity > (ulong.MaxValue >> sectorShift) || start == 0
             || start >= capacity || (start & ((1ul << pairShift) - 1)) != 0)
@@ -68,7 +70,7 @@ public readonly struct CpxShadowMapGeometry
             total += count; height++;
         }
         if (count != 1 || total > ((capacity - start) >> pairShift)) return CpxError.InvalidArgument;
-        geometry = new(sectorBytes, pageBytes, height, capacity, start, start + (total << pairShift));
+        geometry = new(sectorBytes, pageBytes, height, capacity, start, start + (total << pairShift), (uint)leafShift);
         return CpxError.None;
     }
 

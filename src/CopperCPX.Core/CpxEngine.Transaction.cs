@@ -162,7 +162,7 @@ public partial struct CpxEngine<TMemory>
         {
             Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)((uint)slot)) * (memory.Read32(cpxArenaBase + (PageBytes)))), p, (memory.Read32(cpxArenaBase + (PageBytes))));
             TrustBufferedPage(p, target);
-            if (type == 11)
+            if (type == 11 || DirectInodes && type is 23 or 24)
                 CacheBufferedObjects(p, target);
             memory.Write32(cpxArenaBase + (Phase), nextPhase);
             return StepResult.Pending;

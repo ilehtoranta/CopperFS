@@ -176,6 +176,7 @@ public partial struct CpxEngine<TMemory>
     // without another durable queue record or any unbounded in-memory list.
     private StepResult PruneObjectsStep()
     {
+        if (DirectInodes) return Done();
         uint cpxArenaBase = Arena;
         uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)));
         switch (memory.Read32(cpxArenaBase + (Phase)))

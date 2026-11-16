@@ -50,6 +50,7 @@ public partial struct CpxEngine<TMemory>
 
     private StepResult TreeMutationStep()
     {
+        if (DirectInodes && R(TreeKindAt) == (uint)CpxTreeKind.Object) return DirectMutationStep();
         uint cpxArenaBase = Arena;
         uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(1)) * 4))), source = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), right = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(2)) * 4))), width = (memory.Read32(cpxArenaBase + (MutationLevel)) == 0 ? (memory.Read32(cpxArenaBase + (TreeKindAt)) == 0 ? 256u : memory.Read32(cpxArenaBase + (TreeKindAt)) == 1 ? 128u : 24u) : (memory.Read32(cpxArenaBase + (TreeKindAt)) == (uint)CpxTreeKind.Directory ? 16u : 8u) + 8), count = memory.Read32(cpxArenaBase + (MutationCount)), slot = memory.Read32(cpxArenaBase + (MutationSlot));
         switch (memory.Read32(cpxArenaBase + (Phase)))
@@ -270,6 +271,7 @@ public partial struct CpxEngine<TMemory>
 
     private StepResult SaveObjectStep()
     {
+        if (DirectInodes) return DirectSaveObjectStep();
         uint cpxArenaBase = Arena;
         switch (memory.Read32(cpxArenaBase + (Phase)))
         {

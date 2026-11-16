@@ -131,6 +131,17 @@ public struct CpxShadowMapWriteCursor<TMemory> where TMemory : struct, ICpxMemor
                 ulong index = geometry.PairIndex(Pair(ordinal));
                 if (level == 0)
                 {
+                    if (geometry.HasInodeCatalogue)
+                    {
+                        uint element = (uint)(index & (geometry.LeafEntries - 1)), byteAt = image + 64 + (element >> 2), shiftAt = 6 - (element & 3) * 2;
+                        uint oldByte = memory.Read8(byteAt), previous = (oldByte >> (int)shiftAt) & 3u;
+                        uint descriptorAt = Descriptor(ordinal), sourceAt = memory.Read32(descriptorAt + 16);
+                        uint inode = memory.Read16(sourceAt + 4) == 23 && G(sourceAt + 24) != 0 ? 2u : 0u;
+                        uint entry = inode | (1u - (previous & 1));
+                        memory.Write32(descriptorAt + 20, previous & 1);
+                        memory.Write8(byteAt, (byte)((oldByte & ~(3u << (int)shiftAt)) | entry << (int)shiftAt));
+                        memory.Write32(frame + Next, ordinal + 1); return StepResult.Pending;
+                    }
                     uint bit = (uint)(index & (geometry.LeafEntries - 1)), location = image + 64 + (bit >> 3), mask = 0x80u >> (int)(bit & 7);
                     uint value = memory.Read8(location), oldCopy = (value & mask) == 0 ? 0u : 1u;
                     memory.Write32(Descriptor(ordinal) + 20, oldCopy);
@@ -165,21 +176,23 @@ public struct CpxShadowMapWriteCursor<TMemory> where TMemory : struct, ICpxMemor
     {
         for (uint at = 0; at < geometry.PageBytes; at += 4) memory.Write32(image + at, 0);
         memory.Write32(image, CpxShadowCommit<TMemory>.Magic); memory.Write16(image + 4, level == 0 ? 20u : 21u); memory.Write16(image + 6, 5);
+        memory.Write32(image + 12, level == 0 && geometry.HasInodeCatalogue ? 2u : 0u);
         Put(image + 16, 0x8000000000000000ul | (ulong)geometry.NodePairSector(level, index));
         Put(image + 24, G(Arena + Identity)); Put(image + 32, G(Arena + Generation) + 1);
         uint entries = geometry.Entries(level, index);
         memory.Write16(image + 48, entries); memory.Write16(image + 50, level);
-        memory.Write16(image + 52, level == 0 ? (entries + 7) >> 3 : (entries + 3) >> 2);
+        memory.Write16(image + 52, level == 0 && !geometry.HasInodeCatalogue ? (entries + 7) >> 3 : (entries + 3) >> 2);
     }
     private bool ValidNode(uint image, uint level, ulong index)
     {
         uint entries = geometry.Entries(level, index);
         return entries != 0 && memory.Read32(image) == CpxShadowCommit<TMemory>.Magic && memory.Read16(image + 6) == 5
             && memory.Read16(image + 4) == (level == 0 ? 20u : 21u)
+            && memory.Read32(image + 12) == (level == 0 && geometry.HasInodeCatalogue ? 2u : 0u)
             && G(image + 16) == (0x8000000000000000ul | (ulong)geometry.NodePairSector(level, index)) && G(image + 24) == G(Arena + Identity)
             && G(image + 32) != 0 && G(image + 32) <= G(Arena + Generation)
             && memory.Read16(image + 48) == entries && memory.Read16(image + 50) == level
-            && memory.Read16(image + 52) == (level == 0 ? (entries + 7) >> 3 : (entries + 3) >> 2)
+            && memory.Read16(image + 52) == (level == 0 && !geometry.HasInodeCatalogue ? (entries + 7) >> 3 : (entries + 3) >> 2)
             && memory.Read32(image + 8) == Crc(image);
     }
     private uint Crc(uint buffer)

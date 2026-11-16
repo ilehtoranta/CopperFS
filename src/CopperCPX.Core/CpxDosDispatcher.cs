@@ -349,7 +349,7 @@ public partial struct CpxDosDispatcher<TMemory>
             case 20:
                 return FinishTransfer(0);
             case 21:
-                if (action == 27 && !(engine.IsReadOnly || memory.Read32(cpxArenaBase + 512 + (SoftwareProtected)) != 0))
+                if (action == 27 && !engine.PreferIdleDiscard && !(engine.IsReadOnly || memory.Read32(cpxArenaBase + 512 + (SoftwareProtected)) != 0))
                     return Start(engine.BeginOperation(CpxOperation.TrimFree), 26);
                 return Finish(uint.MaxValue);
             case 22:

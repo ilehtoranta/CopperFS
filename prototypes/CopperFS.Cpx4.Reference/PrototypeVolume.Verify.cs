@@ -19,6 +19,13 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     private ulong MarkTree(ulong root, TreeKind kind, ulong owner, ulong window)
     {
+        if (layout.DirectInodes && kind == TreeKind.Object)
+        {
+            using var inodeFrame = RentRecords(256); ulong previous = 0, count = 0;
+            while (NextDirectInode(root, previous, false, inodeFrame.Bytes, out var at))
+            { previous = U64(inodeFrame.Bytes, 0); MarkOwned(at, layout.MetadataSpan, window); count++; }
+            return count;
+        }
         if (root == 0) return 0;
         int depth = 0; ulong address = root, pages = 0; int expected = -1;
         while (true)
