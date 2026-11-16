@@ -1,8 +1,12 @@
 # CopperNova architecture experiment, 16 November 2026
 
-The performance objective is active and unmet. This isolated worktree starts
+The performance objective remains unmet. Work was wrapped up at the user's
+request after A86 screening and focused native qualification. The latest fully
+qualified source checkpoint is A83, commit `2d7490e`; A86 remains a separate
+experimental worktree without full solution qualification. No benchmark or test
+jobs remain running. This isolated worktree starts
 from the qualified CPX4 checkpoint plus the V26 source patch. The first three candidates
-changes buffered retirement, with an explicit opt-in and unchanged default
+change buffered retirement, with an explicit opt-in and unchanged default
 portable policy. It does not change the on-disk format or native allocation bound.
 The native handler opts into the experimental policy; it is not a release.
 The subsequent CPX5 experiments use an explicit incompatible format and separate
@@ -1084,3 +1088,20 @@ The 272,916-byte HUNK has 87 exact archived inputs. Screens pass with canonical
 media and complete independent checks at 4,716,370 mixed and 369,040,040 streaming
 cycles. It saves approximately 116,000 streaming cycles against A83, but mixed
 is slightly slower. It remains an unretained intermediate; the goal is unmet.
+
+A86 combines A85 with omission of the parent scratch-record copy only during
+fused lookup/object reads. That continuation immediately reads the target
+object; standalone lookup retains its parent record. All 85 focused host cases
+pass. The expanded 20-case lease set also passes across 512-, 1,024-, 2,048- and
+4,096-byte units, including six geometry cases beyond that focused set. Both
+source-exact actual-HUNK partial ROM gates pass. The focused 70-case compiled
+native run passes in 9 minutes 45 seconds. Its 272,924-byte HUNK has 87 exact
+archived inputs.
+
+Single-trial screens pass with canonical durable media and full independent
+payload/ownership checks at 4,708,260 mixed and 369,030,930 streaming cycles.
+Both improve over the qualified A83 checkpoint, but still lose to FFS in both
+workloads and SFS in mixed. A86 has no full Release solution qualification and
+is not integrated into the qualified source branch. At the user's request to
+finish and report status, further redesign and qualification have stopped.
+The performance objective has not been achieved.
