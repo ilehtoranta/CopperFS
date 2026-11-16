@@ -36,7 +36,11 @@ public partial struct CpxEngine<TMemory> where TMemory:struct,ICpxMemory
                 while (bytes - n >= 64)
                 {
                     uint end = n + 64, scan = n;
-                    for (; scan < end; scan += 4) if (memory.Read32(buffer + scan) != 0) break;
+                    for (; scan < end; scan += 16)
+                    {
+                        uint at = buffer + scan;
+                        if ((memory.Read32(at) | memory.Read32(at + 4) | memory.Read32(at + 8) | memory.Read32(at + 12)) != 0) break;
+                    }
                     if (scan == end)
                     {
                         memory.Write32(word, crc);

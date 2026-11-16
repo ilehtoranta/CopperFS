@@ -90,4 +90,40 @@ public class CachedResizePacketTests
         byte[] bytes = new byte[8192]; Assert.Equal(6003, check.Read((ulong)f.Id, 0, bytes));
         for (int n = 0; n < 6003; n++) Assert.Equal((byte)(n * 17 + 3), bytes[n]);
     }
+
+    [Theory][InlineData(false,false)][InlineData(false,true)][InlineData(true,false)][InlineData(true,true)]
+    public void CachedSeeksUseCurrentSizeForEveryBasisAndRetainColdErrorsAndPayload(bool catalogue,bool warm)
+    {
+        var f=new Fixture(catalogue); uint handle=f.Open(200000);
+        void Seek(uint offset,uint basis,uint expected,uint error=0)
+        {
+            // The general operation scratch is deliberately stale. Cached
+            // admission must use its authenticated record, and cold admission
+            // must reload the record before applying the same bounds.
+            f.Ram.Write32(f.Engine.ObjectRecord+8,0); f.Ram.Write32(f.Engine.ObjectRecord+12,0);
+            if(!warm)
+            {
+                uint objects=f.Ram.Read32(32+4088);
+                for(uint n=0;n<8;n++) f.Ram.Write32(objects+n*272+268,0);
+            }
+            f.Begin(1008,handle,offset,basis); var first=f.Dispatcher.Step();
+            if(warm) Assert.Equal(StepResult.Complete,first);
+            else Assert.Equal(StepResult.Pending,first);
+            Assert.Equal((expected,error),f.Drive());
+        }
+        Seek(4093,uint.MaxValue,0); Seek(unchecked((uint)-1024),0,4093);
+        Seek(unchecked((uint)-7),1,3069); Seek(1,1,uint.MaxValue,219);
+        Seek(uint.MaxValue,uint.MaxValue,uint.MaxValue,219); Seek(0,2,uint.MaxValue,219);
+        Seek(int.MaxValue,0,uint.MaxValue,219);
+        Assert.Equal(CpxError.None,f.Engine.BeginProtection(f.Id,8)); EngineTests.Drive(ref f.Engine,f.Ram,f.Disk);
+        Seek(0,uint.MaxValue,8185); Assert.Equal((uint.MaxValue,224u),f.Packet(82,handle,120000,1));
+        Assert.Equal(CpxError.None,f.Engine.BeginProtection(f.Id,0)); EngineTests.Drive(ref f.Engine,f.Ram,f.Disk);
+        Assert.Equal((7168u,0u),f.Packet(1022,handle,unchecked((uint)-1024),1));
+        Assert.Equal((0u,0u),f.Packet(1008,handle,7168,uint.MaxValue));
+        Assert.Equal((7165u,0u),f.Packet(1022,handle,unchecked((uint)-3),0));
+        Assert.Equal((uint.MaxValue,0u),f.Packet(1007,handle)); Assert.Equal((uint.MaxValue,0u),f.Packet(27));
+        var check=new Cpx4Volume<MemoryDevice>(f.Disk,new byte[49152]); check.Check(); var actual=new byte[8192];
+        Assert.Equal(7165,check.Read((ulong)f.Id,0,actual));
+        for(int n=0;n<7165;n++) Assert.Equal((byte)(n*17+3),actual[n]);
+    }
 }

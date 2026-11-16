@@ -551,13 +551,14 @@ public partial struct CpxDosDispatcher<TMemory>
         return Start(engine.BeginOperation(CpxOperation.ReadObject, engine.LookupId), 12);
     }
 
-    private StepResult SeekFinish(bool cachedFile = false)
+    private StepResult SeekFinish(uint cachedRecord = 0)
     {
         uint cpxArenaBase = arena;
         bool wide = memory.Read32(cpxArenaBase + 512 + (Action))is 26400 or 26401, resize = memory.Read32(cpxArenaBase + 512 + (Action))is 1022 or 26401;
         uint failure = wide ? 0u : uint.MaxValue;
-        if (!cachedFile && !engine.ObjectFound)
+        if (cachedRecord == 0 && !engine.ObjectFound)
             return Finish(failure, 205);
+        uint record = cachedRecord != 0 ? cachedRecord : engine.ObjectRecord;
         uint h = memory.Read32(cpxArenaBase + 512 + (Handle)), mode = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4));
         Wide old = (new CopperCPX.Wide(memory.Read32((h + 8)), memory.Read32((h + 8) + 4))), basis, offset;
         if (wide)
@@ -573,7 +574,7 @@ public partial struct CpxDosDispatcher<TMemory>
         else if (mode == 0)
             basis = old;
         else if (mode == 1)
-            basis = (new CopperCPX.Wide(memory.Read32((engine.ObjectRecord + 8)), memory.Read32((engine.ObjectRecord + 8) + 4)));
+            basis = (new CopperCPX.Wide(memory.Read32((record + 8)), memory.Read32((record + 8) + 4)));
         else
             return Finish(failure, 219);
         Wide next;
@@ -610,7 +611,7 @@ public partial struct CpxDosDispatcher<TMemory>
             return StepResult.Pending;
         }
 
-        if (Wide.Compare(next, (new CopperCPX.Wide(memory.Read32((engine.ObjectRecord + 8)), memory.Read32((engine.ObjectRecord + 8) + 4)))) > 0)
+        if (Wide.Compare(next, (new CopperCPX.Wide(memory.Read32((record + 8)), memory.Read32((record + 8) + 4)))) > 0)
             return Finish(failure, 219);
         if (wide)
             Put((memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (3) * 4)), old);
@@ -698,8 +699,8 @@ public partial struct CpxDosDispatcher<TMemory>
                 if (!ValidResource(a, ResourceKind.Handle))
                     return Finish(action >= 26400 ? 0u : uint.MaxValue, 211);
                 memory.Write32(cpxArenaBase + 512 + (Handle), a);
-                if (action == 1022 && Arg(2) == uint.MaxValue && (Arg(1) & 0x80000000) == 0 && engine.HasCachedRegularFile(G(a)))
-                    return SeekFinish(true);
+                uint cachedRecord = engine.CachedRegularFileRecord(G(a));
+                if (cachedRecord != 0) return action == 1008 ? FinishCachedClassicSeek(a,cachedRecord) : SeekFinish(cachedRecord);
                 return Start(engine.BeginOperation(CpxOperation.ReadObject, (new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4)))), 23);
             case 15:
                 if (a == 0)

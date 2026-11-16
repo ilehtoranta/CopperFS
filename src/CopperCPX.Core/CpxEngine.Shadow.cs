@@ -193,12 +193,12 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             uint descriptors = BufferedUndo(0) + 1024;
             return stage == 104 ? ShadowCatalogueUpdate(descriptors) : ShadowCataloguePromote(descriptors);
         }
-        return PrepareShadowCommitStep(stage);
+        return stage is 0 or 100 ? SealOwnedShadowImages(stage) : PrepareShadowCommitStep(stage);
     }
 
     // Keep repeated kernel visits out of the descriptor-preparation frame.
     // Geometry and preparation temporaries have no lifetime during I/O service.
-    private StepResult PrepareShadowCommitStep(uint stage)
+    private StepResult SealOwnedShadowImages(uint stage)
     {
         uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), state = BufferedUndo(0), descriptors = state + 1024;
         uint shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift));
@@ -230,6 +230,13 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             if (slot + 1 == memory.Read32(Arena + (StagedCount))) memory.Write32(Arena + (Phase), 101);
             return StepResult.Pending;
         }
+        return Fail(CpxError.Corrupt);
+    }
+
+    private StepResult PrepareShadowCommitStep(uint stage)
+    {
+        uint storage = ShadowStorage, state = BufferedUndo(0), descriptors = state + 1024;
+        uint shift = memory.Read32(Arena + UnitShift) - memory.Read32(Arena + SectorShift);
         if (stage == 101)
         {
             if (memory.Read32(storage + 60) == 0) return BeginShadowKernel(((((ulong)(memory.Read32((storage + 24)))) << 32 | ((ulong)(memory.Read32((storage + 24) + 4))))));
@@ -296,7 +303,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         uint p = batch == 0 ? ShadowRootInput : batch + memory.Read32(Arena + Cursor) * rootBytes;
         ulong at = (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span;
         bool valid = memory.Read32(p) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic) && memory.Read16(p + 6) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u) && memory.Read16(p + 4) == 2 &&
-            ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == Crc(p, rootBytes, true);
+            ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == ShadowCheckpointChecksum(p,rootBytes,at,control,rootControl);
         if (valid && IdentityMatches(p) && memory.Read16(p + 52) == (catalogue ? 960 : rootControl ? 432 : 32) && ((((ulong)(memory.Read32((p + 32)))) << 32 | ((ulong)(memory.Read32((p + 32) + 4))))) == ((((ulong)(memory.Read32((p + 80)))) << 32 | ((ulong)(memory.Read32((p + 80) + 4))))))
         {
             if (rootControl && (memory.Read16(p + 56) is not (48 or 128 or 136) ||

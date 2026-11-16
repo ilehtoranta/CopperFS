@@ -559,9 +559,45 @@ and issue from 44 to 16 bytes. Bounds and the four-phase budget are unchanged.
 
 All 207 focused host cases, 630 CPX host cases in the full solution snapshot,
 48 native cases and 141 rebuilt CopperStart replay cases pass. The Release
-solution builds; its complete native run is pending. Both source-matched ROM
+solution builds and passes 2,596 tests with zero failures and ten skips. Both source-matched ROM
 allocation gates pass with intact 4 KiB stack guards and zero operation-time
 Exec allocations. The unchanged screens pass at **4,954,590 mixed** and
 **369,493,380 streaming** cycles, with identical persisted images. FFS still wins
 both workloads, and mixed work also trails SFS 1.279. This is further measured
 progress, not completion of the performance objective.
+
+A fresh two-trial comparison passes every arm in both workloads. A36 medians
+are **4,954,560 mixed / 369,495,375 streaming**, FFS 40.1 medians are
+**2,783,360 / 367,444,370**, and SFS 1.279 medians are
+**3,931,305 / 369,923,045**. SFS streaming varies from 369,862,470 to
+369,983,620; CPX beats both SFS trials there, while FFS wins both workloads.
+
+| Further candidate | Mixed total | Streaming total |
+|---|---:|---:|
+| A37, cached classic seek/resize bounds and grouped CRC zero scan | 4,954,240 | 369,497,530 |
+| A38, owned sealing frame and matching-checkpoint checksum proof | 4,922,850 | 369,469,260 |
+| A39, scalar classic seek bounds | 4,921,430 | 369,462,890 |
+
+A37's total performance is essentially unchanged. Its new warm/cold cache tests
+cover stale operation scratch, every seek basis, negative offsets, bounds,
+protection and relative resize, followed by full persisted payload verification.
+A38 keeps all owned-page validation while reducing the sealing frame from 348
+to 28 bytes. For an incoming checkpoint, it compares every byte except the
+checksum and self-address against a previously fully validated copy. Only exact
+body equality permits the linear address CRC transform; the stored incoming
+checksum must still match. Every differing body/header takes the full checksum
+path, and subsequent format, catalogue and generation checks are unchanged.
+An independent full-checksum oracle covers 7,684 cases, including a bit change at
+every byte position for 512–4096-byte pages, with source/input guards preserved.
+
+A39 replaces only classic cached seek arithmetic with checked scalar words;
+wide seeks and resize retain the general path. Its 12,000-case big-integer
+oracle covers signed extremes, all bases, wide sizes, overflow and unchanged
+positions on errors. All 166 focused host, 645 full CPX host, 50 focused native
+and 141 rebuilt CopperStart replay cases pass. The Release solution builds;
+the complete native run is pending. A37 and A38 each pass 50 native cases too.
+All three binaries pass the unchanged guest and independent image checks, with
+identical media hashes, and both source-matched ROM allocation gates retain
+intact 4 KiB stack guards and zero operation-time Exec allocations. These remain
+partial ROM gates; physical-media qualification is unrun. FFS still wins both
+workloads. The performance objective remains unmet.
