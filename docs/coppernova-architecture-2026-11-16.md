@@ -758,7 +758,7 @@ Subsequent CPU experiments keep the benchmark and durability contract unchanged:
 |---|---:|---:|---|
 | A56, direct file continuation dispatch | 4,823,430 | 369,400,120 | Retain |
 | A57, wide-helper inline annotations | 4,827,100 | 369,433,410 | Exact same handler bytes as A54; omit |
-| A58, reserve validation per bounded turn | 4,785,270 | 369,325,400 | Retain, full qualification running |
+| A58, reserve validation per bounded turn | 4,785,270 | 369,325,400 | Retain, full qualification passed |
 | A59, existing 68020 build option on A58 | 5,111,600 | 369,809,300 | Reject |
 
 A56 routes known file continuations before the general file/tree frame. The
@@ -809,3 +809,86 @@ at 4,780,120 / 369,351,850 cycles: a small mixed gain accompanied by a streaming
 regression. It is not retained. All 250 focused host cases and both partial ROM
 allocation gates pass; no separate broader native suite or full solution run was
 performed for this rejected intermediate.
+
+A63 changes only the existing build option from `ClrPolicy=always` to `auto`
+on the exact A58 sources. The compiler and emulator are unchanged. Its
+4,782,730 / 369,357,700 cycle screens also trade a small mixed gain for a
+streaming regression, so it is not retained. Both actual-HUNK ROM allocation
+gates pass. Source qualification comes from A58; no separate instruction suite
+was run for this rejected code-generation variant.
+
+A64 requests the existing RAM-folding pass through the CLI. The CLI accepts the
+property name but does not forward it; the HUNK is byte-identical to A58.
+Its report explicitly inherits A58 results by binary identity. This is not a new
+measurement or evidence about the effectiveness of that optimization.
+
+A65 keeps checkpoint selection as a pinned view into the owned recovery batch,
+materializing the final winner once. It passes 95 focused host cases, 66 compiled
+native cases and both partial ROM allocation gates. Its single-trial screens,
+4,790,870 / 369,362,180 cycles, regress against A58 and are not retained.
+
+A66 adds a retained proof for an authenticated control image. It passes 113
+focused host cases (including 18 proof cases), 66 compiled native cases and both
+partial ROM allocation gates. Its screens pass at 4,797,480 / 369,319,120 cycles;
+it is not retained. Subsequent native tracing exposes a workspace collision:
+the proof and advisory allocation hint share the same eight bytes. Remount's
+hint reset erases the proof before root validation. Final-state host assertions
+missed this transient collision. A68 gives them separate storage and tests the
+proof at the first checkpoint I/O boundary; its qualification is still pending.
+No failed or changed-media validation was bypassed by A66.
+
+A67 applies existing application code-generation options to exact A58 sources.
+Its screens pass at 4,775,010 / 369,375,710 cycles, but **both actual-HUNK partial
+ROM allocation gates fail at stage 502 with DOS error 213**. It is rejected.
+No successful qualification file was produced; the recorded failure evidence
+comes from the test output. Neither these options nor the experimental sources
+replace A58. Compiler, SDK, emulator and application sources are unchanged.
+
+A68 separates the proof and allocator hint into independent eight-byte slots,
+adding eight bytes to the startup shadow lease. No operation allocates memory.
+Four new regression cases inspect the proof at the first checkpoint read, after
+the allocator hint is reset. All 41 focused host cases and 66 compiled native
+cases pass. Both source-exact 512 KiB Chip / zero Fast / 68000 partial ROM gates
+pass with zero operation-time Exec allocations, intact guards and unchanged
+876/1,068-byte peak stacks. Release build and all 141 rebuilt CopperStart replay
+cases pass. The full Release solution run passes 2,680 tests with zero failures and ten skips,
+including 714 CPX host cases and 135 compiled native cases. The native suite
+takes 21 minutes 20 seconds; its seven ROM skips remain distinct from the two
+separately executed partial ROM gates. Physical media are
+untested.
+
+Fresh two-trial comparisons pass every arm:
+
+| Workload | CopperNova A68 | Kickstart FFS 40.1 | SFS 1.279 |
+| --- | ---: | ---: | ---: |
+| Mixed | 4,768,820 | 2,783,360 | 3,918,700 |
+| Streaming | 369,286,340 | 367,442,220 | 369,862,195 |
+
+These are measured cycle medians from unchanged workloads and runner. The
+performance objective remains unmet. A68 improves both totals against A58,
+but only beats SFS in streaming.
+
+A69 seals replacement roots directly in the owned control backing, with the
+inode shape captured before rebuilding an overlapping header. Its 66 focused
+host cases and both partial ROM allocation gates pass. Screens regress to
+4,793,630 / 369,341,530 cycles, so it is rejected. Its 66-case compiled native run also passes (14 minutes 42 seconds). The retained
+candidate uses A68 publication, without this experiment.
+
+A70 compares authenticated checkpoint bodies in groups of eight longwords,
+retaining exact tail bounds and the complete incoming CRC on mismatch. The
+53 focused host cases, including the byte-mutation checksum oracle, pass.
+Both actual-HUNK partial ROM allocation gates pass. Its screens are
+4,757,000 / 369,284,950 cycles. No separate instruction suite or full solution
+run was performed for this intermediate; it is not substituted for the A68
+source undergoing full qualification. The handler is 269,872 bytes and the
+archived manifest contains all 83 exact production inputs.
+
+A71 prototypes bounded lookup/object-read fusion to remove a second operation
+admission during pathname resolution. It is stopped before a HUNK or benchmark
+is produced. Two recoverable-rejection regression cases demonstrate that an
+unfinished lookup mode can otherwise affect a later namespace operation.
+A72 resets the mode at successful operation admission. Its initial 107 focused
+host cases pass, including cold/warm differential reads, long names, aliases,
+busy rejection, cancellation with the existing remount requirement, and both
+recoverable-rejection regressions. Native qualification and performance remain
+pending; these changes are not part of the retained A68 source.

@@ -12,7 +12,8 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (memory.Read32(Arena + (Waiting)) != 0 || memory.Read32(Arena + (Finished)) == 0 || memory.Read32(Arena + (Active)) != 0 || memory.Read32(Arena + (Mounted)) != 0) return CpxError.Busy;
         memory.Write32(Arena + (CheckpointPolicy), memory.Read32(Arena + (CheckpointPolicy)) & 3); return CpxError.None;
     }
-    public static uint ShadowStorageBytes(uint pageBytes) => 296 + 3 * pageBytes + (pageBytes < 1024 ? 2048u : pageBytes);
+    // Root proof and advisory allocation hint have separate eight-byte slots.
+    public static uint ShadowStorageBytes(uint pageBytes) => 304 + 3 * pageBytes + (pageBytes < 1024 ? 2048u : pageBytes);
     private bool ShadowRootControl => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2;
     private bool ShadowCatalogue => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5;
     private uint ShadowControl => (memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)));
@@ -187,6 +188,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult ShadowCommitStep()
     {
         uint stage = memory.Read32(Arena + Phase);
+        if (stage == 0 && ShadowRootControl) ForgetControlProof();
         if (stage == 101) return PrepareShadowRootPublication();
         if (stage == 103) return ShadowKernelStep();
         if (stage is 104 or 105)
@@ -309,49 +311,57 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                 batch == 0 ? ShadowRootInput : batch, batch == 0 ? rootBytes : 3 * rootBytes, 1);
         }
         uint p = batch == 0 ? ShadowRootInput : batch + memory.Read32(Arena + Cursor) * rootBytes;
+        // The batch remains pinned until all candidates have been examined.
+        // Retain the authenticated winner as a view of that owned input,
+        // materializing the control image once after final selection. The
+        // independent-read path still owns a copy before its input is reused.
+        uint validated = batch != 0 && memory.Read32(Arena + ValidOne) != 0
+            ? batch + memory.Read32(storage + 32) * rootBytes : control;
         ulong at = (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span;
-        bool sameBody=false;
+        uint proof=0;
         bool valid = memory.Read32(p) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic) && memory.Read16(p + 6) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u) && memory.Read16(p + 4) == 2 &&
-            ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == ShadowCheckpointChecksumAndProof(p,rootBytes,at,control,rootControl,out sameBody);
-        if(valid&&sameBody)
+            ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == ShadowCheckpointChecksumWithControlProof(p,rootBytes,at,validated,rootControl,out proof);
+        if(valid&&proof==1)
         {
             // Every byte except the independently checked self-address/CRC is
-            // identical to the fully authenticated selected control image.
+            // identical to the fully authenticated selected checkpoint.
             // Its schema, identity, generation and catalogue proof still apply.
-            // Keep that owned image as the checksum basis; only the survivor
+            // Keep that pinned image as the checksum basis; only the survivor
             // preference can change for another equivalent outer checkpoint.
             if(memory.Read32(storage+32)==1&&memory.Read32(Arena+Cursor)==2) memory.Write32(storage+32,2);
         }
-        else if (valid && IdentityMatches(p) && memory.Read16(p + 52) == (catalogue ? 960 : rootControl ? 432 : 32) && ((((ulong)(memory.Read32((p + 32)))) << 32 | ((ulong)(memory.Read32((p + 32) + 4))))) == ((((ulong)(memory.Read32((p + 80)))) << 32 | ((ulong)(memory.Read32((p + 80) + 4))))))
+        else if (valid && (proof==2 || IdentityMatches(p) && memory.Read16(p + 52) == (catalogue ? 960 : rootControl ? 432 : 32) && ((((ulong)(memory.Read32((p + 32)))) << 32 | ((ulong)(memory.Read32((p + 32) + 4))))) == ((((ulong)(memory.Read32((p + 80)))) << 32 | ((ulong)(memory.Read32((p + 80) + 4)))))))
         {
-            if (rootControl && (memory.Read16(p + 56) is not (48 or 128 or 136) ||
+            if (proof==0 && rootControl && (memory.Read16(p + 56) is not (48 or 128 or 136) ||
                 memory.Read16(p + 58) != 32 || memory.Read16(p + 232) > 32)) return Fail(CpxError.Corrupt);
             ulong generation = ((((ulong)(memory.Read32((p + 80)))) << 32 | ((ulong)(memory.Read32((p + 80) + 4))))), root = ((((ulong)(memory.Read32((p + 88)))) << 32 | ((ulong)(memory.Read32((p + 88) + 4)))));
             bool inline = catalogue && root == CpxCheckpointCatalogue<TMemory>.InlineRoot;
-            if (!inline && !ValidShadowRootAddress(root)) return Fail(CpxError.Corrupt);
-            if (catalogue && !new CpxCheckpointCatalogue<TMemory>(memory, p + 496).Valid(GetWide(storage+112), inline)) return Fail(CpxError.Corrupt);
+            if (proof==0 && !inline && !ValidShadowRootAddress(root)) return Fail(CpxError.Corrupt);
+            if (proof==0 && catalogue && !new CpxCheckpointCatalogue<TMemory>(memory, p + 496).Valid(GetWide(storage+112), inline)) return Fail(CpxError.Corrupt);
             if (memory.Read32(Arena + (ValidOne)) != 0 && generation == ((((ulong)(memory.Read32((Arena) + ((Generation))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Generation) + 4)))))) && root != ((((ulong)(memory.Read32((storage + 24)))) << 32 | ((ulong)(memory.Read32((storage + 24) + 4)))))) return Fail(CpxError.Corrupt);
             if (rootControl && memory.Read32(Arena + (ValidOne)) != 0 && generation == ((((ulong)(memory.Read32((Arena) + ((Generation))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Generation) + 4)))))))
             {
-                if (memory.Read32(p + 56) != memory.Read32(control + 56)) return Fail(CpxError.Corrupt);
+                if (memory.Read32(p + 56) != memory.Read32(validated + 56)) return Fail(CpxError.Corrupt);
                 for (uint offset = 96; offset < (catalogue ? 1024u : 496u); offset += 4)
-                    if (memory.Read32(p + offset) != memory.Read32(control + offset)) return Fail(CpxError.Corrupt);
+                    if (memory.Read32(p + offset) != memory.Read32(validated + offset)) return Fail(CpxError.Corrupt);
             }
             if (memory.Read32(Arena + (ValidOne)) == 0 || generation > ((((ulong)(memory.Read32((Arena) + ((Generation))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Generation) + 4)))))) ||
                 generation == GetWide(Arena+Generation) && memory.Read32(storage+32)==1 && memory.Read32(Arena+Cursor)==2)
             {
                 memory.Write32(Arena + (ValidOne), 1); WW(Generation, generation); PutWide(storage + 24, root); memory.Write32(storage + 32, memory.Read32(Arena + (Cursor)));
-                if (rootControl) Copy(control, p, rootBytes);
+                if (rootControl && batch == 0) { ForgetControlProof(); Copy(control, p, rootBytes); }
             }
         }
         memory.Write32(Arena + (Cursor), memory.Read32(Arena + (Cursor)) + 1);
         if (memory.Read32(Arena + (Cursor)) < 3)
             return batch == 0 ? Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span, p, rootBytes, 1) : StepResult.Pending;
         if (memory.Read32(Arena + (ValidOne)) == 0) return Fail(CpxError.Corrupt);
+        if (rootControl && batch != 0) { ForgetControlProof(); Copy(control, batch + memory.Read32(storage + 32) * rootBytes, rootBytes); }
         if ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 3))
         {
             if (!RestoreRecoveredInodeCodec(control)) return Fail(CpxError.Corrupt);
         }
+        if (rootControl && batch != 0) RememberControlProof(rootBytes);
         memory.Write32(Arena + (Phase), 24);
         return StepResult.Pending;
     }

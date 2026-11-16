@@ -212,6 +212,7 @@ public partial struct CpxEngine<TMemory>
             return CpxError.InvalidArgument;
         if (operation == CpxOperation.ReadMetadata && !PageAddress(argument))
             return CpxError.InvalidArgument;
+        if (operation == CpxOperation.Format && ShadowVolume) ForgetControlProof();
         if (operation == CpxOperation.Mount)
         {
             memory.Write32(cpxArenaBase + (Mounted), 0);

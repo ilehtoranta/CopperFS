@@ -51,6 +51,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                 Copy(pairBuffer+pairBytes,pairBuffer,pairBytes);
                 CpxShadowChecksums<TMemory>.RetargetOwned(ref memory,pairBuffer+pairBytes,pairBytes,pairAddress+span,CrcTable,BufferedStorageAddress,Arena+4080);
                 memory.Write32(plan+12,survivor==0?2u:0u); memory.Write32(plan,3);
+                memory.Write32(plan+56,pairBuffer+pairBytes);
                 return Issue(IoKind.Write,pairAddress,pairBuffer,2*pairBytes,103);
             }
             uint root=memory.Read32(plan+8);
@@ -67,6 +68,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             else MakeOwnedShadowCheckpoint(buffer,bytes,address,GetWide(plan+32),GetWide(plan+24));
             if(memory.Read32(plan+12)==uint.MaxValue) memory.Write32(plan+12,root);
             memory.Write32(plan+8,root+1);
+            memory.Write32(plan+56,buffer);
             return Issue(IoKind.Write,address,buffer,bytes,103);
         }
         if(phase==3)
@@ -76,6 +78,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         }
         if(phase==2)
         {
+            if(ShadowRootControl&&CanCacheMetadata) RememberPublishedControlProof(memory.Read32(plan+56),memory.Read32(plan+40));
             uint storage=ShadowStorage;
             PutWide(storage+24,GetWide(plan+24)); memory.Write32(storage+32,memory.Read32(plan+12));
             memory.Write32(storage,0); ClearShadowCache();
