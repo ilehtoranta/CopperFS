@@ -266,6 +266,8 @@ public partial struct CpxEngine<TMemory>
         }
 
         memory.Write32(cpxArenaBase + (SourcePage), buffer);
+        // A rejected fused lookup must not affect a later nested lookup.
+        memory.Write32(cpxArenaBase + LookupObjectMode, 0);
         if (operation == CpxOperation.BeginTransaction)
             memory.Write32(cpxArenaBase + (StagedLimit), creditLimit);
         return CpxError.None;

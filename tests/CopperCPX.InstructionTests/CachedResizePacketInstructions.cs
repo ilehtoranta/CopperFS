@@ -57,6 +57,11 @@ public static class CachedResizePacketProbe
         memory.Write8(0x8900, 4); memory.Write8(0x8901, 102); memory.Write8(0x8902, 105); memory.Write8(0x8903, 108); memory.Write8(0x8904, 101);
         if (!Packet(ref dispatcher, ref memory, 1004, 0x8800 >> 2, 0, 0x8900 >> 2, uint.MaxValue)) return 7;
         uint handle = memory.Read32(0x8824);
+        // Warm and then exercise the cached packet-transfer entry in actual
+        // MC68000 code before resize invalidates its mapping capability.
+        if (!Packet(ref dispatcher, ref memory, 82, handle, 0xb000, 512, 512)) return 19;
+        if (!Packet(ref dispatcher, ref memory, 82, handle, 0xb200, 512, 512)) return 20;
+        for (uint n = 0; n < 1024; n++) if (memory.Read8(0xb000 + n) != (byte)(n * 17 + 3)) return 21;
         if (!Packet(ref dispatcher, ref memory, 1022, handle, 6003, uint.MaxValue, 6003)) return 8;
         if (!Packet(ref dispatcher, ref memory, 1022, handle, 6003, uint.MaxValue, 6003)) return 9;
         if (engine.BeginProtection(id, 4) != CpxError.None || !Drive(ref engine, ref memory)) return 16;

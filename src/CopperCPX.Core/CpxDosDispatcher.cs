@@ -81,7 +81,8 @@ public partial struct CpxDosDispatcher<TMemory>
         memory.Write32(cpxArenaBase + 512 + (Packet), packet);
         memory.Write32(cpxArenaBase + 512 + (Phase), 0);
         memory.Write32(cpxArenaBase + 512 + (BusyAt), 1);
-        memory.Write32(cpxArenaBase + 512 + (Action), memory.Read32(packet + 8));
+        uint action = memory.Read32(packet + 8);
+        memory.Write32(cpxArenaBase + 512 + (Action), action);
         memory.Write32(cpxArenaBase + 512 + (ResultAt), 0);
         memory.Write32(cpxArenaBase + 512 + (ErrorAt), 0);
         memory.Write32(cpxArenaBase + 512 + (Handle), 0);
@@ -96,6 +97,10 @@ public partial struct CpxDosDispatcher<TMemory>
         memory.Write32(cpxArenaBase + 512 + (NotifySlot), 0);
         memory.Write32(cpxArenaBase + 512 + (NotifyRemoved), 64);
         memory.Write32(cpxArenaBase + 512 + (AllActive), 0);
+        // Preserve the complete packet reset, but avoid a separate dispatch
+        // phase when the existing capability admits this transfer outright.
+        // Begin still issues no I/O; Step retains cancellation and phase bounds.
+        if (action is 82 or 87) TryBeginCachedTransferPacket(packet, action);
         return CpxError.None;
     }
 
@@ -314,7 +319,9 @@ public partial struct CpxDosDispatcher<TMemory>
                 return Start(engine.BeginOperation(CpxOperation.ReadObject, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4)))), 14);
             Put((cpxArenaBase + 512) + ParentId, (new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))));
             memory.Write32(cpxArenaBase + 512 + (PathEnd), end);
-            return Start(engine.BeginLookup((new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))), (cpxArenaBase + 1024) + at, end - at), 11);
+            if (end == memory.Read32(cpxArenaBase + 512 + PathLength) && action is 16 or 17 or 22 or 1004 or 1006 or 1021)
+                return Start(engine.BeginLookup((new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))), (cpxArenaBase + 1024) + at, end - at), 11);
+            return Start(engine.BeginLookupObject((new CopperCPX.Wide(memory.Read32(((cpxArenaBase + 512) + Object)), memory.Read32(((cpxArenaBase + 512) + Object) + 4))), (cpxArenaBase + 1024) + at, end - at), 33);
         }
 
         StepResult result = engine.Step();
@@ -330,6 +337,7 @@ public partial struct CpxDosDispatcher<TMemory>
         switch (phase)
         {
             case 11:
+            case 33:
                 if (memory.Read32(cpxArenaBase + 512 + (PathEnd)) == memory.Read32(cpxArenaBase + 512 + (PathLength)) && (action is 16 or 17 or 22 or 1004 or 1006 or 1021))
                 {
                     memory.Write32(cpxArenaBase + 512 + (Phase), 83);
@@ -338,11 +346,13 @@ public partial struct CpxDosDispatcher<TMemory>
 
                 if (!engine.LookupFound)
                     return Finish(0, 205);
-                Put((cpxArenaBase + 512) + EntryId, (new CopperCPX.Wide(memory.Read32((engine.TreeRecord + 8)), memory.Read32((engine.TreeRecord + 8) + 4))));
+                if (phase == 33) Put((cpxArenaBase + 512) + EntryId, engine.LookupObjectEntry);
+                else Put((cpxArenaBase + 512) + EntryId, (new CopperCPX.Wide(memory.Read32((engine.TreeRecord + 8)), memory.Read32((engine.TreeRecord + 8) + 4))));
                 memory.Write32(cpxArenaBase + 512 + (LinkPrefix), memory.Read32(cpxArenaBase + 512 + (PathAt)));
                 memory.Write32(cpxArenaBase + 512 + (LinkSuffix), memory.Read32(cpxArenaBase + 512 + (PathEnd)));
                 Put((cpxArenaBase + 512) + Object, engine.LookupId);
                 memory.Write32(cpxArenaBase + 512 + (PathAt), memory.Read32(cpxArenaBase + 512 + (PathEnd)) < memory.Read32(cpxArenaBase + 512 + (PathLength)) ? memory.Read32(cpxArenaBase + 512 + (PathEnd)) + 1 : memory.Read32(cpxArenaBase + 512 + (PathEnd)));
+                if (phase == 33) return PathObject();
                 return Start(engine.BeginOperation(CpxOperation.ReadObject, engine.LookupId), 13);
             case 12:
                 if (!engine.ObjectFound)

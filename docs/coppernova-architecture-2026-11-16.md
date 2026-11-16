@@ -948,3 +948,67 @@ payload and 4 KiB stack checks. Both actual-HUNK ROM allocation gates pass.
 The 271,112-byte HUNK has 86 exact archived production inputs. Screens pass at
 4,769,010 / 369,242,820 cycles: streaming improves, but mixed regresses slightly.
 It is not retained and has no separate 66-case or full solution qualification.
+
+A77 adds a byte-count and capability-kind filter before the A76 probe. It keeps
+partial writes and requests without a cached capability on the ordinary path
+without repeating expensive resource checks. All 119 focused host cases,
+both compiled MC68000 warm-read/resize cases (5 minutes 25 seconds), and both
+actual-HUNK ROM allocation gates pass. Its 271,252-byte handler has 86 exact
+production inputs. Screens pass at 4,748,950 / 369,199,720 cycles, improving
+both against A75. It remains an intermediate with no separate full solution
+qualification. The broader comparison objective is still unmet.
+
+A78 combines A77 admission and fused lookup with A75 media-latch polling.
+The 271,264-byte handler has 86 exact archived production inputs. All 119
+focused host cases, 70 compiled native cases (12 minutes 59 seconds), and both
+actual-HUNK partial ROM allocation gates pass. Release solution build and all
+141 rebuilt CopperStart replay cases pass. The full Release suite passes
+2,700 cases with zero failures and ten skips: 730 CPX host, 139 native, 438 FFS,
+1,343 SFS, 18 Amiga integration and 32 storage cases pass. Seven native ROM
+gates and three SFS media cases skip; the two separately executed partial ROM
+allocation gates are reported above. Physical media remain untested.
+
+Fresh two-trial medians pass every arm:
+
+| Workload | CopperNova A78 | Kickstart FFS 40.1 | SFS 1.279 |
+| --- | ---: | ---: | ---: |
+| Mixed | 4,739,570 | 2,782,710 | 3,918,575 |
+| Streaming | 369,164,690 | 367,442,550 | 369,850,905 |
+
+The performance objective remains unmet. The combined source improves both
+against A75; only the streaming result beats SFS.
+
+A79 issues admitted cached reads through a short continuation that retains
+token exhaustion, outstanding-I/O, cancellation, error and completion ordering.
+All 139 focused host cases, eleven descriptor/fault cases, 70 compiled native
+cases (16 minutes 6 seconds), and both actual-HUNK partial ROM gates pass.
+The 271,868-byte handler has 87 exact archived production inputs. Both workload
+screens pass with canonical durable images: 4,764,720 mixed and 369,140,840
+streaming cycles. It is not retained: mixed regresses against A78. It has no
+separate full solution qualification.
+
+Additional synthetic private-capability tests exposed missing carry in the
+pre-existing cached-read physical-offset calculation. The normal extent
+validator forbids crossing allocation-group boundaries; these tests bypassed
+that validation, so they do not demonstrate a valid mounted-media failure.
+The defensive arithmetic fix and expanded synthetic fixtures are being
+evaluated separately. One initial 4 KiB fixture also exceeded its declared
+capacity; the subsequent fixture explicitly provides enough capacity.
+
+A80 adds that defensive carry correction to A79. Its 271,880-byte HUNK has
+87 exact archived inputs. All 40 focused host cases and both executed partial
+ROM gates pass; its broader 70-case native run passes in 14 minutes 29 seconds. Screens pass
+at 4,747,220 / 369,141,890 cycles with canonical media and full independent
+payload/ownership checks. It remains an unretained experiment: mixed is still
+slower than A78, and it has no full solution qualification.
+
+A81 starts from A78 without the A79 cached-read continuation. It expresses
+append identity, position, physical address and bitmap-window comparisons as
+explicit words, retaining all range/allocation checks. Free-unit accounting
+retains its full-width borrow. It also includes the defensive cached-read
+carry correction. All 64 focused host cases (including six synthetic word
+carry/borrow/rejection cases) and both actual-HUNK partial ROM gates pass.
+The broader 70-case native run passes in 12 minutes 11 seconds. Its 271,144-byte HUNK has 86 exact
+archived inputs. Screens pass at 4,740,840 / 369,144,880 cycles: streaming
+improves slightly, while mixed is essentially unchanged. It remains an
+intermediate without full solution qualification, and the goal remains unmet.

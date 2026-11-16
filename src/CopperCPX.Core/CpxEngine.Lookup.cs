@@ -118,7 +118,7 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         uint phase = memory.Read32(cpxArenaBase + (Phase));
         if (phase == 0 && TryCachedLookup())
-            return Done();
+            return FinishLookup();
         if (phase < 100)
         {
             StepResult lookup = ObjectStep();
@@ -182,9 +182,9 @@ public partial struct CpxEngine<TMemory>
                 return StepResult.Pending;
             case 102:
                 if (!(memory.Read32(cpxArenaBase + (SeekFound)) != 0))
-                    return Done();
+                    return FinishLookup();
                 if (memory.Read32(cpxArenaBase + (LookupHashed)) != 0 && !(((ulong)(((((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512)))))) << 32 | ((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512))) + 4))))))) == ((ulong)((((ulong)(~memory.Read32(cpxArenaBase + (LookupHashValue)))) << 32 | ((ulong)(0)))))))
-                    return Done();
+                    return FinishLookup();
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(NameCursorHigh);
                 ulong cpxWideValue = ((((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512)))))) << 32 | ((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512))) + 4)))));
@@ -211,7 +211,7 @@ public partial struct CpxEngine<TMemory>
                         }
 
                         memory.Write32(cpxArenaBase + (LookupFoundAt), 1);
-                        return Done();
+                        return FinishLookup();
                     }
 
                     memory.Write32(cpxArenaBase + (Phase), 101);
@@ -236,7 +236,7 @@ public partial struct CpxEngine<TMemory>
                         }
 
                         memory.Write32(cpxArenaBase + (LookupFoundAt), 1);
-                        return Done();
+                        return FinishLookup();
                     }
 
                     memory.Write32(cpxArenaBase + (Phase), 101);
@@ -258,7 +258,7 @@ public partial struct CpxEngine<TMemory>
                     }
 
                     memory.Write32(cpxArenaBase + (LookupFoundAt), 1);
-                    return Done();
+                    return FinishLookup();
                 }
 
                 memory.Write32(cpxArenaBase + (Phase), 101);
