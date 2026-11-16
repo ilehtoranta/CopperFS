@@ -702,3 +702,52 @@ A49 is not retained. Subsequent experiments fix that boundary, reduce CPU
 overhead, constrain the cache to the buffered shadow profile and strengthen the
 ROM fixture to require observation of dirty cached data. Their qualification is
 still in progress.
+
+The write-back follow-ups remain unretained after measurement:
+
+| Candidate | Mixed cycles | Streaming cycles |
+|---|---:|---:|
+| A51, checked/scalar data cache | 5,006,650 | 369,715,200 |
+| A52, general small-write cache | 5,142,480 | 369,917,590 |
+| A53, existing longword copy for even buffers | 4,862,950 | 369,472,660 |
+
+A51/A52 pass 85/86 focused host and 74/75 compiled native cases respectively,
+including the sector-limit regression and legacy/unbuffered bypass cases.
+Their independent crash checks cover 270/540 recovered images. Both strengthened
+512 KiB ROM gates pass with an allocated 8 KiB bank, observed dirty cached data,
+1,068-byte peak handler stack, intact guards and zero operation-time Exec
+allocations. The stronger fixture writes and reads an existing payload file;
+it does not change the comparison benchmarks. Separate full-solution runs were
+not performed for these unretained intermediates.
+
+In the mixed mutation profile, A51 spends about 428,000 ROM cycles versus
+A50's 336,000, while filesystem code cycles remain close. Four additional
+CopyMemQuick calls outweigh the eliminated DMA requests. A53 removes those ROM
+calls for even buffers using the existing ordered longword routine; its initial
+screens still slightly regress, so it is not retained. Its nine dedicated native
+copy cases, 75 focused native cases and both ROM allocation gates pass.
+
+A54 retains the complete schema proof of an already authenticated checkpoint
+when another checkpoint matches every byte except its checksum and self address.
+The incoming checkpoint still passes its own address-adjusted checksum. Any
+changed byte takes the complete validation path. This also avoids copying the
+same 1,024-byte control image again. Five independent valid-CRC/invalid-schema
+cases reject malformed root payloads, reserve entries and catalogue/conflict
+state. The complete checksum byte-fault oracle remains in place.
+
+The A54 single-trial screens pass at **4,827,230 mixed / 369,433,380 streaming
+cycles**. The goal remains unmet against the A50 reference medians: FFS
+2,782,880 / 367,442,630, and SFS 1.279 3,918,540 / 369,850,835. These are
+screening results, not a fresh all-arm acceptance comparison.
+
+A54 Release build and full solution validation pass: **2,644 passed, zero failed,
+10 skipped**, including 678 CPX host and 135 compiled native cases. The seven
+native licensed-ROM skips are separate from the two source-matched ROM allocation
+gates, which pass on 512 KiB Chip RAM, zero Fast RAM and a 68000. The gates cover
+part of the packet surface, not complete ROM behavior. All 141 rebuilt CopperStart
+filesystem replay cases pass. Physical media remain untested.
+
+A55 replaces large even native copies with pointer-based unrolled stores. Its
+4,855,890 / 369,464,620 cycle screens regress relative to A50 and it is not
+retained. Twelve dedicated native copy cases, 78 focused native cases and both
+ROM allocation gates pass. It has no separate full-solution qualification.

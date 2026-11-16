@@ -3,8 +3,12 @@ namespace CopperCPX;
 public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 {
     private uint ShadowCheckpointChecksum(uint incoming,uint bytes,ulong address,uint validated,bool rootControl)
+        => ShadowCheckpointChecksumAndProof(incoming,bytes,address,validated,rootControl,out _);
+
+    private uint ShadowCheckpointChecksumAndProof(uint incoming,uint bytes,ulong address,uint validated,bool rootControl,out bool sameBody)
     {
-        if(rootControl&&memory.Read32(Arena+ValidOne)!=0&&CanCacheMetadata&&CheckpointBodyMatches(incoming,validated,bytes))
+        sameBody=rootControl&&memory.Read32(Arena+ValidOne)!=0&&CanCacheMetadata&&CheckpointBodyMatches(incoming,validated,bytes);
+        if(sameBody)
             return CpxShadowChecksums<TMemory>.ExpectedRetarget(ref memory,validated,bytes,address,CrcTable,BufferedStorageAddress,Arena+4080);
         return Crc(incoming,bytes,true);
     }

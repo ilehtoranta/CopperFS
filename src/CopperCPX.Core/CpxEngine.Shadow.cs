@@ -310,9 +310,19 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         }
         uint p = batch == 0 ? ShadowRootInput : batch + memory.Read32(Arena + Cursor) * rootBytes;
         ulong at = (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span;
+        bool sameBody=false;
         bool valid = memory.Read32(p) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic) && memory.Read16(p + 6) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u) && memory.Read16(p + 4) == 2 &&
-            ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == ShadowCheckpointChecksum(p,rootBytes,at,control,rootControl);
-        if (valid && IdentityMatches(p) && memory.Read16(p + 52) == (catalogue ? 960 : rootControl ? 432 : 32) && ((((ulong)(memory.Read32((p + 32)))) << 32 | ((ulong)(memory.Read32((p + 32) + 4))))) == ((((ulong)(memory.Read32((p + 80)))) << 32 | ((ulong)(memory.Read32((p + 80) + 4))))))
+            ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == ShadowCheckpointChecksumAndProof(p,rootBytes,at,control,rootControl,out sameBody);
+        if(valid&&sameBody)
+        {
+            // Every byte except the independently checked self-address/CRC is
+            // identical to the fully authenticated selected control image.
+            // Its schema, identity, generation and catalogue proof still apply.
+            // Keep that owned image as the checksum basis; only the survivor
+            // preference can change for another equivalent outer checkpoint.
+            if(memory.Read32(storage+32)==1&&memory.Read32(Arena+Cursor)==2) memory.Write32(storage+32,2);
+        }
+        else if (valid && IdentityMatches(p) && memory.Read16(p + 52) == (catalogue ? 960 : rootControl ? 432 : 32) && ((((ulong)(memory.Read32((p + 32)))) << 32 | ((ulong)(memory.Read32((p + 32) + 4))))) == ((((ulong)(memory.Read32((p + 80)))) << 32 | ((ulong)(memory.Read32((p + 80) + 4))))))
         {
             if (rootControl && (memory.Read16(p + 56) is not (48 or 128 or 136) ||
                 memory.Read16(p + 58) != 32 || memory.Read16(p + 232) > 32)) return Fail(CpxError.Corrupt);
