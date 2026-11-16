@@ -322,6 +322,7 @@ public partial struct CpxEngine<TMemory>
         }
 
         memory.Write32(cpxArenaBase + (DataProgress), 0);
+        if(write&&TryBeginPartialWriteWindow((uint)position,bytes,take)) return true;
         if ((((uint)((ulong)(position))) & (unit - 1)) != 0 || write && (bytes & (unit - 1)) != 0 || prefix == 0)
             memory.Write32(cpxArenaBase + (Phase), 540);
         else

@@ -62,6 +62,8 @@ public partial struct CpxEngine<TMemory>
             return FastMappedStep(phase);
         if (phase is >= 540 and <= 543)
             return FastPartialMappedStep(phase);
+        if (phase is >= 550 and <= 552)
+            return PartialWriteWindowStep(phase);
         uint record = (cpxArenaBase + CpxArena.MountBytes), unit = 1u << (int)memory.Read32(cpxArenaBase + (UnitShift));
         bool write = (CpxOperation)memory.Read32(cpxArenaBase + (OperationAt)) == CpxOperation.WriteMapped;
         if (phase < 100)

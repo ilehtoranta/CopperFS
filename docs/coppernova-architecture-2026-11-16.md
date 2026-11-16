@@ -490,9 +490,34 @@ persistence barrier precedes generation advancement and group retirement.
 The native handler shrinks from 270,084 to 263,736 bytes.
 
 All 602 CPX host cases, 30 focused native cases and 141 rebuilt CopperStart replay
-cases pass. The Release solution builds; the complete solution run is pending.
+cases pass. The Release solution builds and passes 2,564 tests with ten skips.
 Both legacy and CPX5 ROM allocation probes pass on 512 KiB Chip RAM, no Fast RAM,
 with matched source inputs, intact 4 KiB stack guards and no operation-time
 Exec allocations. The unchanged workloads pass with identical image hashes at
 **5,194,870 mixed** and **369,967,260 streaming** cycles. Both reference handlers
 still win both workloads; the objective remains unmet.
+
+A30 computes the second newly generated checkpoint's checksum from its address
+delta, after the first write quiesces. An independent full-checksum oracle covers
+512–4096-byte pages and wide, equal and extreme addresses. It changes no read
+validation, disk bytes or persistence barriers. All 45 focused host cases, four
+updated oracle theories, 30 native cases and both ROM allocation gates pass.
+The unchanged screens pass at **5,155,060 mixed** and **369,880,490 streaming**.
+
+A31 replaces separate read/modify/write visits with one contiguous window for
+small unaligned overwrites wholly inside an authenticated written extent. The
+window is bounded by three metadata pages; aliased input retains the existing
+ordering. Progress is reported only after the window write succeeds. Host checks
+cover surrounding bytes, alias fallback, cancellation and failed reads; compiled
+tests cover both geometries, format profiles, arena undo and stack/workspace
+guards. All 19 focused host and 34 native cases pass, as do both ROM allocation
+gates with zero operation-time Exec allocations. The Release build and 141
+rebuilt CopperStart replay cases pass; the full solution run is pending.
+
+Unchanged A31 screens pass at **5,007,170 mixed** and **369,770,130 streaming**
+with identical persisted images. Streaming is slightly faster than the latest
+SFS 1.279 median (369,856,955), but FFS still wins both workloads (2,782,740 mixed;
+367,442,715 streaming). These single screens do not establish acceptance. The
+performance objective remains active and unmet. The ROM probes cover partial
+packet/allocation behavior; full ROM workload and physical-media qualification
+remain unrun.

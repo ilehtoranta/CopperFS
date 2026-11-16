@@ -28,6 +28,41 @@ public static class ShadowFilesystemProbe
             if (result == StepResult.Complete)
             {
                 CpxError error;
+                if(memory.Read32(0x8328)!=0)
+                {
+                    if(phase==0) { memory.Write32(0x9000,0x66696c65); error=engine.BeginCreate(Wide.From(1),0x9000,4); }
+                    else if(phase==1)
+                    {
+                        id=engine.MutatedObject;
+                        for(uint n=0;n<8192;n++) memory.Write8(0x9000+n,(byte)(n*17+3));
+                        error=engine.BeginMappedWrite(id,default,0x9000,8192);
+                    }
+                    else if(phase==2)
+                    {
+                        for(uint n=0;n<1024;n++) memory.Write8(0x9000+n,(byte)(n*23+9));
+                        error=engine.BeginMappedWrite(id,Wide.From(1023),0x9000,1024);
+                    }
+                    else if(phase==3)
+                    {
+                        for(uint n=0;n<769;n++) memory.Write8(0x9000+n,(byte)(n*13+5));
+                        error=engine.BeginMappedWrite(id,Wide.From(4093),0x9000,769);
+                    }
+                    else if(phase==4) error=engine.BeginPersistenceBarrier();
+                    else if(phase==5) error=engine.BeginRemount();
+                    else if(phase==6) error=engine.BeginFileRead(id,default,0x9000,8192);
+                    else
+                    {
+                        if(engine.TransferredBytes!=8192) return 31;
+                        for(uint n=0;n<8192;n++)
+                        {
+                            byte expected=(byte)(n>=4093&&n<4862?(n-4093)*13+5:n>=1023&&n<2047?(n-1023)*23+9:n*17+3);
+                            if(memory.Read8(0x9000+n)!=expected) return 32;
+                        }
+                        return memory.Read32(0x8330)==2&&memory.Read32(0x8334)==2?0u:33u;
+                    }
+                    if(error!=CpxError.None) return 200+(uint)error;
+                    phase++; continue;
+                }
                 if (memory.Read32(0x8320) != 0)
                 {
                     if (phase == 0) { memory.Write32(0x9000, 0x66696c65); error = engine.BeginCreate(Wide.From(1), 0x9000, 4); }
@@ -167,6 +202,11 @@ public static class ShadowFilesystemProbe
             }
             if (result != StepResult.NeedIo) continue;
             var io = engine.Request;
+            if(memory.Read32(0x8328)!=0&&(phase is 3 or 4)&&(io.Kind is IoKind.Read or IoKind.Write))
+            {
+                uint counter=io.Kind==IoKind.Read?0x8330u:0x8334u;
+                memory.Write32(counter,memory.Read32(counter)+1);
+            }
             memory.Write32(0x8004, io.Sector.High); memory.Write32(0x8008, io.Sector.Low);
             memory.Write32(0x800c, io.Buffer); memory.Write32(0x8010, io.Bytes); memory.Write32(0x8000, (uint)io.Kind + 1);
             if (engine.CompleteIo(io.Token, io.Bytes, true) != CpxError.None) return 6;
@@ -201,7 +241,11 @@ public class ShadowFilesystemInstructions
     public void CompiledArenaUndoAppendsAndCataloguePromotionRespectBothWorkspaceGuards(bool catalogue,bool promotion)
         => Run(512,false,true,true,false,catalogue,promotion,false,!promotion,true);
 
-    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false, bool append = false, bool arenaUndo = false)
+    [Theory][InlineData(512,false,false)][InlineData(512,true,true)][InlineData(4096,false,false)][InlineData(4096,true,false)]
+    public void CompiledPartialWriteWindowsPreservePayloadWithTwoReadsAndTwoWrites(int unit,bool catalogue,bool arenaUndo)
+        => Run(unit,false,true,true,false,catalogue,false,false,false,arenaUndo,true);
+
+    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false, bool append = false, bool arenaUndo = false, bool windowRewrite = false)
     {
         var compiled = Compilation.Value;
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
@@ -220,6 +264,7 @@ public class ShadowFilesystemInstructions
         bus.Put(0x831c, fastShrink ? 1u : 0u);
         bus.Put(0x8320, append ? 1u : 0u);
         bus.Put(0x8324, arenaUndo ? 1u : 0u);
+        bus.Put(0x8328, windowRewrite ? 1u : 0u);
         uint arenaEnd=0x60000+CpxArena.Bytes(4096),bufferEnd=0x70000+CpxEngine<GuestMemory>.ArenaUndoBufferedStorageBytes(true);
         if(arenaUndo) { bus.Memory.AsSpan((int)arenaEnd,32).Fill(0xa5); bus.Memory.AsSpan((int)bufferEnd,32).Fill(0xa5); }
         bus.Memory.AsSpan(0xee000, 8192).Fill(0xa5); bus.Put(0xf0000, 0xf1000);
@@ -253,8 +298,14 @@ public class ShadowFilesystemInstructions
         else if (longStrings) Assert.Equal(0UL, check.FileCount);
         else if (!controlOnly)
         {
-            int length = append ? 1048576 : directInodes ? 6003 : 8192;
+            int length = windowRewrite ? 8192 : append ? 1048576 : directInodes ? 6003 : 8192;
             byte[] expected = Enumerable.Range(0, length).Select(n => (byte)(n * 17 + 3)).ToArray(), actual = new byte[length];
+            if(windowRewrite)
+            {
+                for(int n=0;n<1024;n++) expected[1023+n]=(byte)(n*23+9);
+                for(int n=0;n<769;n++) expected[4093+n]=(byte)(n*13+5);
+                Assert.Equal(2u,bus.Get(0x8330)); Assert.Equal(2u,bus.Get(0x8334));
+            }
             Assert.Equal(length, check.Read("file"u8, 0, actual)); Assert.Equal(expected, actual);
         }
     }

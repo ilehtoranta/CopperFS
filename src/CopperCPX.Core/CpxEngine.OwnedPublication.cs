@@ -48,7 +48,9 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             }
             uint buffer=memory.Read32(plan+48),bytes=memory.Read32(plan+40);
             ulong address=Anchor+(root+1)*memory.Read32(plan+44);
-            MakeOwnedShadowCheckpoint(buffer,bytes,address,GetWide(plan+32),GetWide(plan+24));
+            if(memory.Read32(plan+12)!=uint.MaxValue&&BufferedWrites)
+                CpxShadowChecksums<TMemory>.RetargetOwned(ref memory,buffer,bytes,address,CrcTable,BufferedStorageAddress,Arena+4080);
+            else MakeOwnedShadowCheckpoint(buffer,bytes,address,GetWide(plan+32),GetWide(plan+24));
             if(memory.Read32(plan+12)==uint.MaxValue) memory.Write32(plan+12,root);
             memory.Write32(plan+8,root+1);
             return Issue(IoKind.Write,address,buffer,bytes,103);
