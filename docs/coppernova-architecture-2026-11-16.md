@@ -512,7 +512,8 @@ cover surrounding bytes, alias fallback, cancellation and failed reads; compiled
 tests cover both geometries, format profiles, arena undo and stack/workspace
 guards. All 19 focused host and 34 native cases pass, as do both ROM allocation
 gates with zero operation-time Exec allocations. The Release build and 141
-rebuilt CopperStart replay cases pass; the full solution run is pending.
+rebuilt CopperStart replay cases pass. The full solution passes 2,579 tests with
+zero failures and ten skips (613 CPX host; 135 native with seven ROM skips).
 
 Unchanged A31 screens pass at **5,007,170 mixed** and **369,770,130 streaming**
 with identical persisted images. Streaming is slightly faster than the latest
@@ -521,3 +522,30 @@ SFS 1.279 median (369,856,955), but FFS still wins both workloads (2,782,740 mix
 performance objective remains active and unmet. The ROM probes cover partial
 packet/allocation behavior; full ROM workload and physical-media qualification
 remain unrun.
+
+Further unchanged screening results are below. Every row passes guest and
+independent persisted ownership/payload checks with the earlier image hashes.
+Each binary also passes both separate ROM allocation gates with matching source
+inputs, intact 4 KiB stack guards and zero operation-time Exec allocations.
+
+| Candidate | Mixed total | Streaming total | Focused host / native cases |
+|---|---:|---:|---:|
+| A32, early owned append admission and general file-frame separation | 5,036,500 | 369,703,890 | 52 / 34 |
+| A33, bounded validated descriptor hints | 5,040,960 | 369,746,220 | 72 / 34 |
+| A34, adjacent checkpoint read batch and recovery frame separation | 5,010,360 | 369,679,530 | 54 / 34 |
+| A35, scalar checked I/O address and exclusive-end arithmetic | 4,985,520 | 369,582,570 | 58 / 48 |
+
+A32 improves streaming but regresses mixed work. A33's hints show no measured
+gain and are omitted from the next retained candidate. A34 borrows the idle
+42-page undo bank only during quiescent recovery; every checkpoint still has its
+own checksum, identity, generation, catalogue and consistency checks. Six host
+theories cover every page size, each corrupt checkpoint copy, the arena lease,
+workspace guards and mutation after remount. Unbuffered execution retains
+independent checkpoint reads.
+
+A35 replaces wide arithmetic aggregate temporaries with explicit checked high
+and low words. An independent big-integer oracle covers 10,500 random/boundary
+cases across seven geometry combinations, including carries, overflow, capacity
+ends and malformed spans. Native coverage includes DMA and storage cancellation.
+These intermediate candidates did not receive separate full solution runs.
+FFS remains faster in both workloads; the performance goal remains unmet.
