@@ -187,17 +187,21 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
     private void MakeCheckpoint(uint buffer, ulong address, ulong transaction)
     {
         uint rootBytes = ((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page)));
-        for (uint at = 0; at < rootBytes; at += 4) memory.Write32(buffer + at, 0);
+        uint control = memory.Read32(Arena + (ControlRoot));
+        bool extended = (memory.Read32(Arena + (OwnedImages)) & 2) != 0;
+        uint copiedEnd = control == 0 ? 96u : extended ? 1024u : 496u;
+        // Every payload byte is either copied from the admitted owned template
+        // or cleared. The header is rebuilt, including every reserved field.
+        for (uint at = 0; at < 96; at += 4) memory.Write32(buffer + at, 0);
+        if (control != 0) memory.Copy(buffer + 96, control + 96, copiedEnd - 96);
+        for (uint at = copiedEnd; at < rootBytes; at += 4) memory.Write32(buffer + at, 0);
         memory.Write32(buffer, Magic); memory.Write16(buffer + 4, 2); memory.Write16(buffer + 6, 5);
         Put(buffer + 16, address >> (int)memory.Read32(Arena + (LogicalAddressShift))); Put(buffer + 32, transaction); memory.Write16(buffer + 52, 32);
         Put(buffer + 72, (((ulong)memory.Read32((Arena + Identity)) << 32) | memory.Read32((Arena + Identity) + 4))); Put(buffer + 80, transaction);
         Put(buffer + 88, (((ulong)memory.Read32((Arena + NextMappingRoot)) << 32) | memory.Read32((Arena + NextMappingRoot) + 4)));
-        uint control = memory.Read32(Arena + (ControlRoot));
         if (control != 0)
         {
-            bool extended = (memory.Read32(Arena + (OwnedImages)) & 2) != 0;
             memory.Write16(buffer + 52, extended ? 960u : 432u); memory.Write16(buffer + 56, memory.Read16(control + 56)); memory.Write16(buffer + 58, 32);
-            for (uint at = 96; at < (extended ? 1024u : 496u); at += 4) memory.Write32(buffer + at, memory.Read32(control + at));
         }
         memory.Write32(buffer + 8, Crc(buffer, rootBytes));
     }

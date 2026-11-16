@@ -372,4 +372,21 @@ outside byte; all 22 focused host and 16 compiled filesystem cases pass. Two
 compiled cases append 1 MiB through a bitmap-window boundary, flush, remount and
 verify every byte with the 4 KiB stack guard. Workloads pass at **5,465,230 mixed**
 and **370,292,030 streaming** cycles, retaining the same media hashes. The full
-CPX host run is pending. The performance objective remains unmet.
+CPX host run passes 589 cases. The performance objective remains unmet.
+
+A23 rebuilds the complete zeroed checkpoint header and copies the admitted owned
+payload in bulk, clearing the remaining tail. The resulting media hashes are
+unchanged. Mixed passes at **5,447,890** cycles; streaming passes at **370,301,010**,
+8,980 cycles worse than A22's screening result. Focused host coverage passes 39
+cases, full CPX host coverage passes 589, and rebuilt filesystem replay passes 141.
+The complete solution's native run is pending. Automatic compiler clearing is a
+separate diagnostic variant: 5,437,990 mixed and 370,313,400 streaming cycles.
+It is not retained as the default; the build script records the selected policy.
+
+A separate **legacy CPX4** Kickstart gate fails at record-lock stage 172 with DOS
+error 103. The stack guard is intact (980-byte peak), operation-time Exec allocation
+count is zero, and 68,304 bytes remain free. The failed RAM image shows discovery's
+prepared CRC table in the final record-lock pool. Startup's assumption that this
+pool still contains only cleared allocation bytes is invalid for small metadata
+geometries. This is a failed gate, with a bounded pool-initialization fix in
+progress. It does not qualify CPX5 full-ROM or physical-media coverage.
