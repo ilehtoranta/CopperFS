@@ -423,56 +423,50 @@ public partial struct CpxEngine<TMemory>
 
     public StepResult Step()
     {
-        uint budget = CpuPhaseBudget;
+        uint context = Arena;
+        if (memory.Read32(context + Waiting) != 0) return StepResult.NeedIo;
+        if (memory.Read32(context + ErrorAt) != 0) return StepResult.Failed;
+        if (memory.Read32(context + Finished) != 0) return StepResult.Complete;
+        uint policy = memory.Read32(context + CheckpointPolicy);
+        uint budget = (policy & 2) != 0 ? 4u : 1u;
+        uint shadow = (policy & 4) != 0 ? policy & ~7u : 0;
+        // The single owner admits one bounded visit. A pure continuation keeps
+        // its healthy/pending state; I/O, failure and completion end the visit.
+        // Cancellation is still observed before each of the four phases.
         for (uint turn = 0; turn < budget; turn++)
         {
-            StepResult result = StepOnce();
+            if (memory.Read32(context + CancelAt) != 0) return Fail(CpxError.Cancelled);
+            StepResult result = shadow != 0 && memory.Read32(shadow) == 1 ? ShadowReadStep() : DispatchStep();
+            if (result == StepResult.Complete && memory.Read32(context + CallDepth) != 0)
+            {
+                uint depth = memory.Read32(context + CallDepth) - 1, frame = context + 9472 + depth * 8;
+                memory.Write32(context + CallDepth, depth);
+                memory.Write32(context + OperationAt, memory.Read32(frame));
+                memory.Write32(context + Phase, memory.Read32(frame + 4));
+                memory.Write32(context + Finished, 0);
+                continue;
+            }
+            if (result == StepResult.Failed)
+            {
+                // Rejected unpublished operations can roll back. A failed I/O
+                // owner stays poisoned and must quiesce before mount reuse.
+                uint owner = memory.Read32(context + CallDepth) != 0 ? memory.Read32(context + 9472) : memory.Read32(context + OperationAt);
+                if (owner >= (uint)CpxOperation.WriteInline && memory.Read32(context + Poisoned) == 0)
+                {
+                    memory.Write32(context + CallDepth, 0);
+                    if (memory.Read32(context + BufferEnabled) == 1) DiscardBufferedOperation();
+                    else
+                    {
+                        memory.Write32(context + Active, 0);
+                        memory.Write32(context + AbortOnly, 0);
+                        memory.Write32(context + StagedCount, 0);
+                    }
+                }
+            }
             if (result != StepResult.Pending) return result;
         }
         return StepResult.Pending;
     }
-
-    private StepResult StepOnce()
-    {
-        uint cpxArenaBase = Arena;
-        if (memory.Read32(cpxArenaBase + (Waiting)) != 0)
-            return StepResult.NeedIo;
-        if (memory.Read32(cpxArenaBase + (ErrorAt)) != 0)
-            return StepResult.Failed;
-        if (memory.Read32(cpxArenaBase + (Finished)) != 0)
-            return StepResult.Complete;
-        if (memory.Read32(cpxArenaBase + (CancelAt)) != 0)
-            return Fail(CpxError.Cancelled);
-        StepResult result = ShadowVolume && memory.Read32(ShadowStorage) == 1 ? ShadowReadStep() : DispatchStep();
-        if (result == StepResult.Complete && memory.Read32(cpxArenaBase + (CallDepth)) != 0)
-        {
-            uint depth = memory.Read32(cpxArenaBase + (CallDepth)) - 1, frame = cpxArenaBase + 9472 + depth * 8;
-            memory.Write32(cpxArenaBase + (CallDepth), depth);
-            memory.Write32(cpxArenaBase + (OperationAt), memory.Read32(frame));
-            memory.Write32(cpxArenaBase + (Phase), memory.Read32(frame + 4));
-            memory.Write32(cpxArenaBase + (Finished), 0);
-            return StepResult.Pending;
-        }
-
-        // Rejected unpublished operations leave only unreachable journal images.
-        // I/O failures remain poisoned and must recover before arena reuse.
-        uint owner = memory.Read32(cpxArenaBase + (CallDepth)) != 0 ? memory.Read32(cpxArenaBase + 9472) : memory.Read32(cpxArenaBase + (OperationAt));
-        if (result == StepResult.Failed && owner >= (uint)CpxOperation.WriteInline && memory.Read32(cpxArenaBase + (Poisoned)) == 0)
-        {
-            memory.Write32(cpxArenaBase + (CallDepth), 0);
-            if ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1))
-                DiscardBufferedOperation();
-            else
-            {
-                memory.Write32(cpxArenaBase + (Active), 0);
-                memory.Write32(cpxArenaBase + (AbortOnly), 0);
-                memory.Write32(cpxArenaBase + (StagedCount), 0);
-            }
-        }
-
-        return result;
-    }
-
     private StepResult DispatchStep()
     {
         uint cpxArenaBase = Arena;

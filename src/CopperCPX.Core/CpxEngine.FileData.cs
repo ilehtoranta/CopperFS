@@ -15,9 +15,15 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         if ((buffer == 0 && bytes != 0) || buffer > uint.MaxValue - bytes || !Scalar64.Add(position, ((ulong)(bytes)), out _))
             return CpxError.InvalidArgument;
+        if (op == CpxOperation.ReadFile && TryBeginCachedRead(id, position, buffer, bytes)) return CpxError.None;
         CpxError error = StartOperation(op, id);
         if (error != CpxError.None)
             return error;
+        if (op == CpxOperation.WriteMapped)
+        {
+            uint fast = memory.Read32(cpxArenaBase + FastPointer);
+            if (fast != 0 && memory.Read32(fast) == 3) InvalidateFastWrite();
+        }
         {
             uint cpxWideAddress = cpxArenaBase + (uint)(FilePosition);
             ulong cpxWideValue = position;

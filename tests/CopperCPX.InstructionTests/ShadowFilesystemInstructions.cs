@@ -97,11 +97,12 @@ public static class ShadowFilesystemProbe
                     if (!engine.LookupFound || engine.LookupId.Low != id.Low) return 8;
                     error = engine.BeginFileRead(id, default, 0x9000, 8192);
                 }
-                else
+                else if (phase == 6)
                 {
                     for (uint n = 0; n < 8192; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 5;
-                    return 0;
+                    error = engine.BeginFileRead(id, default, 0x9000, 8192);
                 }
+                else { for (uint n = 0; n < 8192; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 12; return 0; }
                 if (error != CpxError.None) return 200 + (uint)error;
                 phase++;
             }

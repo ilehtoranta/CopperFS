@@ -356,6 +356,7 @@ public partial struct CpxEngine<TMemory>
             memory.Write32(cpxArenaBase + (Phase), write ? 520u : 530u);
         }
 
+        if (!write) ArmReadCapability(id, physical, memory.Read32(record + 12), length, shift);
         return true;
     }
 

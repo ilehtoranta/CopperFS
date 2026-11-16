@@ -1500,6 +1500,171 @@
         "fullRom": "separate gate not run",
         "physicalMedia": "not run"
       }
+    },
+    "A16": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Single-admission bounded executor and an invalidated mapping capability for repeated aligned reads",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1095,
+          "CompletedFrames": 1095,
+          "HostSeconds": 5.8483167,
+          "PhaseCycles": {
+            "mutationCycles": 2979270,
+            "flushCycles": 781450,
+            "remountCycles": 865840,
+            "verifyCycles": 1374060
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3735,
+          "CompletedFrames": 3735,
+          "HostSeconds": 26.7347836,
+          "PhaseCycles": {
+            "mutationCycles": 3260360,
+            "flushCycles": 928410,
+            "remountCycles": 884940,
+            "verifyCycles": 367368290
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "F7A6FFA7A9AD3FC79DB101CBEE1A80B007015E26288D577F55EBB4CDE7B18868",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "fullSolution": {
+          "passed": 2512,
+          "failed": 0,
+          "skipped": 9,
+          "hostCpx": 575,
+          "nativePassed": 106,
+          "nativeRomSkipped": 6
+        },
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run",
+        "focusedHost": 64,
+        "copperStartRebuiltReplay": 141
+      }
+    },
+    "A17": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "A16 with the coarse 30-second idle-maintenance deadline on timer.device VBlank instead of MicroHz",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1094,
+          "CompletedFrames": 1094,
+          "HostSeconds": 9.169486,
+          "PhaseCycles": {
+            "mutationCycles": 2967200,
+            "flushCycles": 779000,
+            "remountCycles": 859780,
+            "verifyCycles": 1363380
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3722,
+          "CompletedFrames": 3722,
+          "HostSeconds": 25.7824776,
+          "PhaseCycles": {
+            "mutationCycles": 3246090,
+            "flushCycles": 917730,
+            "remountCycles": 886800,
+            "verifyCycles": 365554300
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "AFD2C4E28C7D0FCB6B8C1335C2DB8EEAF3707C55FBE989EB618D8D5B0D63CACD",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "fullSolution": "running",
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run"
+      },
+      "diagnosticEvidence": {
+        "A15CallingCliRomCycles": 15236587,
+        "FFSCallingCliRomCycles": 13592010,
+        "A15DosReadRomCycles32Calls": 121298,
+        "explanation": "Most extra ROM work was outside DOS.Read; hot code reads CIA timer registers. VBlank maintenance reduced the unprofiled streaming result by 1837080 cycles."
+      }
     }
   },
   "shadowProtocol": {

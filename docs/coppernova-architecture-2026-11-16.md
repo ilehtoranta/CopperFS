@@ -297,3 +297,21 @@ native coverage is 106 passed and six skipped ROM gates. The corrected dynamic
 promotion/acknowledged-flush cases pass separately, as does the compiled 70-file
 promotion guard. This is not reported as a clean full-suite pass. No separate
 CPX5 full-ROM or physical-media release gate has run.
+A16 combines admission for a bounded continuation visit, observing cancellation
+before each phase and ending at I/O, failure or final completion. Repeated aligned
+reads can reuse authenticated mapping scalars in the existing fast context; no
+DOS buffer is retained, and mutation invalidates the capability. Its workloads
+pass at **6,000,620 mixed** and **372,442,000 streaming** cycles. The complete
+Release snapshot is clean: **2,512 passed, zero failed, nine skipped**, including
+575 CPX host and 106 native cases. The six native ROM skips remain unqualified.
+Rebuilt CopperStart replay passes 141 cases.
+
+A17 moves the coarse 30-second idle-maintenance deadline from `MicroHz` to
+`VBlank`; record-lock timers and explicit durability barriers are unchanged.
+Task-attributed profiling placed most extra streaming ROM time in the caller,
+and little of that was inside DOS.Read. Hot ROM code reads CIA timer registers.
+The timer change reduces streaming by 1,837,080 cycles to **370,604,920**. Mixed
+passes at **5,969,360** cycles. Both guest and independent persisted-image checks
+pass and final image hashes match A16. FFS and SFS still win both workloads.
+The A17 full Release snapshot is running. No separate CPX5 full-ROM or physical
+media release gate is claimed.
