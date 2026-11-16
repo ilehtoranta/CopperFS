@@ -2355,6 +2355,94 @@
         "fullRomCpx5": "separate gate not run",
         "physicalMedia": "not run"
       }
+    },
+    "A26": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Native transport borrows the stable pending descriptor during one service call, eliminating engine and dispatcher aggregate copies",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1118,
+          "CompletedFrames": 1118,
+          "HostSeconds": 5.3352729,
+          "PhaseCycles": {
+            "mutationCycles": 2586950,
+            "flushCycles": 712290,
+            "remountCycles": 723740,
+            "verifyCycles": 1310630
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3745,
+          "CompletedFrames": 3745,
+          "HostSeconds": 27.3900941,
+          "PhaseCycles": {
+            "mutationCycles": 3103440,
+            "flushCycles": 836310,
+            "remountCycles": 731050,
+            "verifyCycles": 365425110
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "clrPolicy": "always",
+        "hunkSha256": "99856E085D7DA934DE7B8649866A202B03B03DAE98D9FC7C8F4CE78054C9837B",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHostIncludingPendingDescriptorInvariant": 63,
+        "compiledFilesystemTransportAndEventLoop": 37,
+        "additionalBorrowedCancellationCases": 4,
+        "legacyCpx4FullRom": {
+          "passed": true,
+          "stage": 0,
+          "dosError": 0,
+          "stackPeak": 936,
+          "stackGuardIntact": true,
+          "operationExecAllocations": 0,
+          "sourceInputsMatched": true
+        },
+        "fullSolution": "not run for this intermediate candidate",
+        "fullRomCpx5": "separate gate not run",
+        "physicalMedia": "not run"
+      }
     }
   },
   "shadowProtocol": {

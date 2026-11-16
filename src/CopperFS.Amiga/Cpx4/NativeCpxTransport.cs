@@ -110,6 +110,15 @@ public static class NativeCpxTransport
     }
     public static StepResult Service(uint arena,CpxIo io,out uint completed,out bool unsupported)
         => ServiceRequest(arena,in io,out completed,out unsupported);
+    internal static unsafe StepResult ServiceEngineRequest(uint arena,out uint token,out uint completed,out bool unsupported)
+    {
+        // The engine remains single-owner and suspended in NeedIo throughout
+        // this call. Capture identity before device/bounce completion can touch
+        // caller storage; never retain this reference across visits.
+        ref readonly CpxIo io=ref *(CpxIo*)(arena+CpxArena.PendingIo);
+        token=io.Token;
+        return ServiceRequest(arena,in io,out completed,out unsupported);
+    }
     internal static StepResult ServiceRequest(uint arena,in CpxIo io,out uint completed,out bool unsupported)
     {
         completed=0; unsupported=false; APTR s=State(arena),request=APTR.FromPointer(APTR.ReadUInt32(s,16));

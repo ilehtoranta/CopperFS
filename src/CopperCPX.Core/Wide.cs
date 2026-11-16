@@ -219,6 +219,11 @@ public struct CpxIo
 /// <summary>Stable byte offsets, shared by host tests and the native consumer.</summary>
 public static class CpxArena
 {
+    // While Step returns NeedIo, these six words are a borrowed CpxIo:
+    // kind, sector high/low, buffer, bytes, next token. Issue publishes both
+    // token copies before Waiting; no later Issue can run until completion.
+    // The native transport borrows this view only during its service call.
+    public const uint PendingIo = 136;
     public const uint MountBytes = 8192, OperationBytes = 8192, PoolBytes = 16384;
     // Recovery and staging use 64 32-byte descriptors after the six pages.
     public const uint IndexBytes = 64 * 32;

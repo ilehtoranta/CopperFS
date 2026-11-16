@@ -418,3 +418,15 @@ Both unchanged workloads pass with identical persisted media hashes at
 **5,390,960 mixed** and **370,201,990 streaming** cycles. Both references remain
 faster; these single screening trials do not establish acceptance. CPX5 full-ROM
 and physical-media gates remain unrun.
+
+A26 makes the pending arena request a borrowed native transport view. Its six
+words retain their existing layout; the last word is the next-token counter,
+which equals the current completion token while the engine waits. The native
+consumer captures identity before servicing storage and retains no reference
+across visits. Host request-driving checks compare every published descriptor
+word, and compiled tests exercise split/bounced transfers, delayed reads and
+unsupported discard through both APIs. All 63 focused host and 37 native cases
+pass; four additional borrowed-path cancellation cases pass. The legacy CPX4
+allocation gate passes with matching sources and an intact 4 KiB stack guard.
+Unchanged workloads pass at **5,333,610 mixed** and **370,095,910 streaming** cycles
+with identical persisted image hashes. The performance objective remains unmet.

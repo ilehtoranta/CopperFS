@@ -175,11 +175,10 @@ internal static class NativeCpxLifecycle
     {
         StepResult step=engine.Step();
         if(step!=StepResult.NeedIo) return step;
-        CpxIo io=engine.Request;
-        StepResult result=NativeCpxTransport.Service(arena,io,out uint actual,out bool unsupported);
+        StepResult result=NativeCpxTransport.ServiceEngineRequest(arena,out uint token,out uint actual,out bool unsupported);
         if(result==StepResult.Pending) return NativeCpxTransport.Waiting(arena)?StepResult.NeedIo:StepResult.Pending;
-        if(unsupported) engine.CompleteUnsupportedDiscard(io.Token);
-        else engine.CompleteIo(io.Token,actual,result==StepResult.Complete);
+        if(unsupported) engine.CompleteUnsupportedDiscard(token);
+        else engine.CompleteIo(token,actual,result==StepResult.Complete);
         return StepResult.Pending;
     }
     private static StepResult Probe(uint arena,APTR state,APTR port,Phase phase,ref CpxEngine<NativeCpxMemory> engine)
