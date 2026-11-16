@@ -12,8 +12,8 @@ public partial struct CpxEngine<TMemory>
             return -1;
         uint count = memory.Read32(cpxArenaBase + StagedCount), table = memory.Read32(cpxArenaBase + GeometryIndex);
         uint high = (uint)(at >> 32), low = (uint)at;
-        for (uint n = 0; n < count; n++)
-            if (memory.Read32(table + n * 32) == high && memory.Read32(table + n * 32 + 4) == low)
+        for (uint n = 0; n < count; n++, table += 32)
+            if (memory.Read32(table + 4) == low && memory.Read32(table) == high)
                 return (int)n;
         return -1;
     }

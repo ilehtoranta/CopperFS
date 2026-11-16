@@ -170,6 +170,7 @@ public partial struct CpxEngine<TMemory>
         // prevents a raw operation number from reusing a previous caller's input.
         if (operation is >= CpxOperation.WriteInline and <= CpxOperation.Lookup || operation >= CpxOperation.Create && operation != CpxOperation.Reclaim)
             return CpxError.InvalidArgument;
+        if (operation == CpxOperation.ReadObject && TryBeginCachedObjectRead(argument)) return CpxError.None;
         return StartOperation(operation, argument, buffer, creditLimit);
     }
 
@@ -416,6 +417,17 @@ public partial struct CpxEngine<TMemory>
 
         if (kind is IoKind.Write or IoKind.Discard && memory.Read32(cpxArenaBase + (ReadOnlyAt)) != 0)
             return Fail(CpxError.ReadOnly);
+        // In this single-owner buffered profile, a completed flush remains a
+        // persistence barrier until another device request is issued. Reads
+        // conservatively invalidate this opportunity too. Failed completions
+        // poison the mount, so they can never authorize reuse.
+        if (kind == IoKind.Flush && ShadowVolume && BufferedWrites && memory.Read32(cpxArenaBase + Poisoned) == 0 &&
+            memory.Read32(cpxArenaBase + PendingKind) == (uint)IoKind.Flush && memory.Read32(cpxArenaBase + NextToken) != 0)
+        {
+            memory.Write32(cpxArenaBase + IoReady, 1);
+            memory.Write32(cpxArenaBase + Phase, nextPhase);
+            return StepResult.Pending;
+        }
         uint next = memory.Read32(cpxArenaBase + (NextToken)) + 1;
         if (next == 0)
             return Fail(CpxError.ResourceExhausted);
@@ -504,6 +516,7 @@ public partial struct CpxEngine<TMemory>
             case CpxOperation.AbortTransaction:
                 return TransactionStep();
             case CpxOperation.ReadObject:
+                if (memory.Read32(cpxArenaBase + Phase) == CachedObjectCompletionPhase) return Done();
                 return ObjectStep();
             case CpxOperation.WriteInline:
             case CpxOperation.ResizeInline:

@@ -24,6 +24,9 @@ internal static class CpxShadowChecksums<TMemory> where TMemory : struct, ICpxMe
     // an incoming checksum; the reader must compare the returned value.
     internal static uint ExpectedRetarget(ref TMemory memory,uint buffer,uint bytes,ulong address,uint table,uint zeros,uint word)
     {
+        uint high=memory.Read32(buffer+16)^(uint)(address>>32),low=memory.Read32(buffer+20)^(uint)address;
+        if(high==0&&low==0) return memory.Read32(buffer+8);
+        if(high==0&&low<32&&TryShortAddressDelta(bytes,low,out uint small)) return memory.Read32(buffer+8)^small;
         uint delta=0;
         memory.Write32(word,memory.Read32(buffer+16)^(uint)(address>>32));
         for(uint at=0;at<4;at++) delta=(delta>>8)^memory.Read32(table+((delta^memory.Read8(word+at))&255)*4);
@@ -39,6 +42,29 @@ internal static class CpxShadowChecksums<TMemory> where TMemory : struct, ICpxMe
         }
         for(uint at=0;at<remaining;at++) delta=(delta>>8)^memory.Read32(table+(delta&255)*4);
         return memory.Read32(buffer+8)^delta;
+    }
+
+    // Linear CRC contributions of address byte 23, followed by bytes-24 zeros.
+    // Checkpoint self-address differences use these five low bits. Other
+    // lengths and address differences retain the general exact transform.
+    private static bool TryShortAddressDelta(uint bytes,uint difference,out uint delta)
+    {
+        uint a,b,c,d,e;
+        switch(bytes)
+        {
+            case 512: a=0x061a2649; b=0x0c344c92; c=0x18689924; d=0x30d13248; e=0x61a26490; break;
+            case 1024: a=0x3e30ef23; b=0x7c61de46; c=0xf8c3bc8c; d=0xf46b0fe9; e=0xed3a6923; break;
+            case 2048: a=0x13fc09c5; b=0x27f8138a; c=0x4ff02714; d=0x9fe04e28; e=0x3a2ceaa1; break;
+            case 4096: a=0x54f8810e; b=0xa9f1021c; c=0x560e72c9; d=0xac1ce592; e=0x5dd5bdd5; break;
+            default: delta=0; return false;
+        }
+        delta=0;
+        if((difference&1)!=0) delta^=a;
+        if((difference&2)!=0) delta^=b;
+        if((difference&4)!=0) delta^=c;
+        if((difference&8)!=0) delta^=d;
+        if((difference&16)!=0) delta^=e;
+        return true;
     }
 
     internal static uint Compute(ref TMemory memory, uint buffer, uint bytes, uint table, uint zeros, uint word)

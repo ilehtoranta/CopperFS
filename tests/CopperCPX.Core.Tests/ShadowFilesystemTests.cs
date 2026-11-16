@@ -99,14 +99,14 @@ public class ShadowFilesystemTests
     }
 
     [Fact]
-    public void ControlOnlyPublicationWritesJustTwoCheckpointsAndKeepsTheLabel()
+    public void ControlOnlyPublicationWritesBothCheckpointsInOneRequestAndKeepsTheLabel()
     {
         var disk = new MemoryDevice(); Cpx4Volume<MemoryDevice>.FormatShadow(disk, 512, new byte[49152], 12345);
         var ram = new Ram(new byte[1000000]); var engine = Mount(disk, ram);
         "New"u8.CopyTo(ram.Bytes.AsSpan(100000)); engine.BeginLabel(100000, 3); EngineTests.Drive(ref engine, ram, disk);
         int writes = disk.Writes, flushes = disk.Flushes;
         engine.BeginPersistenceBarrier(); EngineTests.Drive(ref engine, ram, disk);
-        Assert.Equal(2, disk.Writes - writes); Assert.Equal(3, disk.Flushes - flushes);
+        Assert.Equal(1, disk.Writes - writes); Assert.Equal(2, disk.Flushes - flushes);
         engine.BeginRemount(); EngineTests.Drive(ref engine, ram, disk);
         Assert.Equal("New", VolumeLabelTests.Cached(engine, ram));
         new Cpx4Volume<MemoryDevice>(disk, new byte[49152]).Check();
@@ -193,7 +193,7 @@ public class ShadowFilesystemTests
         "file"u8.CopyTo(ram.Bytes.AsSpan(100000)); engine.BeginCreate(Wide.From(1), 100000, 4); EngineTests.Drive(ref engine, ram, disk);
         int before = disk.Flushes;
         engine.BeginPersistenceBarrier(); EngineTests.Drive(ref engine, ram, disk);
-        Assert.Equal(3, disk.Flushes - before); // two publication barriers plus explicit final drain
+        Assert.Equal(2, disk.Flushes - before); // the completed checkpoint barrier also satisfies the caller
         before = disk.Flushes; int writes = disk.Writes;
         Mount(disk, new Ram(new byte[1000000]), readOnly: true);
         Assert.Equal(before, disk.Flushes); Assert.Equal(writes, disk.Writes);

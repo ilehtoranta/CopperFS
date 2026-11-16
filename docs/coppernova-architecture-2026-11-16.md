@@ -594,10 +594,111 @@ A39 replaces only classic cached seek arithmetic with checked scalar words;
 wide seeks and resize retain the general path. Its 12,000-case big-integer
 oracle covers signed extremes, all bases, wide sizes, overflow and unchanged
 positions on errors. All 166 focused host, 645 full CPX host, 50 focused native
-and 141 rebuilt CopperStart replay cases pass. The Release solution builds;
-the complete native run is pending. A37 and A38 each pass 50 native cases too.
+and 141 rebuilt CopperStart replay cases pass. The Release solution builds and
+passes 2,611 tests with zero failures and ten skips. A37 and A38 each pass 50 native cases too.
 All three binaries pass the unchanged guest and independent image checks, with
 identical media hashes, and both source-matched ROM allocation gates retain
 intact 4 KiB stack guards and zero operation-time Exec allocations. These remain
 partial ROM gates; physical-media qualification is unrun. FFS still wins both
 workloads. The performance objective remains unmet.
+
+| Further candidate | Mixed total | Streaming total |
+|---|---:|---:|
+| A40, cached object admission | 4,903,320 | 369,509,800 |
+| A41, exact small-address CRC contributions | 4,889,710 | 369,496,540 |
+| A42, checkpoint recovery/publication frame separation | 4,881,080 | 369,490,550 |
+| A43, completed flush reuse | 4,872,590 | 369,483,260 |
+| A44, adjacent replacement checkpoint writes | 4,866,490 | 369,476,420 |
+
+These are single unchanged workload screens, not acceptance comparisons. Every
+screen passes guest verification and independent persisted ownership/full-payload
+checks; both resulting image hashes remain identical to the earlier candidates.
+Streaming is still slower than FFS. Mixed work still trails both references.
+A40 improves mixed work but regresses streaming relative to A39; later changes
+recover part of that regression.
+
+A40 admits an authenticated cached object through a dedicated pending completion
+phase. It preserves busy, cancellation, stale identity and cold traversal behavior.
+A41 uses exact polynomial CRC contributions for small self-address differences;
+random wide differences and other lengths retain the general transform. A42
+separates recovery and publication frames from map geometry restoration. None of
+these changes remove checksum, ownership or schema validation.
+
+A43 reuses a successfully completed device flush only until the next device
+request. The single mount owner observes quiescence; failed completion poisons
+the mount and cannot authorize reuse. Reads conservatively break reuse too.
+An in-place data write always requires a new flush, even with no dirty metadata.
+Both metadata-before-checkpoint and checkpoint-before-retirement barriers remain.
+The checkpoint barrier can also satisfy the enclosing ACTION_FLUSH and a following
+inhibit or shutdown without intervening I/O. These workloads now issue two device
+flush commands rather than four. The standalone publication kernel is unchanged.
+
+A44 writes two adjacent replacement checkpoints in one request when the survivor
+is an outer copy. An interior survivor uses the original two requests; recovery
+prefers an outer copy only after verifying equal-generation identity. The old
+survivor stays untouched until both new copies are persistent. The pair buffer
+borrows the caller-owned undo bank only after metadata writes have quiesced.
+Five additional cases cover 512/4096-byte units, arena undo, interior survivor
+fallback, repeated publications/remounts, self-address/CRC and old-root guards.
+
+Host coverage: A40/A41/A42/A43/A44 pass 219/63/68/207/56 focused cases;
+A44 additionally passes the five checkpoint-pair cases. Native coverage: every
+candidate passes 50 compiled filesystem/startup/event-loop/transport/resize cases.
+A43 and A44 Release builds and 141 rebuilt CopperStart replay cases pass. Their
+full solution runs pass 2,633 and 2,638 tests respectively, with zero failures
+and ten skips each. Full-ROM coverage is limited to the two
+source-matched allocation/packet gates for each binary: all pass with intact
+4 KiB stack guards and zero operation-time Exec allocations on 512 KiB Chip RAM.
+Those gates do not establish complete ROM workload or physical-media coverage.
+
+| Subsequent experiment | Mixed total | Streaming total | Decision |
+|---|---:|---:|---|
+| A45, pointer-stride/full-key metadata scans | 4,852,920 | 369,461,220 | Retain |
+| A46, zero-word CRC branch | 4,922,790 | 369,552,740 | Reject |
+| A48, branchless word CRC | 4,943,060 | 369,516,550 | Reject |
+
+A45 compares the low key word first and advances fixed descriptor/object strides;
+the complete high word remains authoritative. A 10,000-query independent oracle
+covers duplicate and colliding keys, inactive/shrunken tables and immutable RAM.
+It passes 66 focused host cases. A46 and A48 each pass 53 focused host cases.
+All three pass 66 compiled native cases and both exact-source ROM allocation
+gates, with identical independently checked workload images. The two CRC
+experiments remain rejected despite correctness: the isolated 68000/68020 CPU
+diagnostic did not predict complete Amiga workload performance. No checksum
+algorithm or format change is retained from those experiments.
+
+Each native result belongs to its archived source snapshot. The retained branch
+also keeps three earlier arena-undo addressing calls in the legacy journal path;
+they had been absent in the scratch producer used for A44/A45. A50 is the exact
+rebuild of the retained combination. Its Release solution build and all 2,639
+tests pass, with zero failures and ten skips (including seven licensed-ROM test
+groups). All 141 rebuilt CopperStart replay cases and both explicit source-matched
+ROM allocation gates pass. Physical-media tests remain unrun.
+
+A fresh two-trial A50 comparison passes all six trials in each workload:
+
+| Filesystem | Mixed median cycles | Streaming median cycles |
+|---|---:|---:|
+| CopperNova / CPX4 handler, A50 retained profile | 4,853,915 | 369,459,855 |
+| Original Kickstart FFS 40.1 | 2,782,880 | 367,442,630 |
+| Original SFS 1.279 | 3,918,540 | 369,850,835 |
+
+The goal is unmet: FFS wins both workloads, and SFS also wins mixed work. CPX
+streaming beats both SFS trials. The main fixed costs remain namespace mutation,
+metadata sealing/publication and remount validation. For mixed work, CPX spends
+about 503,000 cycles flushing and 639,000 remounting, versus FFS's 20,000 and
+109,000. Reducing device commands alone has not removed these CPU costs.
+
+An independent data write-back experiment (A49) adds a fixed caller-owned 8 KiB
+bank with bounded sector masks and no packet-time allocation. Its source-matched
+screens pass persisted image checks at 5,042,180 / 369,762,880 cycles, but it is
+slower than A50. Mixed device read/write commands fall from 27/13 to 25/11.
+The added cache validation and state-access calls outweigh that I/O reduction.
+It passes 80 focused host cases, 72 compiled native cases, 270 independent
+sector/barrier crash images and three randomized model cases. Both ROM allocation
+gates pass with the bank allocated on 512 KiB; that fixture did not yet dirty it.
+A later sector-limit coherency test exposes an unsigned-window boundary defect.
+A49 is not retained. Subsequent experiments fix that boundary, reduce CPU
+overhead, constrain the cache to the buffered shadow profile and strengthen the
+ROM fixture to require observation of dirty cached data. Their qualification is
+still in progress.

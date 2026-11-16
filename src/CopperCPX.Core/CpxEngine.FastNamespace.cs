@@ -19,14 +19,10 @@ public partial struct CpxEngine<TMemory>
 
     private uint CachedObject(ulong id)
     {
-        uint objects = (memory.Read32(Arena + 4088));
-        for (uint n = 0; n < 8; n++)
-        {
-            uint p = objects + n * 272;
-            if (memory.Read32(p + 268) != 0 && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 12))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 12)) + 4))))))) == ((ulong)(id))))
+        uint p = memory.Read32(Arena + 4088), low = (uint)id, high = (uint)(id >> 32);
+        for (uint n = 0; n < 8; n++, p += 272)
+            if (memory.Read32(p + 268) != 0 && memory.Read32(p + 16) == low && memory.Read32(p + 12) == high)
                 return p + 12;
-        }
-
         return 0;
     }
 

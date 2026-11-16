@@ -39,6 +39,20 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         }
         if(phase==1)
         {
+            uint survivor=memory.Read32(plan+16);
+            if(BufferedWrites&&survivor!=1)
+            {
+                // Both non-surviving slots are adjacent when an outer slot
+                // survives. Metadata images have quiesced and passed their
+                // barrier, so this part of the undo bank no longer has users.
+                uint first=survivor==0?1u:0u,pairBuffer=plan+4096,pairBytes=memory.Read32(plan+40),span=memory.Read32(plan+44);
+                ulong pairAddress=Anchor+(first+1)*span;
+                MakeOwnedShadowCheckpoint(pairBuffer,pairBytes,pairAddress,GetWide(plan+32),GetWide(plan+24));
+                Copy(pairBuffer+pairBytes,pairBuffer,pairBytes);
+                CpxShadowChecksums<TMemory>.RetargetOwned(ref memory,pairBuffer+pairBytes,pairBytes,pairAddress+span,CrcTable,BufferedStorageAddress,Arena+4080);
+                memory.Write32(plan+12,survivor==0?2u:0u); memory.Write32(plan,3);
+                return Issue(IoKind.Write,pairAddress,pairBuffer,2*pairBytes,103);
+            }
             uint root=memory.Read32(plan+8);
             if(root==memory.Read32(plan+16)) root++;
             if(root==3)
@@ -54,6 +68,11 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             if(memory.Read32(plan+12)==uint.MaxValue) memory.Write32(plan+12,root);
             memory.Write32(plan+8,root+1);
             return Issue(IoKind.Write,address,buffer,bytes,103);
+        }
+        if(phase==3)
+        {
+            memory.Write32(plan,2);
+            return Issue(IoKind.Flush,0,0,0,103);
         }
         if(phase==2)
         {
