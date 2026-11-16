@@ -529,6 +529,8 @@ public partial struct CpxEngine<TMemory>
                 return SeekStep();
             case CpxOperation.ReadFile:
             case CpxOperation.WriteMapped:
+                uint filePhase=memory.Read32(cpxArenaBase+Phase);
+                if(filePhase>=500) return FastFileDataStep(filePhase);
                 return FileDataStep();
             case CpxOperation.Lookup:
                 return LookupStep();

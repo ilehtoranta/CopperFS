@@ -751,3 +751,61 @@ A55 replaces large even native copies with pointer-based unrolled stores. Its
 4,855,890 / 369,464,620 cycle screens regress relative to A50 and it is not
 retained. Twelve dedicated native copy cases, 78 focused native cases and both
 ROM allocation gates pass. It has no separate full-solution qualification.
+
+Subsequent CPU experiments keep the benchmark and durability contract unchanged:
+
+| Candidate | Mixed cycles | Streaming cycles | Result |
+|---|---:|---:|---|
+| A56, direct file continuation dispatch | 4,823,430 | 369,400,120 | Retain |
+| A57, wide-helper inline annotations | 4,827,100 | 369,433,410 | Exact same handler bytes as A54; omit |
+| A58, reserve validation per bounded turn | 4,785,270 | 369,325,400 | Retain, full qualification running |
+| A59, existing 68020 build option on A58 | 5,111,600 | 369,809,300 | Reject |
+
+A56 routes known file continuations before the general file/tree frame. The
+common helper has zero local frame bytes and 16 saved bytes; the general handler
+has 116 local frame bytes and 40 saved bytes. Each continuation still consumes
+the same phase budget. All 185 focused host cases, 66 compiled native cases and
+both source-matched ROM allocation gates pass.
+
+A58 computes invariant geometry and complete 64-bit allocation bounds once per
+reserve recovery turn. It retains overflow, exclusive-end, lower-bound, alignment,
+duplicate and group-prefix rejection. The turn still processes at most sixteen
+entries and yields for bitmap I/O. Aligned bitmap masks check every owned bit;
+two independent range theories clear each bit and toggle neighbouring bits across
+all admitted span widths and both bitmap window sizes. The final geometry,
+reserve and bit-range run passes all 40 cases; the earlier broader focused run
+passes 125. Both ROM allocation gates pass with zero operation-time Exec
+allocations, intact 4 KiB stack guards, and observed peak stacks of 876/1,068 bytes.
+Release solution build and all 141 rebuilt CopperStart replay cases pass. The
+66-case focused compiled native run also passes. The full Release solution run
+passes **2,646 cases with zero failures and ten skips**, including 680 CPX host
+and 135 compiled native cases. The seven native ROM skips remain separate from
+the two independently executed ROM allocation gates. Physical media are untested.
+
+The fresh two-trial mixed comparison passes every arm: **CopperNova 4,785,400,
+FFS 2,783,360, SFS 1.279 3,921,810 cycles**. The streaming medians are
+**CopperNova 369,324,590, FFS 367,442,405, SFS 1.279 369,862,180 cycles**,
+again with every trial passing. CopperNova still fails the required performance objective.
+A59 targets the benchmark's existing 68020 through the existing build option;
+its larger 287,944-byte handler regresses. It has no separate 68020 ROM
+qualification and must not inherit a 68000 execution pass.
+
+A60 expands 100 pure wide reads and 96 ordered wide stores in the A56 source,
+preserving address/value evaluation order. Its 4,804,960 / 369,368,250 cycle
+screens improve on A56 but remain slower than A58. All 185 focused host cases,
+66 compiled native cases and both ROM allocation gates pass. It is not retained
+as a replacement for A58. A narrower read-only expansion is being measured on
+the A58 source separately.
+
+A61 checks whether a supplied metadata pointer already identifies an owned
+bank slot before doing the ordinary descriptor scan. Full high/low address,
+alignment and active-slot checks preserve correctness, including six collision
+and boundary cases. Its 4,796,310 / 369,366,900 cycle screens regress in both
+workloads. All 190 other focused host cases, 66 native cases and both ROM gates
+pass. The experiment is archived and removed from the retained source.
+
+A62 expands only the 100 pure wide reads on the A58 source. Its screens pass
+at 4,780,120 / 369,351,850 cycles: a small mixed gain accompanied by a streaming
+regression. It is not retained. All 250 focused host cases and both partial ROM
+allocation gates pass; no separate broader native suite or full solution run was
+performed for this rejected intermediate.
