@@ -40,6 +40,7 @@ public partial struct CpxEngine<TMemory>
                 uint cached = (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) ? CachedObject(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeId)) + 4))))))) : 0;
                 if (cached != 0 && memory.Read8(cached + 84) == 1 && (memory.Read32(cached + 72) & 4) == 0 && (((ulong)(length)) == ((ulong)(((((ulong)(memory.Read32(((uint)(cached + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(cached + 8)) + 4)))))))))
                     return Done();
+                if (TryFastShrink(cached, length)) return Done();
                 return Call(CpxOperation.Reclaim, 1);
             case 1:
                 return LoadObject(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeId)) + 4)))))), 2);

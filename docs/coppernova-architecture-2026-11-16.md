@@ -329,3 +329,17 @@ zero failed, nine skipped**, including 575 CPX host and 115 native cases.
 The build succeeds with the existing nullable warning in the external compiler.
 Rebuilt CopperStart replay passes 141 cases. No separate CPX5 full-ROM or
 physical-media release gate is claimed.
+
+A19 retires the suffix of a cached single written extent in one bounded operation.
+Admission checks capacity, allocation bits, counters and inode identity before
+editing four owned images. Existing publication makes those images atomic; the
+buffered allocation tracker prevents reuse of durable freed data until retirement.
+Complex layouts retain the ordinary orphan continuation. Four host cases cover
+growth through the partial EOF and every sector/barrier cut under five persistence
+schedules, with changed retries and independent ownership/payload checks. Fourteen
+compiled filesystem cases pass the 4 KiB stack guard; filesystem replay passes 141.
+Mixed operations improve by 291,150 cycles to **5,661,100**; streaming passes at
+**370,586,020**. Both persisted image hashes match A18. Both reference filesystems
+still win both workloads. The complete Release snapshot is running.
+An accidentally broader CopperStart run was interrupted after an unrelated desktop
+compiler error (`C68K0004`, external `Install` reference); it is not a pass.

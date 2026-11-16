@@ -82,6 +82,21 @@ public static class ShadowFilesystemProbe
                     if (error != CpxError.None) return 200 + (uint)error;
                     phase++; continue;
                 }
+                if (memory.Read32(0x831c) != 0 && phase >= 2)
+                {
+                    if (phase == 2) error = engine.BeginResize(id, Wide.From(6003));
+                    else if (phase == 3) error = engine.BeginPersistenceBarrier();
+                    else if (phase == 4) error = engine.BeginRemount();
+                    else if (phase == 5) error = engine.BeginFileRead(id, default, 0x9000, 8192);
+                    else
+                    {
+                        if (engine.TransferredBytes != 6003) return 15;
+                        for (uint n = 0; n < 6003; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 16;
+                        return 0;
+                    }
+                    if (error != CpxError.None) return 200 + (uint)error;
+                    phase++; continue;
+                }
                 if (phase == 0) { memory.Write32(0x9000, 0x66696c65); error = engine.BeginCreate(Wide.From(1), 0x9000, 4); }
                 else if (phase == 1)
                 {
@@ -102,7 +117,21 @@ public static class ShadowFilesystemProbe
                     for (uint n = 0; n < 8192; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 5;
                     error = engine.BeginFileRead(id, default, 0x9000, 8192);
                 }
-                else { for (uint n = 0; n < 8192; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 12; return 0; }
+                else if (phase == 7)
+                {
+                    for (uint n = 0; n < 8192; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 12;
+                    if (memory.Read32(0x8318) == 0) return 0;
+                    error = engine.BeginResize(id, Wide.From(6003));
+                }
+                else if (phase == 8) error = engine.BeginPersistenceBarrier();
+                else if (phase == 9) error = engine.BeginRemount();
+                else if (phase == 10) error = engine.BeginFileRead(id, default, 0x9000, 8192);
+                else
+                {
+                    if (engine.TransferredBytes != 6003) return 13;
+                    for (uint n = 0; n < 6003; n++) if (memory.Read8(0x9000 + n) != (byte)(n * 17 + 3)) return 14;
+                    return 0;
+                }
                 if (error != CpxError.None) return 200 + (uint)error;
                 phase++;
             }
@@ -130,7 +159,11 @@ public class ShadowFilesystemInstructions
     public void CompiledCataloguePromotionPreservesEveryInodeWithinFourKiBStack()
         => Run(512, false, true, true, false, true, true);
 
-    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion)
+    [Theory][InlineData(false)][InlineData(true)]
+    public void CompiledBufferedShrinkPublishesWithinFourKiBStack(bool catalogue)
+        => Run(512, false, true, true, false, catalogue, false, true);
+
+    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false)
     {
         var compiled = Compilation.Value;
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
@@ -145,6 +178,8 @@ public class ShadowFilesystemInstructions
         bus.Put(0x8308, controlOnly ? 1u : 0u);
         bus.Put(0x830c, smallMetadata ? 1u : 0u); bus.Put(0x8310, longStrings ? 1u : 0u);
         bus.Put(0x8314, promotion ? 1u : 0u);
+        bus.Put(0x8318, directInodes ? 1u : 0u);
+        bus.Put(0x831c, fastShrink ? 1u : 0u);
         bus.Memory.AsSpan(0xee000, 8192).Fill(0xa5); bus.Put(0xf0000, 0xf1000);
         using var cpu = M68kCoreFactory.Default.Create(M68kCpuModel.M68000, bus);
         cpu.Reset(0x10000 + compiled.EntryPoint, 0xf0000);
@@ -171,8 +206,9 @@ public class ShadowFilesystemInstructions
         else if (longStrings) Assert.Equal(0UL, check.FileCount);
         else if (!controlOnly)
         {
-            byte[] expected = Enumerable.Range(0, 8192).Select(n => (byte)(n * 17 + 3)).ToArray(), actual = new byte[8192];
-            Assert.Equal(8192, check.Read("file"u8, 0, actual)); Assert.Equal(expected, actual);
+            int length = directInodes ? 6003 : 8192;
+            byte[] expected = Enumerable.Range(0, length).Select(n => (byte)(n * 17 + 3)).ToArray(), actual = new byte[length];
+            Assert.Equal(length, check.Read("file"u8, 0, actual)); Assert.Equal(expected, actual);
         }
     }
     private static readonly Lazy<M68kCompilationResult> Compilation = new(() => ShadowInstructionProfile.Compile(typeof(ShadowFilesystemProbe)));
