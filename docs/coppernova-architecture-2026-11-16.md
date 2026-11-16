@@ -1,10 +1,11 @@
 # CopperNova architecture experiment, 16 November 2026
 
-The performance objective remains unmet. Work was wrapped up at the user's
-request after A86 screening and focused native qualification. The latest fully
-qualified source checkpoint is A83, commit `2d7490e`; A86 remains a separate
-experimental worktree without full solution qualification. No benchmark or test
-jobs remain running. This isolated worktree starts
+The performance objective remains unmet. Following the later qualification
+request, A86 is now the qualified append-range source checkpoint, commit
+`148dac8`, integrated on `codex/coppernova-architecture`. See the
+[append-range qualification and mixed-workload analysis](coppernova-append-range-qualification-2026-11-16.md)
+for the full Release/native results, three targeted ROM gates and fresh original-
+handler comparisons. The earlier screening history below is retained. This isolated worktree starts
 from the qualified CPX4 checkpoint plus the V26 source patch. The first three candidates
 change buffered retirement, with an explicit opt-in and unchanged default
 portable policy. It does not change the on-disk format or native allocation bound.
@@ -1101,7 +1102,7 @@ archived inputs.
 Single-trial screens pass with canonical durable media and full independent
 payload/ownership checks at 4,708,260 mixed and 369,030,930 streaming cycles.
 Both improve over the qualified A83 checkpoint, but still lose to FFS in both
-workloads and SFS in mixed. A86 has no full Release solution qualification and
-is not integrated into the qualified source branch. At the user's request to
-finish and report status, further redesign and qualification have stopped.
-The performance objective has not been achieved.
+workloads and SFS in mixed. A86 was initially left separate at the user's request
+to wrap up screening. The subsequent full qualification and integration supersede
+that status; see the linked report at the top of this document. The performance
+objective has not been achieved.
