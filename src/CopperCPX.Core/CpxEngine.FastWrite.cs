@@ -70,42 +70,48 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         uint h = memory.Read32(cpxArenaBase + (FastPointer));
-        if (h == 0 || memory.Read32(h) != 1 || !((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && memory.Read32(cpxArenaBase + (Active)) != 0 && memory.Read32(cpxArenaBase + (StagedCount)) != 0) || memory.Read32(cpxArenaBase + (BufferFreed)) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(h + 4))))) << 32 | ((ulong)(memory.Read32(((uint)(h + 4)) + 4))))))) == ((ulong)(id))))
+        uint idHigh = (uint)(id >> 32), idLow = (uint)id, offset = (uint)position;
+        if (h == 0 || memory.Read32(h) != 1 || memory.Read32(cpxArenaBase + BufferEnabled) != 1 ||
+            memory.Read32(cpxArenaBase + Active) == 0 || memory.Read32(cpxArenaBase + StagedCount) == 0 ||
+            memory.Read32(cpxArenaBase + BufferFreed) != 0 || memory.Read32(h + 4) != idHigh || memory.Read32(h + 8) != idLow)
             return false;
         uint record = memory.Read32(h + 12), shift = memory.Read32(cpxArenaBase + (UnitShift)), unit = 1u << (int)shift;
-        if (bytes == 0 || bytes > 65536 || (bytes & (unit - 1)) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(record))))) << 32 | ((ulong)(memory.Read32(((uint)(record)) + 4))))))) == ((ulong)(id))) || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 8)) + 4))))))) == ((ulong)(position))) || ((uint)(((ulong)(position)) >> 32)) != 0 || ((uint)((ulong)(position))) > uint.MaxValue - bytes || (memory.Read32(record + 72) & 4) != 0)
+        if (bytes == 0 || bytes > 65536 || (bytes & (unit - 1)) != 0 ||
+            memory.Read32(record) != idHigh || memory.Read32(record + 4) != idLow ||
+            (position >> 32) != 0 || memory.Read32(record + 8) != 0 || memory.Read32(record + 12) != offset ||
+            offset > uint.MaxValue - bytes || (memory.Read32(record + 72) & 4) != 0)
             return false;
         uint count = bytes >> (int)shift, length = memory.Read32(record + 112);
-        ulong next = ((((ulong)(memory.Read32(((uint)(record + 104))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 104)) + 4))))) + length;
-        ulong windowAt = (((ulong)(((uint)(((ulong)(next)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(next))) & ~BitmapWindowMask))), cachedWindow = ((((ulong)(memory.Read32(((uint)(h + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(h + 24)) + 4)))));
-        if (length > 65536 || count > 65536 - length || (((uint)((ulong)(next))) & 65535) + count > 65536 || !DataUnit(next + (count - 1)))
+        uint physicalLow = memory.Read32(record + 108), nextLow = physicalLow + length;
+        uint nextHigh = memory.Read32(record + 104) + (nextLow < physicalLow ? 1u : 0u);
+        ulong next = ((ulong)nextHigh << 32) | nextLow;
+        uint windowLow = nextLow & ~BitmapWindowMask, cachedLow = memory.Read32(h + 28), cachedHigh = memory.Read32(h + 24);
+        if (length > 65536 || count > 65536 - length || (nextLow & 65535) + count > 65536 || !DataUnit(next + (count - 1)))
             return false;
-        uint first = BitmapWindowUnits - (((uint)((ulong)(next))) & BitmapWindowMask);
+        uint first = BitmapWindowUnits - (nextLow & BitmapWindowMask);
         if (first > count)
             first = count;
-        if (!(((ulong)(windowAt)) == ((ulong)(cachedWindow))))
+        if (nextHigh != cachedHigh || windowLow != cachedLow)
         {
-            if ((((uint)((ulong)(next))) & BitmapWindowMask) != 0 || !(((ulong)(windowAt)) == ((ulong)(cachedWindow + BitmapWindowUnits))))
+            uint followingLow = cachedLow + BitmapWindowUnits;
+            if ((nextLow & BitmapWindowMask) != 0 || windowLow != followingLow ||
+                nextHigh != cachedHigh + (followingLow < cachedLow ? 1u : 0u))
                 return false;
             first = 0;
         }
 
-        uint bitmap = memory.Read32(h + 20), bit = ((uint)((ulong)(next))) & BitmapWindowMask;
+        uint bitmap = memory.Read32(h + 20), bit = nextLow & BitmapWindowMask;
         if (!BitmapRangeMatches(bitmap, bit, first, false)) return false;
 
-        uint group = memory.Read32(h + 32), state = memory.Read32(h + 36), window = 80 + ((((uint)((ulong)(next))) & 65535) >> (int)BitmapWindowShift) * 4;
+        uint group = memory.Read32(h + 32), state = memory.Read32(h + 36), window = 80 + ((nextLow & 65535) >> (int)BitmapWindowShift) * 4;
         uint secondWindow = window + (first == 0 ? 0u : 4u);
         if (memory.Read32(group + 68) < count || memory.Read32(group + window) < first || first < count && (memory.Read32(cpxArenaBase + (StagedCount)) == 42 || memory.Read32(group + secondWindow) < count - first) || memory.Read32(state + 96) == 0 && memory.Read32(state + 100) < count)
             return false;
         memory.Write32(h + 44, 0);
         memory.Write32(h + 48, first);
         memory.Write32(h + 52, secondWindow);
-        {
-            uint cpxWideAddress = cpxArenaBase + (uint)(NewPhysical);
-            ulong cpxWideValue = next;
-            memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-            memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-        }
+        memory.Write32(cpxArenaBase + NewPhysical, nextHigh);
+        memory.Write32(cpxArenaBase + NewPhysical + 4, nextLow);
 
         memory.Write32(cpxArenaBase + (WriteRunUnits), count);
         memory.Write32(cpxArenaBase + (BufferSnapshot), 0);
@@ -159,13 +165,10 @@ public partial struct CpxEngine<TMemory>
             memory.Write32(h + 44, 0);
         }
 
-        Scalar64.Subtract(((((ulong)(memory.Read32(((uint)(state + 96))))) << 32 | ((ulong)(memory.Read32(((uint)(state + 96)) + 4))))), ((ulong)(count)), out var free);
-        {
-            uint cpxWideAddress = (uint)(state + 96);
-            ulong cpxWideValue = free;
-            memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-            memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-        }
+        // Admission proved enough free units. Retain the full-width borrow.
+        uint freeLow = memory.Read32(state + 100);
+        memory.Write32(state + 96, memory.Read32(state + 96) - (freeLow < count ? 1u : 0u));
+        memory.Write32(state + 100, freeLow - count);
 
         uint record = memory.Read32(h + 12), leaf = memory.Read32(h + 16), size = memory.Read32(record + 12) + memory.Read32(cpxArenaBase + (FileBytes)), length = memory.Read32(record + 112) + count;
         if (memory.Read32(h + 40) == 0)

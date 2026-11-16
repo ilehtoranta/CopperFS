@@ -1012,3 +1012,75 @@ The broader 70-case native run passes in 12 minutes 11 seconds. Its 271,144-byte
 archived inputs. Screens pass at 4,740,840 / 369,144,880 cycles: streaming
 improves slightly, while mixed is essentially unchanged. It remains an
 intermediate without full solution qualification, and the goal remains unmet.
+
+A82 tests byte-order CRC32C lookup views on A78 with the defensive read carry,
+without the A79 read continuation or A81 append rewrite. It adds 8 KiB of
+fixed caller-owned arena tables. Public discovery tables and the persisted
+checksum remain unchanged. All 59 focused host cases, four independent
+alignment/sparse/data checksum cases, and both actual-HUNK 512 KiB Chip / zero
+Fast ROM allocation gates pass. Its 272,440-byte HUNK has 87 exact inputs.
+Both screens regress: 4,810,800 mixed and 369,234,530 streaming cycles, with
+canonical durable media and independent payload/ownership checks passing.
+It is rejected without another broader native or full solution run. A profile
+confirms the new kernel is used, but it costs more cycles in the complete
+workload. Fewer source-level byte reads did not yield a native performance gain.
+
+A83 keeps the original checksum kernel and caller-owned memory bound, replacing
+its 25 table-index multiplications by four with explicit shifts. It includes
+the A81 append word arithmetic and defensive read carry. The 270,984-byte HUNK
+has 86 exact inputs. All 69 focused host cases and both actual-HUNK ROM gates
+pass. An isolated checksum diagnostic checks 300 cases across both CPU models,
+five lengths, five input densities and page/data CRCs. Memory helpers must use
+the native inlining attributes: an earlier non-inlined diagnostic favored A82
+but did not reproduce handler performance. With matching helpers, A83 improves
+the 68000 checksum diagnostic by approximately nine percent over the old kernel.
+The complete workload remains the acceptance measurement.
+
+Release build and all 141 rebuilt CopperStart replay cases pass. The full
+Release solution suite passes 2,706 cases with zero failures and ten skips:
+736 CPX host, 139 native, 438 FFS, 1,343 SFS, 18 Amiga integration and 32 storage
+cases pass. Seven native ROM gates and three SFS media cases skip; the two
+separately executed actual-HUNK partial ROM gates are reported above. Physical
+media remain untested.
+
+Fresh two-trial medians pass every arm:
+
+| Workload | CopperNova A83 | Kickstart FFS 40.1 | SFS 1.279 |
+| --- | ---: | ---: | ---: |
+| Mixed | 4,714,650 | 2,783,360 | 3,918,605 |
+| Streaming | 369,155,955 | 367,442,615 | 369,874,170 |
+
+A84 extends the explicit shifts to 310 additional unchecked `uint` power-of-two
+multiplications. A semantic source rewrite preserves operand types and excludes
+checked expressions and constant-only expressions. All 86 focused host cases,
+70 compiled native cases (8 minutes 48 seconds), and both actual-HUNK ROM gates
+pass. The 272,456-byte HUNK has 86 exact inputs. Screens pass at 4,716,730 /
+369,155,640 cycles with canonical media and full payload/ownership checks.
+Its negligible additional benefit does not justify the broader source changes;
+it is not retained and has no full solution run. The performance goal is unmet.
+
+A85 authenticates a free append interval once, within the same bitmap window
+and extent bounds, capped at 2,048 units. Its tag uses the existing 64-byte
+append context and pins the existing owned bitmap, counters and object images.
+Only successful completed writes advance the object and interval consumption.
+Bitmap/counter/range-ledger updates are materialized together before another
+operation observes or allocates metadata and before publication. The proved,
+unwritten suffix remains unallocated. Begin submits no I/O; normal token,
+cancellation, completion and bounded step behavior remain. The format,
+caller-owned memory size and persistence barriers are unchanged.
+
+All 78 focused host cases pass, including 14 new independent boundary, failure
+and multiwindow cases. An initial multiwindow fixture exceeded the free data
+area of its default 4 MiB device; the final explicit 16 MiB fixture passes.
+Both compiled MC68000 packet probes pass repeated 8 KiB appends, seek/read,
+shrink, protection, close, flush, remount and full final payload checks, with
+4 KiB stack guards and zero managed allocation sites. Both actual-HUNK partial
+ROM allocation gates pass, with zero operation Exec allocations and a 1,092-byte
+peak in the CPX5 fixture. Those existing ROM probes are distinct from the new
+compiled append probes. Physical media and broader native/full solution
+qualification are not established for this intermediate.
+
+The 272,916-byte HUNK has 87 exact archived inputs. Screens pass with canonical
+media and complete independent checks at 4,716,370 mixed and 369,040,040 streaming
+cycles. It saves approximately 116,000 streaming cycles against A83, but mixed
+is slightly slower. It remains an unretained intermediate; the goal is unmet.

@@ -41,8 +41,9 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         memory.Write32(context + FileBuffer, buffer); memory.Write32(context + FileBytes, bytes); memory.Write32(context + FileValue, 0);
         memory.Write32(context + DataProgress, 0); memory.Write32(context + TrimCount, 0);
         memory.Write32(context + WriteGapPrepared, 0); memory.Write32(context + WriteRunUnits, 1); memory.Write32(context + WriteDirect, 0);
-        memory.Write32(context + NewPhysical, memory.Read32(fast + 16));
-        memory.Write32(context + NewPhysical + 4, memory.Read32(fast + 20) + (offset >> (int)shift));
+        uint physicalLow = memory.Read32(fast + 20), selectedLow = physicalLow + (offset >> (int)shift);
+        memory.Write32(context + NewPhysical, memory.Read32(fast + 16) + (selectedLow < physicalLow ? 1u : 0u));
+        memory.Write32(context + NewPhysical + 4, selectedLow);
         memory.Write32(context + DataTake, bytes);
         return true;
     }
