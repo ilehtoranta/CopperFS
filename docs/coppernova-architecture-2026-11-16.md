@@ -255,10 +255,45 @@ without per-bit geometry helper calls. The hint can be lost or moved by rollback
 without implying that a unit is free. Its fixed eight bytes are supplied by the
 caller with the shadow context. Focused host checks pass 73 cases plus two
 allocated-suffix/out-of-range hint cases; eight compiled filesystem cases and
-141 rebuilt CopperStart replay cases also pass. Its full Release snapshot is
-running with the corrected startup fixtures.
+141 rebuilt CopperStart replay cases also pass. Its full Release snapshot passes
+2,494 cases, with nine skipped gates. Native coverage is 102 passed and six ROM
+gates skipped; those skips are not full-ROM passes.
 
 A13 single unprofiled results are **7,345,120 mixed** and **373,975,370 streaming**
 cycles. Both checks pass. The streaming allocator no longer scans thousands of
 occupied bits for the next file. The target remains unmet; A3 CPX4 is still
 slightly faster overall in streaming, and both references still win.
+
+A14 introduces feature 5: a 64-entry selection catalogue in 1 KiB checkpoints,
+with metadata remaining at 512 bytes. Small volumes avoid separate radix-map
+reads and rewrites; capacity overflow promotes to the existing map without
+changing the two publication barriers. Both workload checks pass at **6,571,260
+mixed** and **373,108,370 streaming** cycles. Neither target is met. Eleven
+compiled filesystem cases pass with zero allocation sites and 4 KiB stack
+checking. A 70-file host case proves promotion and independent ownership; the
+initial fixed-count power-cut fixture remained inline and does not qualify
+promotion recovery. A replacement locates the actual capacity boundary.
+
+A15 removes full-page copying when editing an already-owned dirty inode while
+retaining per-operation undo. Repeated scalar state accesses are expanded in
+selected new cursor paths, and invariant checkpoint dimensions are hoisted out
+of loops. Seventy-one focused host cases pass. The full Release snapshot has completed. The snapshot includes the fixed-count assertion
+failure; it will not be reported as a full pass. A corrected promotion-cut
+fixture and 70-file compiled case are qualified separately. CopperStart's
+rebuilt native replay passes 141 cases. Full-ROM and physical-media gates have
+not been run for these features.
+A15 single unprofiled results are **6,060,570 mixed** and **372,682,410 streaming**
+cycles. Both unchanged guest workloads and persisted full-data/ownership checks
+pass, producing the same final image hashes as A14. The goal remains unmet.
+The corrected fault tests cover the actual catalogue-to-map transition, changed
+retry writes, and an acknowledged flush followed by a failed publication; both
+cases pass. A separate compiled 70-file case explicitly proves map promotion,
+independent ownership, zero allocation sites and the 4 KiB stack guard. The full
+snapshot's original fixed-count assertion failure remains recorded separately.
+The A15 Release build passes (one known nullable warning in the external compiler).
+The complete test snapshot records **2,509 passed, one failed, nine skipped**.
+CPX host coverage is 572 passed and the one obsolete fixed-count fixture failure;
+native coverage is 106 passed and six skipped ROM gates. The corrected dynamic
+promotion/acknowledged-flush cases pass separately, as does the compiled 70-file
+promotion guard. This is not reported as a clean full-suite pass. No separate
+CPX5 full-ROM or physical-media release gate has run.

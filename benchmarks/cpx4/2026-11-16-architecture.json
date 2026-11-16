@@ -1320,7 +1320,183 @@
         "additionalHintWrapAndOutOfRangeChecks": 2,
         "compiledFilesystemIncludingLongStrings": 8,
         "copperStartRebuiltReplay": 141,
-        "fullSolution": "running",
+        "fullSolution": {
+          "passed": 2494,
+          "failed": 0,
+          "skipped": 9,
+          "hostCpx": 561,
+          "native": 102,
+          "nativeRomSkipped": 6
+        },
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run"
+      }
+    },
+    "A14": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Bounded 64-entry checkpoint selection catalogue with one-way promotion to the general map",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1086,
+          "CompletedFrames": 1086,
+          "HostSeconds": 4.90824,
+          "PhaseCycles": {
+            "mutationCycles": 3170210,
+            "flushCycles": 943750,
+            "remountCycles": 1087630,
+            "verifyCycles": 1369670
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3753,
+          "CompletedFrames": 3753,
+          "HostSeconds": 24.3850914,
+          "PhaseCycles": {
+            "mutationCycles": 3335220,
+            "flushCycles": 1085060,
+            "remountCycles": 1116850,
+            "verifyCycles": 367571240
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "CB95D6902411FE5EBB731B29C611E50DD3E815B640EE441ECB397D46CA183B87",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHost": 38,
+        "authenticatedMalformedCatalogueCases": 7,
+        "compiledFilesystem": 11,
+        "compiled40FileNamespace": 1,
+        "promotionCutCoverage": "Initial fixed-count fixture stayed inline; dynamic-boundary recheck pending",
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run"
+      }
+    },
+    "A15": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "A14 plus direct edits of owned dirty inode records with undo, invariant checkpoint loop bounds, and expanded scalar state access in new cursor paths",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1096,
+          "CompletedFrames": 1096,
+          "HostSeconds": 5.162286,
+          "PhaseCycles": {
+            "mutationCycles": 3007880,
+            "flushCycles": 806570,
+            "remountCycles": 874280,
+            "verifyCycles": 1371840
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3736,
+          "CompletedFrames": 3736,
+          "HostSeconds": 25.2004077,
+          "PhaseCycles": {
+            "mutationCycles": 3284060,
+            "flushCycles": 941940,
+            "remountCycles": 891360,
+            "verifyCycles": 367565050
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "950628BE7EDA1DDF93D6C060CBF2545B7CA3297AE8CB5E785C3E5BF660501F01",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHost": 71,
+        "actualPromotionEveryCutAndChangedRetry": 2,
+        "acknowledgedFlushThenFailedPublicationCuts": 2,
+        "compiled70FilePromotionWithFourKiBGuardAndIndependentOwnership": 1,
+        "copperStartRebuiltReplay": 141,
+        "fullSolution": {
+          "status": "failed snapshot; corrected fixture separately passed",
+          "passed": 2509,
+          "failed": 1,
+          "skipped": 9,
+          "hostCpxPassed": 572,
+          "hostCpxFailed": 1,
+          "nativePassed": 106,
+          "nativeRomSkipped": 6,
+          "reason": "Fixed-count promotion fixture stayed inline; replaced with measured boundary and separately rechecked"
+        },
         "fullRom": "separate gate not run",
         "physicalMedia": "not run"
       }

@@ -189,7 +189,7 @@ internal static class NativeCpxLifecycle
             if(check!=CpxError.None&&check!=CpxError.NotFound) return Refuse(state,port,213,true);
             if(check==CpxError.None)
             {
-                if(version==5) { unit|=0x80000000; uint features=APTR.ReadUInt32(APTR.FromPointer(io.Buffer),100); if(features>=2) unit|=0x40000000; if(features>=3) unit|=0x20000000; if(features==4) unit|=0x10000000; }
+                if(version==5) { unit|=0x80000000; uint features=APTR.ReadUInt32(APTR.FromPointer(io.Buffer),100); if(features>=2) unit|=0x40000000; if(features>=3) unit|=0x20000000; if(features>=4) unit|=0x10000000; if(features==5) unit|=0x08000000; }
                 uint previous=APTR.ReadUInt32(state,FoundUnit);
                 if(previous!=0&&(previous!=unit||APTR.ReadUInt32(state,FoundHigh)!=identity.High||
                     APTR.ReadUInt32(state,FoundLow)!=identity.Low)) return Refuse(state,port,213,true);
@@ -199,7 +199,7 @@ internal static class NativeCpxLifecycle
         if(backup==0) { APTR.WriteUInt32(state,BackupCopy,1); return StepResult.Pending; }
         if(page<4096) { APTR.WriteUInt32(state,ProbePage,page*2); APTR.WriteUInt32(state,BackupCopy,0); return StepResult.Pending; }
         uint chosen=APTR.ReadUInt32(state,FoundUnit);
-        bool shadow=(chosen&0x80000000)!=0,compactControl=(chosen&0x40000000)!=0,directInodes=(chosen&0x20000000)!=0,smallMetadata=(chosen&0x10000000)!=0; chosen&=0x0fffffff;
+        bool shadow=(chosen&0x80000000)!=0,compactControl=(chosen&0x40000000)!=0,directInodes=(chosen&0x20000000)!=0,smallMetadata=(chosen&0x10000000)!=0,inlineCatalogue=(chosen&0x08000000)!=0; chosen&=0x07ffffff;
         if(chosen==0&&APTR.ReadUInt32(state,ReadFault)!=0) return Refuse(state,port,213,true);
         if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1,metadataPageBytes:smallMetadata?chosen:0)!=CpxError.None) return Refuse(state,port,213,true);
         if(engine.DisableShadowVolume()!=CpxError.None) return Refuse(state,port,213,true);
@@ -209,7 +209,7 @@ internal static class NativeCpxLifecycle
             uint extra=CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes);
             if(engine.BufferedStorageAddress==0||engine.BufferedStorageCapacity<extra) return Refuse(state,port,103,true);
             uint storage=engine.BufferedStorageAddress+engine.BufferedStorageCapacity-extra;
-            if(engine.EnableShadowVolume(storage,extra,smallMetadata?4u:directInodes?3u:compactControl?2u:1u)!=CpxError.None) return Refuse(state,port,103,true);
+            if(engine.EnableShadowVolume(storage,extra,inlineCatalogue?5u:smallMetadata?4u:directInodes?3u:compactControl?2u:1u)!=CpxError.None) return Refuse(state,port,103,true);
         }
         if(chosen==0) return Next(state,Phase.Timers); // readable unformatted medium, explicit DOS Format remains available
         if(engine.BeginMountFromDiscoveredAnchor(new(APTR.ReadUInt32(state,FoundHigh),APTR.ReadUInt32(state,FoundLow)))!=CpxError.None)

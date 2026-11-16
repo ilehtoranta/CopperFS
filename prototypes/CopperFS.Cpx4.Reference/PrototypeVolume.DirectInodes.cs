@@ -39,6 +39,20 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private bool NextDirectInode(ulong root, ulong high, bool inclusive, scoped Span<byte> record, out ulong address)
     {
         address = 0; ulong best = ulong.MaxValue; bool found = false;
+        if (layout.InlineCatalogue && shadowRoot == ulong.MaxValue)
+        {
+            for (int n = 0; n < U32(ShadowControl, 496); n++)
+            {
+                ulong entry = U64(ShadowControl, 504 + n * 8);
+                if ((entry & 2) == 0) continue;
+                ulong pair = (entry >> 2) << layout.ShadowPairShift;
+                ReadDirectInode(root, pair, pair + (entry & 1) * layout.Q);
+                ulong id = U64(B(0), 24);
+                if (id < high || id == high && !inclusive || found && id >= best) continue;
+                best = id; address = pair; found = true; B(0).Slice(64, 256).CopyTo(record);
+            }
+            return found;
+        }
         ulong perLeaf = 1UL << layout.ShadowLeafShift;
         for (ulong first = 0; first < layout.ShadowPairs; first += perLeaf)
         {

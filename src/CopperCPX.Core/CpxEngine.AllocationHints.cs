@@ -5,7 +5,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     // never evidence of free space and need not participate in rollback. A
     // failed/retried operation may move the hint, but every search authenticates
     // the current bitmap and wraps before reporting exhaustion.
-    private uint AllocationHintAddress => ShadowControl + P;
+    private uint AllocationHintAddress => ShadowStorage + ShadowStorageBytes(P) - 8;
     private ulong AllocationFloor => ShadowVolume ? GetWide(ShadowStorage + 40) : memory.Read32(Arena + GeometryFirst);
     private ulong AllocationSearchStart()
     {

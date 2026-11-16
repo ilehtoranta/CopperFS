@@ -24,17 +24,18 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
     private void W(uint at, uint value) => memory.Write32(Arena + at, value);
     private ulong G(uint at) => ((ulong)memory.Read32(at) << 32) | memory.Read32(at + 4);
     private void Put(uint at, ulong value) { memory.Write32(at, (uint)(value >> 32)); memory.Write32(at + 4, (uint)value); }
-    public CpxError Error => (CpxError)R(ErrorAt);
+    private uint RootBytes => (memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page));
+    public CpxError Error => (CpxError)memory.Read32(Arena + (ErrorAt));
     public Wide DurableGeneration => G(Arena + Generation);
     public Wide DurableMappingRoot => G(Arena + DurableMappingRootAt);
-    public uint SurvivingCheckpoint => R(Survivor);
+    public uint SurvivingCheckpoint => memory.Read32(Arena + (Survivor));
 
     public CpxError Initialize(uint sectorBytes, uint pageBytes, Wide capacitySectors,
         Wide volumeIdentity, Wide generation, Wide rootSector, uint survivor, uint workspace, Wide mappingRoot = default,
         uint checksumTable = 0, uint checksumZeros = 0, uint logicalAddressShift = 0)
     {
         if (Arena == 0 || (Arena & 3) != 0 || Arena > uint.MaxValue - StateBytes) return CpxError.InvalidArgument;
-        if (memory.Read32(Arena + Signature) == ContextMagic && R(Waiting) != 0) return CpxError.Busy;
+        if (memory.Read32(Arena + Signature) == ContextMagic && memory.Read32(Arena + (Waiting)) != 0) return CpxError.Busy;
         if (!CpxArena.ValidUnit(sectorBytes) || pageBytes < sectorBytes || pageBytes > 4096
             || (pageBytes & (pageBytes - 1)) != 0 || logicalAddressShift > 3 || survivor >= 3 || volumeIdentity.IsZero
             || !Buffer(workspace, pageBytes) || Overlap(Arena, StateBytes, workspace, pageBytes))
@@ -42,15 +43,15 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
         ulong capacity = capacitySectors, roots = rootSector;
         uint sectors = pageBytes / sectorBytes;
         if (capacity < 3 * sectors || roots > capacity - 3 * sectors) return CpxError.InvalidArgument;
-        uint next = memory.Read32(Arena + Signature) == ContextMagic ? R(NextToken) : 0;
-        for (uint at = 0; at < StateBytes; at += 4) W(at, 0);
-        W(Signature, ContextMagic); W(Page, pageBytes); W(SectorShift, (uint)CpxArena.Shift(sectorBytes));
+        uint next = memory.Read32(Arena + Signature) == ContextMagic ? memory.Read32(Arena + (NextToken)) : 0;
+        for (uint at = 0; at < StateBytes; at += 4) memory.Write32(Arena + (at), 0);
+        memory.Write32(Arena + (Signature), ContextMagic); memory.Write32(Arena + (Page), pageBytes); memory.Write32(Arena + (SectorShift), (uint)CpxArena.Shift(sectorBytes));
         Put(Arena + Generation, generation); Put(Arena + Identity, volumeIdentity);
         Put(Arena + Capacity, capacity); Put(Arena + Roots, roots);
         Put(Arena + DurableMappingRootAt, mappingRoot);
-        W(ChecksumTable, checksumTable); W(ChecksumZeros, checksumZeros);
-        W(LogicalAddressShift, logicalAddressShift);
-        W(Survivor, survivor); W(Workspace, workspace); W(NextToken, next);
+        memory.Write32(Arena + (ChecksumTable), checksumTable); memory.Write32(Arena + (ChecksumZeros), checksumZeros);
+        memory.Write32(Arena + (LogicalAddressShift), logicalAddressShift);
+        memory.Write32(Arena + (Survivor), survivor); memory.Write32(Arena + (Workspace), workspace); memory.Write32(Arena + (NextToken), next);
         return CpxError.None;
     }
 
@@ -62,18 +63,18 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
 
     private CpxError BeginCore(uint descriptors, uint count, Wide mappingRoot, bool allowEmpty)
     {
-        if (R(Signature) != ContextMagic) return CpxError.InvalidArgument;
-        if (R(Waiting) != 0 || R(Status) == 1) return CpxError.Busy;
-        if (R(Status) == 3) return Error;
+        if (memory.Read32(Arena + (Signature)) != ContextMagic) return CpxError.InvalidArgument;
+        if (memory.Read32(Arena + (Waiting)) != 0 || memory.Read32(Arena + (Status)) == 1) return CpxError.Busy;
+        if (memory.Read32(Arena + (Status)) == 3) return Error;
         if (G(Arena + Generation) == ulong.MaxValue || count == 0 && !allowEmpty || count > CpxArena.TransactionImages
             || !Buffer(descriptors, count * DescriptorBytes)
             || Overlap(descriptors, count * DescriptorBytes, Arena, StateBytes)
-            || Overlap(descriptors, count * DescriptorBytes, R(Workspace), R(Page)))
+            || Overlap(descriptors, count * DescriptorBytes, memory.Read32(Arena + (Workspace)), ((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page)))))
             return CpxError.InvalidArgument;
-        W(Descriptors, descriptors); W(Count, count); W(Cursor, 0); W(RootCursor, 0);
-        W(OwnedImages, 0);
+        memory.Write32(Arena + (Descriptors), descriptors); memory.Write32(Arena + (Count), count); memory.Write32(Arena + (Cursor), 0); memory.Write32(Arena + (RootCursor), 0);
+        memory.Write32(Arena + (OwnedImages), memory.Read32(Arena + (OwnedImages)) & 2);
         Put(Arena + NextMappingRoot, mappingRoot);
-        W(Phase, 0); W(ErrorAt, 0); W(CancelAt, 0); W(Status, 1);
+        memory.Write32(Arena + (Phase), 0); memory.Write32(Arena + (ErrorAt), 0); memory.Write32(Arena + (CancelAt), 0); memory.Write32(Arena + (Status), 1);
         return CpxError.None;
     }
 
@@ -84,74 +85,78 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
     internal CpxError BeginOwnedImages(uint descriptors, uint count, Wide mappingRoot)
     {
         CpxError error = BeginCore(descriptors, count, mappingRoot, true);
-        if (error == CpxError.None) { W(OwnedImages, 1); W(Phase, 1); }
+        if (error == CpxError.None) { memory.Write32(Arena + (OwnedImages), memory.Read32(Arena + (OwnedImages)) | 1); memory.Write32(Arena + (Phase), 1); }
         return error;
     }
 
     internal CpxError UseOwnedControlRoot(uint control)
     {
-        if (!Buffer(control, R(Page)) || Overlap(control, R(Page), Arena, StateBytes) ||
-            Overlap(control, R(Page), R(Workspace), R(Page)) || memory.Read32(control) != Magic ||
-            memory.Read16(control + 6) != 5 || memory.Read16(control + 52) != 432 ||
+        uint payload = memory.Read16(control + 52), bytes = payload == 960 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page));
+        uint sectors = bytes >> (int)memory.Read32(Arena + (SectorShift));
+        if (!Buffer(control, bytes) || !Buffer(memory.Read32(Arena + (Workspace)), bytes) || Overlap(control, bytes, Arena, StateBytes) ||
+            Overlap(control, bytes, memory.Read32(Arena + (Workspace)), bytes) || Overlap(memory.Read32(Arena + (Workspace)), bytes, Arena, StateBytes) || memory.Read32(control) != Magic ||
+            memory.Read16(control + 6) != 5 || payload is not (432 or 960) ||
+            G(Arena + Capacity) < 3 * sectors || G(Arena + Roots) > G(Arena + Capacity) - 3 * sectors ||
             memory.Read16(control + 56) is not (48 or 128 or 136) || memory.Read16(control + 58) != 32 ||
             memory.Read16(control + 232) > 32) return CpxError.Corrupt;
-        W(ControlRoot, control); return CpxError.None;
+        memory.Write32(Arena + (OwnedImages), payload == 960 ? 2u : 0u);
+        memory.Write32(Arena + (ControlRoot), control); return CpxError.None;
     }
 
-    public CpxIo Request => new() { Kind = (IoKind)R(Kind), Sector = G(Arena + PendingSector),
-        Buffer = R(PendingBuffer), Bytes = R(PendingBytes), Token = R(Token) };
+    public CpxIo Request => new() { Kind = (IoKind)memory.Read32(Arena + (Kind)), Sector = G(Arena + PendingSector),
+        Buffer = memory.Read32(Arena + (PendingBuffer)), Bytes = memory.Read32(Arena + (PendingBytes)), Token = memory.Read32(Arena + (Token)) };
 
     public CpxError CompleteIo(uint token, uint actual, bool success)
     {
-        if (R(Waiting) == 0 || token != R(Token)) return CpxError.StaleCompletion;
-        W(Waiting, 0);
-        if (!success || (IoKind)R(Kind) == IoKind.Write && actual != R(PendingBytes)) Fail(CpxError.Io);
-        else if (R(CancelAt) != 0) Fail(CpxError.Cancelled);
+        if (memory.Read32(Arena + (Waiting)) == 0 || token != memory.Read32(Arena + (Token))) return CpxError.StaleCompletion;
+        memory.Write32(Arena + (Waiting), 0);
+        if (!success || (IoKind)memory.Read32(Arena + (Kind)) == IoKind.Write && actual != memory.Read32(Arena + (PendingBytes))) Fail(CpxError.Io);
+        else if (memory.Read32(Arena + (CancelAt)) != 0) Fail(CpxError.Cancelled);
         return Error;
     }
 
-    public void Cancel() { W(CancelAt, 1); if (R(Waiting) == 0) Fail(CpxError.Cancelled); }
+    public void Cancel() { memory.Write32(Arena + (CancelAt), 1); if (memory.Read32(Arena + (Waiting)) == 0) Fail(CpxError.Cancelled); }
 
     public StepResult Step()
     {
-        if (R(Signature) != ContextMagic) return StepResult.Failed;
-        if (R(Waiting) != 0) return StepResult.NeedIo;
-        if (R(Status) == 3) return StepResult.Failed;
-        if (R(Status) != 1) return StepResult.Complete;
-        if (R(CancelAt) != 0) return Fail(CpxError.Cancelled);
-        uint cursor = R(Cursor), page = R(Page), sectors = page >> (int)R(SectorShift);
+        if (memory.Read32(Arena + (Signature)) != ContextMagic) return StepResult.Failed;
+        if (memory.Read32(Arena + (Waiting)) != 0) return StepResult.NeedIo;
+        if (memory.Read32(Arena + (Status)) == 3) return StepResult.Failed;
+        if (memory.Read32(Arena + (Status)) != 1) return StepResult.Complete;
+        if (memory.Read32(Arena + (CancelAt)) != 0) return Fail(CpxError.Cancelled);
+        uint cursor = memory.Read32(Arena + (Cursor)), page = memory.Read32(Arena + (Page)), sectors = page >> (int)memory.Read32(Arena + (SectorShift));
         ulong transaction = G(Arena + Generation) + 1;
-        uint descriptor = R(Descriptors) + cursor * DescriptorBytes;
-        switch (R(Phase))
+        uint descriptor = memory.Read32(Arena + (Descriptors)) + cursor * DescriptorBytes;
+        switch (memory.Read32(Arena + (Phase)))
         {
             case 0:
                 if (!DescriptorValid(descriptor, cursor, transaction)) return Fail(CpxError.Corrupt);
-                W(Cursor, cursor + 1);
-                if (cursor + 1 == R(Count)) { W(Cursor, 0); W(Phase, 1); }
+                memory.Write32(Arena + (Cursor), cursor + 1);
+                if (cursor + 1 == memory.Read32(Arena + (Count))) { memory.Write32(Arena + (Cursor), 0); memory.Write32(Arena + (Phase), 1); }
                 return StepResult.Pending;
             case 1:
-                if (R(Count) == 0) return Issue(IoKind.Flush, 0, 0, 0, 3);
+                if (memory.Read32(Arena + (Count)) == 0) return Issue(IoKind.Flush, 0, 0, 0, 3);
                 return Issue(IoKind.Write, G(descriptor + 8) + (1 - memory.Read32(descriptor + 20)) * sectors,
                     memory.Read32(descriptor + 16), page, 2);
             case 2:
-                W(Cursor, cursor + 1);
-                if (cursor + 1 < R(Count)) { W(Phase, 1); return StepResult.Pending; }
+                memory.Write32(Arena + (Cursor), cursor + 1);
+                if (cursor + 1 < memory.Read32(Arena + (Count))) { memory.Write32(Arena + (Phase), 1); return StepResult.Pending; }
                 return Issue(IoKind.Flush, 0, 0, 0, 3);
             case 3:
-                W(RootCursor, 0); W(FirstNewRoot, uint.MaxValue); W(Phase, 4);
+                memory.Write32(Arena + (RootCursor), 0); memory.Write32(Arena + (FirstNewRoot), uint.MaxValue); memory.Write32(Arena + (Phase), 4);
                 return StepResult.Pending;
             case 4:
-                uint root = R(RootCursor);
-                if (root == R(Survivor)) root++;
+                uint root = memory.Read32(Arena + (RootCursor));
+                if (root == memory.Read32(Arena + (Survivor))) root++;
                 if (root == 3) return Issue(IoKind.Flush, 0, 0, 0, 5);
-                ulong address = G(Arena + Roots) + root * sectors;
-                MakeCheckpoint(R(Workspace), address, transaction);
-                if (R(FirstNewRoot) == uint.MaxValue) W(FirstNewRoot, root);
-                W(RootCursor, root + 1);
-                return Issue(IoKind.Write, address, R(Workspace), page, 4);
+                ulong address = G(Arena + Roots) + root * (((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page))) >> (int)memory.Read32(Arena + (SectorShift)));
+                MakeCheckpoint(memory.Read32(Arena + (Workspace)), address, transaction);
+                if (memory.Read32(Arena + (FirstNewRoot)) == uint.MaxValue) memory.Write32(Arena + (FirstNewRoot), root);
+                memory.Write32(Arena + (RootCursor), root + 1);
+                return Issue(IoKind.Write, address, memory.Read32(Arena + (Workspace)), ((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page))), 4);
             case 5:
                 Put(Arena + Generation, transaction); Put(Arena + DurableMappingRootAt, G(Arena + NextMappingRoot));
-                W(Survivor, R(FirstNewRoot)); W(Status, 2);
+                memory.Write32(Arena + (Survivor), memory.Read32(Arena + (FirstNewRoot))); memory.Write32(Arena + (Status), 2);
                 return StepResult.Complete;
             default: return Fail(CpxError.Corrupt);
         }
@@ -159,20 +164,20 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
 
     private bool DescriptorValid(uint descriptor, uint index, ulong transaction)
     {
-        uint page = R(Page), sectors = page >> (int)R(SectorShift);
+        uint page = memory.Read32(Arena + (Page)), sectors = page >> (int)memory.Read32(Arena + (SectorShift));
         uint image = memory.Read32(descriptor + 16), selected = memory.Read32(descriptor + 20);
         ulong pair = G(descriptor + 8), capacity = G(Arena + Capacity), roots = G(Arena + Roots);
         if (selected > 1 || G(descriptor + 24) != 0 || (pair & (2 * sectors - 1)) != 0
             || capacity < 2 * sectors || pair > capacity - 2 * sectors
-            || pair < roots + 3 * sectors && roots < pair + 2 * sectors
+            || pair < roots + 3 * (((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page))) >> (int)memory.Read32(Arena + (SectorShift))) && roots < pair + 2 * sectors
             || !Buffer(image, page) || Overlap(image, page, Arena, StateBytes)
-            || Overlap(image, page, R(Workspace), page) || Overlap(image, page, R(Descriptors), R(Count) * DescriptorBytes)
+            || Overlap(image, page, memory.Read32(Arena + (Workspace)), ((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page)))) || Overlap(image, page, memory.Read32(Arena + (Descriptors)), memory.Read32(Arena + (Count)) * DescriptorBytes)
             || memory.Read32(image) != Magic || memory.Read16(image + 6) != 5
             || G(image + 16) != G(descriptor) || G(image + 32) != transaction
-            || R(OwnedImages) == 0 && memory.Read32(image + 8) != Crc(image, page)) return false;
+            || (memory.Read32(Arena + (OwnedImages)) & 1) == 0 && memory.Read32(image + 8) != Crc(image, page)) return false;
         for (uint n = 0; n < index; n++)
         {
-            uint previous = R(Descriptors) + n * DescriptorBytes;
+            uint previous = memory.Read32(Arena + (Descriptors)) + n * DescriptorBytes;
             if (G(previous) == G(descriptor) || G(previous + 8) == pair
                 || Overlap(image, page, memory.Read32(previous + 16), page)) return false;
         }
@@ -181,32 +186,34 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
 
     private void MakeCheckpoint(uint buffer, ulong address, ulong transaction)
     {
-        for (uint at = 0; at < R(Page); at += 4) memory.Write32(buffer + at, 0);
+        uint rootBytes = ((memory.Read32(Arena + (OwnedImages)) & 2) != 0 && memory.Read32(Arena + (Page)) < 1024 ? 1024u : memory.Read32(Arena + (Page)));
+        for (uint at = 0; at < rootBytes; at += 4) memory.Write32(buffer + at, 0);
         memory.Write32(buffer, Magic); memory.Write16(buffer + 4, 2); memory.Write16(buffer + 6, 5);
-        Put(buffer + 16, address >> (int)R(LogicalAddressShift)); Put(buffer + 32, transaction); memory.Write16(buffer + 52, 32);
+        Put(buffer + 16, address >> (int)memory.Read32(Arena + (LogicalAddressShift))); Put(buffer + 32, transaction); memory.Write16(buffer + 52, 32);
         Put(buffer + 72, G(Arena + Identity)); Put(buffer + 80, transaction);
         Put(buffer + 88, G(Arena + NextMappingRoot));
-        uint control = R(ControlRoot);
+        uint control = memory.Read32(Arena + (ControlRoot));
         if (control != 0)
         {
-            memory.Write16(buffer + 52, 432); memory.Write16(buffer + 56, memory.Read16(control + 56)); memory.Write16(buffer + 58, 32);
-            for (uint at = 96; at < 496; at += 4) memory.Write32(buffer + at, memory.Read32(control + at));
+            bool extended = (memory.Read32(Arena + (OwnedImages)) & 2) != 0;
+            memory.Write16(buffer + 52, extended ? 960u : 432u); memory.Write16(buffer + 56, memory.Read16(control + 56)); memory.Write16(buffer + 58, 32);
+            for (uint at = 96; at < (extended ? 1024u : 496u); at += 4) memory.Write32(buffer + at, memory.Read32(control + at));
         }
-        memory.Write32(buffer + 8, Crc(buffer, R(Page)));
+        memory.Write32(buffer + 8, Crc(buffer, rootBytes));
     }
 
     private uint Crc(uint buffer, uint bytes)
-        => CpxShadowChecksums<TMemory>.Compute(ref memory, buffer, bytes, R(ChecksumTable), R(ChecksumZeros), Arena + ChecksumWord);
+        => CpxShadowChecksums<TMemory>.Compute(ref memory, buffer, bytes, memory.Read32(Arena + (ChecksumTable)), memory.Read32(Arena + (ChecksumZeros)), Arena + ChecksumWord);
 
     private StepResult Issue(IoKind kind, ulong sector, uint buffer, uint bytes, uint next)
     {
-        uint token = R(NextToken) + 1;
+        uint token = memory.Read32(Arena + (NextToken)) + 1;
         if (token == 0) return Fail(CpxError.ResourceExhausted);
-        W(NextToken, token); W(Token, token); W(Kind, (uint)kind);
-        Put(Arena + PendingSector, sector); W(PendingBuffer, buffer); W(PendingBytes, bytes);
-        W(Phase, next); W(Waiting, 1); return StepResult.NeedIo;
+        memory.Write32(Arena + (NextToken), token); memory.Write32(Arena + (Token), token); memory.Write32(Arena + (Kind), (uint)kind);
+        Put(Arena + PendingSector, sector); memory.Write32(Arena + (PendingBuffer), buffer); memory.Write32(Arena + (PendingBytes), bytes);
+        memory.Write32(Arena + (Phase), next); memory.Write32(Arena + (Waiting), 1); return StepResult.NeedIo;
     }
-    private StepResult Fail(CpxError error) { W(ErrorAt, (uint)error); W(Status, 3); return StepResult.Failed; }
+    private StepResult Fail(CpxError error) { memory.Write32(Arena + (ErrorAt), (uint)error); memory.Write32(Arena + (Status), 3); return StepResult.Failed; }
     private static bool Buffer(uint address, uint bytes) => address != 0 && (address & 3) == 0 && address <= uint.MaxValue - bytes;
     private static bool Overlap(uint a, uint lengthA, uint b, uint lengthB) => (ulong)a < (ulong)b + lengthB && (ulong)b < (ulong)a + lengthA;
 }

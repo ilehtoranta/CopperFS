@@ -10,8 +10,10 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         if (memory.Read32(cpxArenaBase + (Active)) == 0)
             return -1;
-        for (uint n = 0; n < memory.Read32(cpxArenaBase + (StagedCount)); n++)
-            if ((((ulong)(((((ulong)(memory.Read32(((uint)((memory.Read32(cpxArenaBase + (GeometryIndex))) + n * 32))))) << 32 | ((ulong)(memory.Read32(((uint)((memory.Read32(cpxArenaBase + (GeometryIndex))) + n * 32)) + 4))))))) == ((ulong)(at))))
+        uint count = memory.Read32(cpxArenaBase + StagedCount), table = memory.Read32(cpxArenaBase + GeometryIndex);
+        uint high = (uint)(at >> 32), low = (uint)at;
+        for (uint n = 0; n < count; n++)
+            if (memory.Read32(table + n * 32) == high && memory.Read32(table + n * 32 + 4) == low)
                 return (int)n;
         return -1;
     }

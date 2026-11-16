@@ -4,23 +4,27 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 {
     // This opt-in exists only on the experimental branch. All new mutable state
     // belongs to explicitly supplied storage; the CPX4 arena ABI is unchanged.
-    private bool ShadowVolume => (R(CheckpointPolicy) & 4) != 0;
-    internal bool PreferIdleDiscard => ShadowVolume;
-    private uint ShadowStorage => R(CheckpointPolicy) & ~7u;
+    private bool ShadowVolume => (memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0;
+    internal bool PreferIdleDiscard => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0);
+    private uint ShadowStorage => memory.Read32(Arena + (CheckpointPolicy)) & ~7u;
     public CpxError DisableShadowVolume()
     {
-        if (R(Waiting) != 0 || R(Finished) == 0 || R(Active) != 0 || R(Mounted) != 0) return CpxError.Busy;
-        W(CheckpointPolicy, R(CheckpointPolicy) & 3); return CpxError.None;
+        if (memory.Read32(Arena + (Waiting)) != 0 || memory.Read32(Arena + (Finished)) == 0 || memory.Read32(Arena + (Active)) != 0 || memory.Read32(Arena + (Mounted)) != 0) return CpxError.Busy;
+        memory.Write32(Arena + (CheckpointPolicy), memory.Read32(Arena + (CheckpointPolicy)) & 3); return CpxError.None;
     }
-    public static uint ShadowStorageBytes(uint pageBytes) => 296 + 4 * pageBytes;
-    private bool ShadowRootControl => ShadowVolume && memory.Read32(ShadowStorage + 56) >= 2;
-    private uint ShadowControl => ShadowStorage + 288 + 3 * P;
-    private uint ReserveCapacity => ShadowRootControl ? 32u : 64u;
-    private uint MediaMagic => ShadowVolume ? 0x43505835u : CpxArena.Magic;
-    private uint MediaVersion => ShadowVolume ? 5u : 4u;
-    private uint MetadataSpan => ShadowVolume ? 2 * Q : Q;
-    private ulong StateAddress => Anchor + (ShadowVolume ? 4u : 3u) * Q;
-    private ulong CharsetAddress => Anchor + (ShadowVolume ? 6u : 4u) * Q;
+    public static uint ShadowStorageBytes(uint pageBytes) => 296 + 3 * pageBytes + (pageBytes < 1024 ? 2048u : pageBytes);
+    private bool ShadowRootControl => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2;
+    private bool ShadowCatalogue => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5;
+    private uint ShadowControl => (memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)));
+    private uint ShadowRootBytes => (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)));
+    private uint ShadowRootInput => (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + 1024 : Page(5);
+    private uint ShadowRootSpan => ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift));
+    private uint ReserveCapacity => (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2) ? 32u : 64u;
+    private uint MediaMagic => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic;
+    private uint MediaVersion => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u;
+    private uint MetadataSpan => ((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 2 * (memory.Read32(Arena + (GeometryQ))) : (memory.Read32(Arena + (GeometryQ)));
+    private ulong StateAddress => (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 4u : 3u) * (memory.Read32(Arena + (GeometryQ)));
+    private ulong CharsetAddress => (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) ? 4 * (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift))) + 2 * (memory.Read32(Arena + (GeometryQ))) : (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 6u : 4u) * (memory.Read32(Arena + (GeometryQ))));
 
     public CpxError EnableShadowVolume(uint storage, uint bytes, uint features = 0)
     {
@@ -28,96 +32,109 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         // Native startup may append this context to the same Exec allocation.
         // Count only the prefix before it when selecting four/eight cache pages.
         if (buffered != 0 && storage >= buffered && (ulong)storage < (ulong)buffered + usable) usable = storage - buffered;
-        uint bufferedUsed = usable >= BufferedStorageBytes(P) ? BufferedStorageBytes(P) : CompactBufferedStorageBytes(P);
-        if (R(Signature) != CpxArena.Magic || features > 4 || SmallMetadata && features is not (0 or 4) || storage == 0 || (storage & 7) != 0 ||
-            bytes < ShadowStorageBytes(P) || storage > uint.MaxValue - bytes ||
-            (ulong)storage < (ulong)Arena + CpxArena.Bytes(P) && (ulong)Arena < (ulong)storage + bytes ||
-            buffered != 0 && (usable < CompactBufferedStorageBytes(P) ||
+        uint bufferedUsed = usable >= BufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) ? BufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) : CompactBufferedStorageBytes((memory.Read32(Arena + (PageBytes))));
+        if (memory.Read32(Arena + (Signature)) != CpxArena.Magic || features > 5 || ((memory.Read32(Arena + (PageBytes))) == 512) && features is not (0 or 4 or 5) || storage == 0 || (storage & 7) != 0 ||
+            bytes < ShadowStorageBytes((memory.Read32(Arena + (PageBytes)))) || storage > uint.MaxValue - bytes ||
+            (ulong)storage < (ulong)Arena + CpxArena.Bytes((memory.Read32(Arena + (PageBytes)))) && (ulong)Arena < (ulong)storage + bytes ||
+            buffered != 0 && (usable < CompactBufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) ||
                 (ulong)storage < (ulong)buffered + bufferedUsed && (ulong)buffered < (ulong)storage + bytes))
             return CpxError.InvalidArgument;
-        if (R(Waiting) != 0 || R(Finished) == 0 || R(Active) != 0 || R(Mounted) != 0) return CpxError.Busy;
-        W(CheckpointPolicy, storage | (R(CheckpointPolicy) & 3) | 4);
-        Clear(storage, ShadowStorageBytes(P));
-        CpxError error = CpxShadowMapGeometry.TryCreate(1u << (int)R(SectorShift), P, RW(Capacity),
-            524288UL >> (int)R(SectorShift), out var geometry, features >= 3);
-        if (error != CpxError.None) { W(CheckpointPolicy, R(CheckpointPolicy) & 3); return error; }
-        ulong dataStart = 2097152UL >> (int)R(UnitShift);
-        ulong mapEnd = (ulong)geometry.MapEndSector >> (int)(R(UnitShift) - R(SectorShift));
+        if (memory.Read32(Arena + (Waiting)) != 0 || memory.Read32(Arena + (Finished)) == 0 || memory.Read32(Arena + (Active)) != 0 || memory.Read32(Arena + (Mounted)) != 0) return CpxError.Busy;
+        memory.Write32(Arena + (CheckpointPolicy), storage | (memory.Read32(Arena + (CheckpointPolicy)) & 3) | 4);
+        Clear(storage, ShadowStorageBytes((memory.Read32(Arena + (PageBytes)))));
+        CpxError error = CpxShadowMapGeometry.TryCreate(1u << (int)memory.Read32(Arena + (SectorShift)), (memory.Read32(Arena + (PageBytes))), RW(Capacity),
+            524288UL >> (int)memory.Read32(Arena + (SectorShift)), out var geometry, features >= 3);
+        if (error != CpxError.None) { memory.Write32(Arena + (CheckpointPolicy), memory.Read32(Arena + (CheckpointPolicy)) & 3); return error; }
+        ulong dataStart = 2097152UL >> (int)memory.Read32(Arena + (UnitShift));
+        ulong mapEnd = (ulong)geometry.MapEndSector >> (int)(memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift)));
         if (mapEnd > dataStart) dataStart = ((mapEnd + 65535) >> 16) << 16;
-        if (dataStart >= Backup) { W(CheckpointPolicy, R(CheckpointPolicy) & 3); return CpxError.InvalidArgument; }
+        if (dataStart >= Backup) { memory.Write32(Arena + (CheckpointPolicy), memory.Read32(Arena + (CheckpointPolicy)) & 3); return CpxError.InvalidArgument; }
         PutWide(storage + 40, dataStart);
         geometry.Store(ref memory, storage + 64);
         memory.Write32(storage + 56, features);
-        uint cachePages = usable >= BufferedStorageBytes(P) ? 8u : 4u;
+        uint cachePages = usable >= BufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) ? 8u : 4u;
         memory.Write32(storage + 48, cachePages);
-        if (CanCacheMetadata) { memory.Write32(BufferedClean + 4, cachePages); ClearBufferedClean(); }
+        if (CanCacheMetadata) { memory.Write32((memory.Read32(Arena + 4084)) + 4, cachePages); ClearBufferedClean(); }
         return CpxError.None;
     }
 
     private StepResult ReadShadowControl(ulong unit, uint buffer, uint nextPhase)
     {
-        bool state = unit == StateAddress;
+        bool state = unit == ((((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 4u : 3u) * (memory.Read32(Arena + (GeometryQ))));
         Header(buffer, state ? 3u : 4u, unit, RW(Generation));
-        uint length = state ? memory.Read16(ShadowControl + 56) : 264;
-        Copy(buffer + 64, ShadowControl + (state ? 96u : 232u), length);
-        memory.Write16(buffer + 52, state ? length : ReservePayloadBytes);
+        uint length = state ? memory.Read16(((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + 56) : 264;
+        Copy(buffer + 64, ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + (state ? 96u : 232u), length);
+        memory.Write16(buffer + 52, state ? length : (((memory.Read32(Arena + (PageBytes))) == 512) ? 264u : 520u));
         if (CanCacheMetadata)
         {
             TrustBufferedPage(buffer, unit);
             CacheBufferedClean(buffer, unit);
         }
-        else memory.Write32(buffer + 8, Crc(buffer, P, true));
-        W(Phase, nextPhase);
+        else memory.Write32(buffer + 8, Crc(buffer, (memory.Read32(Arena + (PageBytes))), true));
+        memory.Write32(Arena + (Phase), nextPhase);
         return StepResult.Pending;
     }
 
     private StepResult BeginShadowKernel(ulong root)
     {
-        uint storage = ShadowStorage, shift = R(UnitShift) - R(SectorShift), state = BufferedUndo(0);
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift)), state = BufferedUndo(0);
         var commit = new CpxShadowCommit<TMemory>(memory, state);
-        CpxError error = commit.Initialize(1u << (int)R(SectorShift), P, RW(Capacity), RW(Identity), RW(Generation),
-            (Anchor + Q) << (int)shift, memory.Read32(storage + 32), Page(5), GetWide(storage + 24),
-            CrcTable, BufferedStorageAddress, shift);
-        if (error == CpxError.None && ShadowRootControl) error = commit.UseOwnedControlRoot(ShadowControl);
+        CpxError error = commit.Initialize(1u << (int)memory.Read32(Arena + (SectorShift)), (memory.Read32(Arena + (PageBytes))), RW(Capacity), RW(Identity), RW(Generation),
+            ((((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift)))) << (int)shift, memory.Read32(storage + 32), ShadowRootInput, GetWide(storage + 24),
+            (memory.Read32(Arena + (GeometryCrc))), BufferedStorageAddress, shift);
+        if (error == CpxError.None && (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2)) error = commit.UseOwnedControlRoot(((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))));
         if (error == CpxError.None) error = commit.BeginOwnedImages(state + 1024, memory.Read32(storage + 60), root);
         if (error != CpxError.None) return Fail(error);
-        memory.Write32(storage, 3); W(Phase, 103); return StepResult.Pending;
+        memory.Write32(storage, 3); memory.Write32(Arena + (Phase), 103); return StepResult.Pending;
     }
 
     private CpxError GetShadowGeometry(out CpxShadowMapGeometry geometry)
     {
-        geometry = CpxShadowMapGeometry.Restore(ref memory, ShadowStorage + 64);
+        geometry = CpxShadowMapGeometry.Restore(ref memory, (memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 64);
         return CpxError.None;
     }
 
-    private uint ShadowCacheEntry(uint slot) => ShadowStorage + 256 + P + slot * (16 + P);
+    private uint ShadowCacheEntry(uint slot) => (memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 256 + (memory.Read32(Arena + (PageBytes))) + slot * (16 + (memory.Read32(Arena + (PageBytes))));
     private void ClearShadowCache()
     {
-        memory.Write32(ShadowStorage + 20, 0); memory.Write32(ShadowStorage + 36, 0);
+        memory.Write32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 20, 0); memory.Write32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 36, 0);
         memory.Write32(ShadowCacheEntry(0) + 8, 0); memory.Write32(ShadowCacheEntry(1) + 8, 0);
     }
 
     private StepResult BeginShadowRead(ulong unit, uint buffer, uint nextPhase, bool requireInode = false)
     {
-        uint storage = ShadowStorage;
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         memory.Write32(storage + 52, requireInode ? 1u : 0u);
+        if ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && GetWide(storage + 24) == CpxCheckpointCatalogue<TMemory>.InlineRoot)
+        {
+            uint pairShift = memory.Read32(storage + 76), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift));
+            if (!Scalar64.Left(unit, (int)shift, out var inlineSector) || ((ulong)inlineSector & ((1ul << (int)pairShift) - 1)) != 0 ||
+                (ulong)inlineSector >> (int)pairShift >= GetWide(storage + 112) ||
+                (ulong)inlineSector >= GetWide(storage + 96) && (ulong)inlineSector < GetWide(storage + 104)) return Fail(CpxError.Corrupt);
+            var catalogue = new CpxCheckpointCatalogue<TMemory>(memory, ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + 496);
+            uint flags = catalogue.Lookup((ulong)inlineSector >> (int)pairShift);
+            memory.Write32(storage + 4, flags & 2);
+            memory.Write32(Arena + (Phase), nextPhase);
+            if (requireInode && (flags & 2) == 0) return StepResult.Pending;
+            return Issue(IoKind.Read, unit + (flags & 1) * (memory.Read32(Arena + (GeometryQ))), buffer, (memory.Read32(Arena + (PageBytes))), nextPhase);
+        }
         if (GetShadowGeometry(out var geometry) != CpxError.None) return Fail(CpxError.Corrupt);
-        if (!Scalar64.Left(unit, (int)(R(UnitShift) - R(SectorShift)), out var sector)) return Fail(CpxError.Corrupt);
+        if (!Scalar64.Left(unit, (int)(memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift))), out var sector)) return Fail(CpxError.Corrupt);
         var reader = new CpxShadowMapReadCursor<TMemory>(memory, storage + 128, geometry);
         CpxError error = reader.Begin(GetWide(storage + 24), RW(Generation), RW(Identity), sector, storage + 256,
-            CrcTable, CanCacheMetadata ? BufferedStorageAddress : 0);
+            (memory.Read32(Arena + (GeometryCrc))), CanCacheMetadata ? BufferedStorageAddress : 0);
         if (error != CpxError.None) return Fail(error);
         PutWide(storage + 8, unit); memory.Write32(storage + 16, buffer);
         // The caller may translate a nested tree phase after ReadStaged returns.
         // Preserve that translated phase throughout the inserted map continuation.
-        W(Phase, nextPhase);
+        memory.Write32(Arena + (Phase), nextPhase);
         memory.Write32(storage, 1);
         return StepResult.Pending;
     }
 
     private StepResult ShadowReadStep()
     {
-        uint storage = ShadowStorage;
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         if (GetShadowGeometry(out var geometry) != CpxError.None) return Fail(CpxError.Corrupt);
         var reader = new CpxShadowMapReadCursor<TMemory>(memory, storage + 128, geometry);
         StepResult result = reader.Step();
@@ -126,7 +143,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (fill != 0 && result != StepResult.NeedIo)
         {
             uint entry = ShadowCacheEntry(fill - 1);
-            Copy(entry + 16, reader.ReadBuffer, P); memory.Write32(entry + 8, 1); memory.Write32(storage + 20, 0);
+            Copy(entry + 16, reader.ReadBuffer, (memory.Read32(Arena + (PageBytes)))); memory.Write32(entry + 8, 1); memory.Write32(storage + 20, 0);
         }
         if (result == StepResult.NeedIo)
         {
@@ -134,29 +151,29 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             {
                 uint entry = ShadowCacheEntry(slot);
                 if (memory.Read32(entry + 8) == 0 || GetWide(entry) != (ulong)reader.ReadSector) continue;
-                Copy(reader.ReadBuffer, entry + 16, P);
+                Copy(reader.ReadBuffer, entry + 16, (memory.Read32(Arena + (PageBytes))));
                 if (reader.AcceptCachedRead() != CpxError.None) return Fail(CpxError.Corrupt);
                 return StepResult.Pending;
             }
             uint victim = memory.Read32(storage + 36) & 1, next = ShadowCacheEntry(victim);
             memory.Write32(storage + 36, victim + 1); memory.Write32(next + 8, 0); PutWide(next, reader.ReadSector);
             memory.Write32(storage + 20, victim + 1);
-            return Issue(IoKind.Read, (ulong)reader.ReadSector >> (int)(R(UnitShift) - R(SectorShift)), reader.ReadBuffer, P, R(Phase));
+            return Issue(IoKind.Read, (ulong)reader.ReadSector >> (int)(memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift))), reader.ReadBuffer, (memory.Read32(Arena + (PageBytes))), memory.Read32(Arena + (Phase)));
         }
         if (result == StepResult.Complete)
         {
             memory.Write32(storage, 0);
             memory.Write32(storage + 4, reader.IsInode ? 1u : 0u);
             if (memory.Read32(storage + 52) != 0 && !reader.IsInode) return StepResult.Pending;
-            return Issue(IoKind.Read, GetWide(storage + 8) + reader.SelectedCopy * Q,
-                memory.Read32(storage + 16), P, R(Phase));
+            return Issue(IoKind.Read, GetWide(storage + 8) + reader.SelectedCopy * (memory.Read32(Arena + (GeometryQ))),
+                memory.Read32(storage + 16), (memory.Read32(Arena + (PageBytes))), memory.Read32(Arena + (Phase)));
         }
         return result;
     }
 
     private void CompleteShadowIo(bool success)
     {
-        uint storage = ShadowStorage;
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         uint owner = memory.Read32(storage);
         if (owner == 0) return;
         if (owner == 3)
@@ -181,45 +198,51 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 
     private StepResult ShadowCommitStep()
     {
-        uint storage = ShadowStorage, state = BufferedUndo(0), descriptors = state + 1024;
-        uint stage = R(Phase), shift = R(UnitShift) - R(SectorShift);
-        if (stage == 0) { W(Cursor, 0); memory.Write32(storage + 60, 0); W(Phase, 100); return StepResult.Pending; }
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), state = BufferedUndo(0), descriptors = state + 1024;
+        uint stage = memory.Read32(Arena + (Phase)), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift));
+        if (stage == 0) { memory.Write32(Arena + (Cursor), 0); memory.Write32(storage + 60, 0); memory.Write32(Arena + (Phase), 100); return StepResult.Pending; }
         if (stage == 100)
         {
-            uint slot = R(Cursor), image = BufferedImage(slot), normal = memory.Read32(storage + 60), d = descriptors + normal * 32;
-            ulong logical = GetWide(Index + slot * 32);
-            if (memory.Read32(image) != MediaMagic || memory.Read16(image + 6) != MediaVersion ||
+            uint slot = memory.Read32(Arena + (Cursor)), image = BufferedImage(slot), normal = memory.Read32(storage + 60), d = descriptors + normal * 32;
+            ulong logical = GetWide((memory.Read32(Arena + (GeometryIndex))) + slot * 32);
+            if (memory.Read32(image) != (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic) || memory.Read16(image + 6) != (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u) ||
                 GetWide(image + 16) != logical || GetWide(image + 32) != RW(Generation) + 1 ||
                 !TargetValid(logical, memory.Read16(image + 4), GetWide(image + 24)) || !PayloadValid(image)) return Fail(CpxError.Corrupt);
-            if (ShadowRootControl && (logical == StateAddress || logical == Anchor + 8 * Q))
+            if ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2) && (logical == ((((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 4u : 3u) * (memory.Read32(Arena + (GeometryQ)))) || logical == (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + 8 * (memory.Read32(Arena + (GeometryQ)))))
             {
-                bool volumeState = logical == StateAddress;
+                bool volumeState = logical == ((((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 4u : 3u) * (memory.Read32(Arena + (GeometryQ))));
                 uint length = volumeState ? memory.Read16(image + 52) : 264;
                 if (!volumeState && memory.Read16(image + 64) > 32) return Fail(CpxError.Corrupt);
-                Clear(ShadowControl + (volumeState ? 96u : 232u), volumeState ? 136u : 264u);
-                Copy(ShadowControl + (volumeState ? 96u : 232u), image + 64, length);
-                if (volumeState) memory.Write16(ShadowControl + 56, length);
+                Clear(((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + (volumeState ? 96u : 232u), volumeState ? 136u : 264u);
+                Copy(((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + (volumeState ? 96u : 232u), image + 64, length);
+                if (volumeState) memory.Write16(((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + 56, length);
             }
             else
             {
-                memory.Write32(image + 8, Crc(image, P, true));
+                memory.Write32(image + 8, Crc(image, (memory.Read32(Arena + (PageBytes))), true));
                 PutWide(d, logical); PutWide(d + 8, logical << (int)shift);
                 memory.Write32(d + 16, image); memory.Write32(d + 20, 0); PutWide(d + 24, 0);
                 memory.Write32(storage + 60, normal + 1);
             }
-            W(Cursor, slot + 1);
-            if (slot + 1 == R(StagedCount)) W(Phase, 101);
+            memory.Write32(Arena + (Cursor), slot + 1);
+            if (slot + 1 == memory.Read32(Arena + (StagedCount))) memory.Write32(Arena + (Phase), 101);
             return StepResult.Pending;
         }
         if (stage == 101)
         {
             if (memory.Read32(storage + 60) == 0) return BeginShadowKernel(GetWide(storage + 24));
+            if ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && GetWide(storage + 24) == CpxCheckpointCatalogue<TMemory>.InlineRoot)
+            {
+                uint temporary = ShadowCatalogueTemporary;
+                Copy(temporary, ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + 496, CpxCheckpointCatalogue<TMemory>.Bytes);
+                memory.Write32(Arena + (Cursor), 0); memory.Write32(Arena + (Phase), 104); return StepResult.Pending;
+            }
             if (GetShadowGeometry(out var geometry) != CpxError.None) return Fail(CpxError.Corrupt);
             var writer = new CpxShadowMapWriteCursor<TMemory>(memory, state, geometry);
-            CpxError error = writer.Begin(GetWide(storage + 24), RW(Generation), RW(Identity), descriptors, memory.Read32(storage + 60), state + 3072,
-                CrcTable, BufferedStorageAddress);
+            CpxError error = writer.Begin(GetWide(storage + 24), RW(Generation), RW(Identity), descriptors, memory.Read32(storage + 60), state + 5120,
+                (memory.Read32(Arena + (GeometryCrc))), BufferedStorageAddress);
             if (error != CpxError.None) return Fail(error);
-            memory.Write32(storage, 2); W(Phase, 102); return StepResult.Pending;
+            memory.Write32(storage + 4, 0); memory.Write32(storage, 2); memory.Write32(Arena + (Phase), 102); return StepResult.Pending;
         }
         if (stage == 102)
         {
@@ -231,9 +254,16 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                 return Issue(writer.RequestKind, (ulong)writer.RequestSector >> (int)shift, writer.RequestBuffer, writer.RequestBytes, 102);
             if (result != StepResult.Complete) return result;
             ulong root = writer.MappingRoot;
+            if (memory.Read32(storage + 4) != 0)
+            {
+                new CpxCheckpointCatalogue<TMemory>(memory, ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))) + 496).Clear();
+                ClearShadowDescriptorFlags(descriptors, memory.Read32(storage + 60));
+            }
             memory.Write32(storage, 0);
             return BeginShadowKernel(root);
         }
+        if (stage == 104) return ShadowCatalogueUpdate(descriptors);
+        if (stage == 105) return ShadowCataloguePromote(descriptors);
         if (stage == 103)
         {
             var commit = new CpxShadowCommit<TMemory>(memory, state);
@@ -248,55 +278,61 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             PutWide(storage + 24, commit.DurableMappingRoot);
             memory.Write32(storage + 32, commit.SurvivingCheckpoint); memory.Write32(storage, 0);
             ClearShadowCache();
-            W(Phase, 15); return StepResult.Pending;
+            memory.Write32(Arena + (Phase), 15); return StepResult.Pending;
         }
         return Fail(CpxError.Corrupt);
     }
 
     private StepResult ShadowRecoveryStep()
     {
-        uint p = Page(5), phase = R(Phase), storage = ShadowStorage;
+        bool catalogue = (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5), rootControl = (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2);
+        uint rootBytes = ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))), span = (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift))), control = ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes))));
+        uint p = ShadowRootInput, phase = memory.Read32(Arena + (Phase)), storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         if (phase >= 24) return RecoveryStep();
         if (phase == 0)
         {
             RememberAllocationEnd(0);
             ClearShadowCache();
-            W(Cursor, 0); W(ValidOne, 0); WW(Generation, 0); PutWide(storage + 24, 0);
-            return Issue(IoKind.Read, Anchor + Q, p, P, 1);
+            memory.Write32(Arena + (Cursor), 0); memory.Write32(Arena + (ValidOne), 0); WW(Generation, 0); PutWide(storage + 24, 0);
+            return Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + span, p, rootBytes, 1);
         }
-        ulong at = Anchor + (R(Cursor) + 1) * Q;
-        if (Control(p, 2, at) && IdentityMatches(p) && memory.Read16(p + 52) == (ShadowRootControl ? 432 : 32) && GetWide(p + 32) == GetWide(p + 80))
+        ulong at = (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span;
+        bool valid = memory.Read32(p) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic) && memory.Read16(p + 6) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u) && memory.Read16(p + 4) == 2 &&
+            GetWide(p + 16) == at && GetWide(p + 24) == 0 && memory.Read32(p + 8) == Crc(p, rootBytes, true);
+        if (valid && IdentityMatches(p) && memory.Read16(p + 52) == (catalogue ? 960 : rootControl ? 432 : 32) && GetWide(p + 32) == GetWide(p + 80))
         {
-            if (ShadowRootControl && (memory.Read16(p + 56) is not (48 or 128 or 136) ||
+            if (rootControl && (memory.Read16(p + 56) is not (48 or 128 or 136) ||
                 memory.Read16(p + 58) != 32 || memory.Read16(p + 232) > 32)) return Fail(CpxError.Corrupt);
             ulong generation = GetWide(p + 80), root = GetWide(p + 88);
             if (GetShadowGeometry(out var geometry) != CpxError.None) return Fail(CpxError.Corrupt);
             ulong pair = geometry.NodePairSector(geometry.Height - 1, 0);
-            if (root != 0 && root != pair && root != pair + geometry.PageSectors) return Fail(CpxError.Corrupt);
-            if (R(ValidOne) != 0 && generation == RW(Generation) && root != GetWide(storage + 24)) return Fail(CpxError.Corrupt);
-            if (ShadowRootControl && R(ValidOne) != 0 && generation == RW(Generation))
+            bool inline = catalogue && root == CpxCheckpointCatalogue<TMemory>.InlineRoot;
+            if (!inline && root != 0 && root != pair && root != pair + geometry.PageSectors) return Fail(CpxError.Corrupt);
+            if (catalogue && !new CpxCheckpointCatalogue<TMemory>(memory, p + 496).Valid(geometry.PairCount, inline)) return Fail(CpxError.Corrupt);
+            if (memory.Read32(Arena + (ValidOne)) != 0 && generation == RW(Generation) && root != GetWide(storage + 24)) return Fail(CpxError.Corrupt);
+            if (rootControl && memory.Read32(Arena + (ValidOne)) != 0 && generation == RW(Generation))
             {
-                if (memory.Read32(p + 56) != memory.Read32(ShadowControl + 56)) return Fail(CpxError.Corrupt);
-                for (uint offset = 96; offset < 496; offset += 4)
-                    if (memory.Read32(p + offset) != memory.Read32(ShadowControl + offset)) return Fail(CpxError.Corrupt);
+                if (memory.Read32(p + 56) != memory.Read32(control + 56)) return Fail(CpxError.Corrupt);
+                for (uint offset = 96; offset < (catalogue ? 1024u : 496u); offset += 4)
+                    if (memory.Read32(p + offset) != memory.Read32(control + offset)) return Fail(CpxError.Corrupt);
             }
-            if (R(ValidOne) == 0 || generation > RW(Generation))
+            if (memory.Read32(Arena + (ValidOne)) == 0 || generation > RW(Generation))
             {
-                W(ValidOne, 1); WW(Generation, generation); PutWide(storage + 24, root); memory.Write32(storage + 32, R(Cursor));
-                if (ShadowRootControl) Copy(ShadowControl, p, P);
+                memory.Write32(Arena + (ValidOne), 1); WW(Generation, generation); PutWide(storage + 24, root); memory.Write32(storage + 32, memory.Read32(Arena + (Cursor)));
+                if (rootControl) Copy(control, p, rootBytes);
             }
         }
-        W(Cursor, R(Cursor) + 1);
-        if (R(Cursor) < 3) return Issue(IoKind.Read, Anchor + (R(Cursor) + 1) * Q, p, P, 1);
-        if (R(ValidOne) == 0) return Fail(CpxError.Corrupt);
-        if (DirectInodes)
+        memory.Write32(Arena + (Cursor), memory.Read32(Arena + (Cursor)) + 1);
+        if (memory.Read32(Arena + (Cursor)) < 3) return Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span, p, rootBytes, 1);
+        if (memory.Read32(Arena + (ValidOne)) == 0) return Fail(CpxError.Corrupt);
+        if ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 3))
         {
             GetShadowGeometry(out var inodeGeometry);
-            if (CpxInodeIdentity.TryCreate(inodeGeometry, GetWide(ShadowControl + 112) << (int)(R(UnitShift) - R(SectorShift)), out var codec) != CpxError.None)
+            if (CpxInodeIdentity.TryCreate(inodeGeometry, GetWide(control + 112) << (int)(memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift))), out var codec) != CpxError.None)
                 return Fail(CpxError.Corrupt);
             codec.Store(ref memory, storage + 224);
         }
-        W(Phase, 24);
+        memory.Write32(Arena + (Phase), 24);
         return StepResult.Pending;
     }
 }

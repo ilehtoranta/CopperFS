@@ -4,7 +4,7 @@ namespace CopperFS.Cpx4.Reference;
 
 public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
 {
-    private Span<byte> ShadowControl => scratch.Slice(7 * layout.PageBytes + 12 * 1024, layout.PageBytes);
+    private Span<byte> ShadowControl => scratch.Slice(7 * layout.PageBytes + 12 * 1024, layout.CheckpointBytes);
     private void LoadRootControl(ulong unit, scoped Span<byte> page)
     {
         bool state = unit == layout.State;
@@ -21,32 +21,51 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private void RecoverShadow()
     {
         bool found = false;
+        Span<byte> checkpoint = scratch[..layout.CheckpointBytes];
         for (int copy = 0; copy < 3; copy++)
         {
-            ulong at = layout.CheckpointA + (ulong)copy * layout.Q;
-            RawRead(at, B(5));
-            if (!VolumePage(B(5), PageType.Checkpoint, at, 0) || !layout.IdentityMatches(B(5)) ||
-                U64(B(5), 32) != U64(B(5), 80) || U16(B(5), 52) != (layout.RootControl ? 432 : 32)) continue;
-            if (layout.RootControl && (U16(B(5), 56) is not (48 or 128 or 136) || U16(B(5), 58) != 32 || U16(B(5), 232) > 32))
+            ulong at = layout.CheckpointA + (ulong)copy * layout.CheckpointSpan;
+            RawRead(at, checkpoint);
+            if (!VolumePage(checkpoint, PageType.Checkpoint, at, 0) || !layout.IdentityMatches(checkpoint) ||
+                U64(checkpoint, 32) != U64(checkpoint, 80) || U16(checkpoint, 52) != (layout.InlineCatalogue ? 960 : layout.RootControl ? 432 : 32)) continue;
+            if (layout.RootControl && (U16(checkpoint, 56) is not (48 or 128 or 136) || U16(checkpoint, 58) != 32 || U16(checkpoint, 232) > 32))
                 throw new InvalidDataException("Invalid checkpoint volume controls.");
-            ulong next = U64(B(5), 80), rootSector = U64(B(5), 88);
-            ulong root = rootSector >> layout.DeviceShift;
+            ulong next = U64(checkpoint, 80), rootSector = U64(checkpoint, 88);
+            bool inline = layout.InlineCatalogue && rootSector == ulong.MaxValue;
+            ulong root = inline ? ulong.MaxValue : rootSector >> layout.DeviceShift;
             ulong expected = layout.ShadowNodePair(layout.ShadowHeight - 1, 0);
-            if ((rootSector & (layout.DeviceUnits - 1)) != 0 ||
-                root != 0 && root != expected && root != expected + layout.Q)
+            if (!inline && ((rootSector & (layout.DeviceUnits - 1)) != 0 ||
+                root != 0 && root != expected && root != expected + layout.Q))
                 throw new InvalidDataException("Invalid shadow checkpoint mapping root.");
+            if (layout.InlineCatalogue) ValidateCheckpointCatalogue(checkpoint, inline);
             if (found && next == generation && shadowRoot != root)
                 throw new InvalidDataException("Conflicting shadow publication roots.");
             if (layout.RootControl && found && next == generation &&
-                (U32(B(5), 56) != U32(ShadowControl, 56) || !B(5).Slice(96, 400).SequenceEqual(ShadowControl.Slice(96, 400))))
+                (U32(checkpoint, 56) != U32(ShadowControl, 56) || !checkpoint.Slice(96, layout.InlineCatalogue ? 928 : 400).SequenceEqual(ShadowControl.Slice(96, layout.InlineCatalogue ? 928 : 400))))
                 throw new InvalidDataException("Conflicting checkpoint volume controls.");
             if (!found || next > generation)
             {
                 generation = next; shadowRoot = root; found = true;
-                if (layout.RootControl) B(5).CopyTo(ShadowControl);
+                if (layout.RootControl) checkpoint.CopyTo(ShadowControl);
             }
         }
         if (!found) throw new InvalidDataException("No valid shadow checkpoint.");
+    }
+
+    private void ValidateCheckpointCatalogue(scoped ReadOnlySpan<byte> page, bool inline)
+    {
+        uint count = U32(page, 496);
+        if (count > 64 || !inline && count != 0 || U32(page, 500) != 0x494e4c31)
+            throw new InvalidDataException("Invalid checkpoint catalogue header.");
+        for (int n = 0; n < count; n++)
+        {
+            ulong entry = U64(page, 504 + n * 8), pair = entry >> 2;
+            if ((entry & 3) == 0 || pair >= layout.ShadowPairs) throw new InvalidDataException("Invalid checkpoint catalogue entry.");
+            for (int before = 0; before < n; before++)
+                if ((U64(page, 504 + before * 8) >> 2) == pair) throw new InvalidDataException("Duplicate checkpoint catalogue entry.");
+        }
+        if (page.Slice(504 + (int)count * 8, 520 - (int)count * 8).IndexOfAnyExcept((byte)0) >= 0)
+            throw new InvalidDataException("Nonzero checkpoint catalogue padding.");
     }
 
     private ulong ShadowAddress(ulong unit) => ShadowSelection(unit, out _);
@@ -59,6 +78,17 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         if ((unit & (layout.MetadataSpan - 1)) != 0 || unit >= layout.ShadowMapBase && unit < layout.ShadowMapEnd)
             throw new InvalidDataException("Invalid paired metadata address.");
         ulong physical = shadowRoot, node = 0, pairIndex = unit >> layout.ShadowPairShift;
+        if (layout.InlineCatalogue && physical == ulong.MaxValue)
+        {
+            uint count = U32(ShadowControl, 496);
+            for (int n = 0; n < count; n++)
+            {
+                ulong entry = U64(ShadowControl, 504 + n * 8);
+                if ((entry >> 2) != pairIndex) continue;
+                inode = (entry & 2) != 0; return unit + (entry & 1) * layout.Q;
+            }
+            return unit;
+        }
         // A separate seventh page preserves each caller's live tree/record scratch.
         Span<byte> page = scratch.Slice(6 * layout.PageBytes + 12 * 1024, layout.PageBytes);
         for (int level = layout.ShadowHeight - 1; physical != 0; level--)

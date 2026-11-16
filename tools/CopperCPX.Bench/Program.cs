@@ -39,7 +39,8 @@ internal static class Program
         var cpx = new MemoryDevice(new byte[DiskBytes]);
         if(Environment.GetEnvironmentVariable("CPX_BENCH_INODES")=="1")
             Cpx4Volume<MemoryDevice>.FormatDirectInodes(cpx, SectorBytes, new byte[49152], 0x43505842454E4348,
-                Environment.GetEnvironmentVariable("CPX_BENCH_SMALL")=="1");
+                Environment.GetEnvironmentVariable("CPX_BENCH_SMALL")=="1",
+                Environment.GetEnvironmentVariable("CPX_BENCH_INLINE")=="1");
         else if(Environment.GetEnvironmentVariable("CPX_BENCH_SHADOW")=="1")
             Cpx4Volume<MemoryDevice>.FormatShadow(cpx, SectorBytes, new byte[49152], 0x43505842454E4348);
         else Cpx4Volume<MemoryDevice>.Format(cpx, SectorBytes, new byte[36864], 0x43505842454E4348);

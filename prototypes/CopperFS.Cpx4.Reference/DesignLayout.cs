@@ -3,13 +3,13 @@ using System.Buffers.Binary;
 namespace CopperFS.Cpx4.Reference;
 
 // CPX4 is an unregistered, incompatible research format. Addresses are allocation units.
-internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Units, ulong VolumeId, ushort DiskVersion = 4, bool RootControl = false, bool DirectInodes = false, bool SmallMetadata = false)
+internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Units, ulong VolumeId, ushort DiskVersion = 4, bool RootControl = false, bool DirectInodes = false, bool SmallMetadata = false, bool InlineCatalogue = false)
 {
     internal const uint Magic = 0x43505834;
     internal const ushort Version = 4;
     internal bool Shadow => DiskVersion == 5;
     internal uint DiskMagic => Shadow ? 0x43505835u : Magic;
-    internal ulong Features => SmallMetadata ? 4UL : DirectInodes ? 3UL : RootControl ? 2UL : 1UL;
+    internal ulong Features => InlineCatalogue ? 5UL : SmallMetadata ? 4UL : DirectInodes ? 3UL : RootControl ? 2UL : 1UL;
     internal const int HeaderBytes = 64, JournalImages = 64, OperationImages = 42;
     internal const int MaxHeight = 8, ReserveCapacity = 64, ReserveTarget = 32, ReserveMargin = 12;
     internal const int NameBytes = 768, InlineBytes = 160, GroupUnits = 65536, BitmapUnits = 4096;
@@ -30,11 +30,13 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     internal ulong MetadataSpan => Shadow ? 2 * Q : Q;
     internal ulong DeviceUnits => (ulong)(UnitBytes / SectorBytes);
     internal ulong Anchor => (65536UL >> UnitShift);
-    internal ulong CheckpointA => Anchor + Q;
-    internal ulong CheckpointB => Anchor + 2 * Q;
-    internal ulong CheckpointC => Anchor + 3 * Q;
+    internal int CheckpointBytes => InlineCatalogue ? Math.Max(1024, PageBytes) : PageBytes;
+    internal ulong CheckpointSpan => (ulong)(CheckpointBytes / UnitBytes);
+    internal ulong CheckpointA => Anchor + CheckpointSpan;
+    internal ulong CheckpointB => Anchor + 2 * CheckpointSpan;
+    internal ulong CheckpointC => Anchor + 3 * CheckpointSpan;
     internal ulong State => Anchor + (Shadow ? 4UL : 3UL) * Q;
-    internal ulong Charset => Anchor + (Shadow ? 6UL : 4UL) * Q;
+    internal ulong Charset => Anchor + (InlineCatalogue ? 4 * CheckpointSpan + 2 * Q : (Shadow ? 6UL : 4UL) * Q);
     internal ulong Reserve => Anchor + 8 * Q;
     internal ulong Backup => (Units & ~(Q - 1)) - Q;
     internal ulong DataStart => !Shadow || ShadowMapEnd <= (2097152UL >> UnitShift)
@@ -62,7 +64,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     {
         if (SectorBytes is < 512 or > 4096 || (SectorBytes & (SectorBytes - 1)) != 0 ||
             UnitBytes < SectorBytes || UnitBytes > 4096 || (UnitBytes & (UnitBytes - 1)) != 0 ||
-            DiskVersion is not (4 or 5) || RootControl && !Shadow || DirectInodes && !RootControl || SmallMetadata && !DirectInodes || VolumeId == 0 || Units < (4194304UL >> UnitShift) || Units > AddressMath.Right(ulong.MaxValue, UnitShift) ||
+            DiskVersion is not (4 or 5) || RootControl && !Shadow || DirectInodes && !RootControl || SmallMetadata && !DirectInodes || InlineCatalogue && !SmallMetadata || VolumeId == 0 || Units < (4194304UL >> UnitShift) || Units > AddressMath.Right(ulong.MaxValue, UnitShift) ||
             Shadow && (ShadowHeight > MaxHeight || FirstMetadata + 33 * MetadataSpan >= Backup))
             throw new ArgumentException("Unsupported CPX4 geometry.");
     }
@@ -84,7 +86,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     }
     internal static int PayloadBytes(ReadOnlySpan<byte> p) => (PageType)U16(p, 4) switch
     {
-        PageType.Anchor => 64, PageType.Checkpoint => U16(p,6) == 5 ? U16(p,52) == 432 ? 432 : 32 : 24, PageType.State => U16(p,52) is 128 or 136?U16(p,52):48,
+        PageType.Anchor => 64, PageType.Checkpoint => U16(p,6) == 5 ? U16(p,52) is 432 or 960 ? U16(p,52) : 32 : 24, PageType.State => U16(p,52) is 128 or 136?U16(p,52):48,
         PageType.Reserve => p.Length == 512 ? 264 : 520, PageType.Charset => 4, PageType.Group => p.Length == 512 ? 144 : 80, PageType.Bitmap => p.Length == 512 ? 256 : 512,
         PageType.JournalHeader or PageType.Commit => 40, PageType.Descriptor => U16(p, 48) * 32,
         PageType.Inode => 256, PageType.Tombstone => 0,

@@ -876,7 +876,7 @@ public partial struct CpxEngine<TMemory>
         bool shadow = memory.Read16(p + 6) == 5;
         ulong features = GetWide(p + 96);
         return memory.Read32(p + 80) == unit && memory.Read32(p + 84) == page && GetWide(p + 88) == units &&
-            (features == 1 || shadow && features is 2 or 3 or 4) && (page >= 1024 || shadow && features == 4) && memory.Read32(p + 104) == sector && memory.Read32(p + 108) == 1 &&
+            (features == 1 || shadow && features is 2 or 3 or 4 or 5) && (page >= 1024 || shadow && features is 4 or 5) && memory.Read32(p + 104) == sector && memory.Read32(p + 108) == 1 &&
             GetWide(p + 64) == 0 && GetWide(p + 72) != 0 && GetWide(p + 112) == anchor + 8 * q &&
             GetWide(p + 120) == anchor + (shadow ? 4u : 3u) * q;
     }
@@ -905,7 +905,7 @@ public partial struct CpxEngine<TMemory>
         }
         if (memory.Read32(buffer + 8) != checksum) return CpxError.NotFound;
         uint candidate = memory.Read32(buffer + 80);
-        uint minimumPage = version == 5 && GetWide(buffer + 96) == 4 ? 512u : 1024u;
+        uint minimumPage = version == 5 && GetWide(buffer + 96) is 4 or 5 ? 512u : 1024u;
         if (!CpxArena.ValidUnit(candidate) || candidate < sector || (candidate < minimumPage ? minimumPage : candidate) != page || memory.Read16(buffer + 4) != 1 || memory.Read16(buffer + 6) != version || memory.Read16(buffer + 52) != 64 || !(((ulong)(((((ulong)(memory.Read32(((uint)(buffer + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(buffer + 24)) + 4))))))) == 0))
             return CpxError.Corrupt;
         int shift = CpxArena.Shift(candidate) - CpxArena.Shift(sector);
