@@ -379,7 +379,8 @@ payload in bulk, clearing the remaining tail. The resulting media hashes are
 unchanged. Mixed passes at **5,447,890** cycles; streaming passes at **370,301,010**,
 8,980 cycles worse than A22's screening result. Focused host coverage passes 39
 cases, full CPX host coverage passes 589, and rebuilt filesystem replay passes 141.
-The complete solution's native run is pending. Automatic compiler clearing is a
+The complete Release snapshot passes **2,539 tests**, with zero failures and nine
+skips, including 119 native cases and six unrun ROM gates. Automatic clearing is a
 separate diagnostic variant: 5,437,990 mixed and 370,313,400 streaming cycles.
 It is not retained as the default; the build script records the selected policy.
 
@@ -390,3 +391,16 @@ prepared CRC table in the final record-lock pool. Startup's assumption that this
 pool still contains only cleared allocation bytes is invalid for small metadata
 geometries. This is a failed gate, with a bounded pool-initialization fix in
 progress. It does not qualify CPX5 full-ROM or physical-media coverage.
+
+A24 compares packed catalogue words directly, preserving all 62-bit keys and the
+existing checkpoint layout. Two dictionary-model theories cover 1,200 updates,
+lookups and removals each, including wide keys and the 64-entry capacity; all
+22 focused host cases pass. Native startup now clears the final DOS resource pool
+in sixteen bounded 1 KiB visits after discovery and before publishing resources.
+Cancellation remains available during those visits. All 36 focused native cases
+pass, including four pool-geometry/guard cases. The exact legacy CPX4 Kickstart
+gate that failed at stage 172 now passes with matched source inputs, zero
+operation-time Exec allocations and an intact 4 KiB stack guard.
+The unchanged CPX5 workloads pass at **5,423,230 mixed** and **370,316,940 streaming**
+cycles, with unchanged media hashes. Both original handlers still win both
+workloads. No full CPX5 ROM or physical-media qualification is claimed.
