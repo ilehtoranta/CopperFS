@@ -8,6 +8,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     {
         uint arena = Arena, bitmap = Page(5), reserve = Page(3), table = Index;
         uint cursor = memory.Read32(arena + Cursor), count = memory.Read32(arena + Count);
+        uint windowShift = memory.Read32(arena + PageBytes) == 512 ? 11u : 12u;
         ulong previous = RW(Target);
         if (bitmapArrived)
         {
@@ -50,7 +51,8 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
                 hash = (hash + 1) & 127;
             }
             if (!inserted) return Fail(CpxError.Corrupt);
-            bool cached = cursor != 0 && Bitmap(address) == Bitmap(previous);
+            bool cached = cursor != 0 && (uint)(address >> 32) == (uint)(previous >> 32) &&
+                ((uint)address >> (int)windowShift) == ((uint)previous >> (int)windowShift);
             WW(Target, address);
             if (!cached) return ReadStaged(Bitmap(address), bitmap, 29);
             if (!ReserveBitsAllocated(bitmap, address)) return Fail(CpxError.Corrupt);

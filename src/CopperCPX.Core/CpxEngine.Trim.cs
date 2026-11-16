@@ -121,16 +121,20 @@ public partial struct CpxEngine<TMemory>
 
     private bool DataUnit(ulong unit)
     {
-        if (ShadowVolume && unit < GetWide(ShadowStorage + 40)) return false;
-        uint cpxArenaBase = Arena;
-        if (((uint)(((ulong)(unit)) >> 32)) == 0 && ((uint)((ulong)(unit))) < memory.Read32(cpxArenaBase + (GeometryFirst)))
-            return false;
-        uint high = memory.Read32(cpxArenaBase + (GeometryBackup));
-        if (((uint)(((ulong)(unit)) >> 32)) > high || ((uint)(((ulong)(unit)) >> 32)) == high && ((uint)((ulong)(unit))) >= memory.Read32(cpxArenaBase + (GeometryBackup + 4)))
-            return false;
+        uint context = Arena, policy = memory.Read32(context + CheckpointPolicy), low = (uint)unit, high = (uint)(unit >> 32);
+        if ((policy & 4) != 0)
+        {
+            uint storage = policy & ~7u, firstHigh = memory.Read32(storage + 40);
+            if (high < firstHigh || high == firstHigh && low < memory.Read32(storage + 44)) return false;
+        }
+        if (high == 0 && low < memory.Read32(context + GeometryFirst)) return false;
+        uint backupHigh = memory.Read32(context + GeometryBackup);
+        if (high > backupHigh || high == backupHigh && low >= memory.Read32(context + GeometryBackup + 4)) return false;
         // A unit below the backup and past a group's reserved prefix implies
         // that the group contains its complete 17-page metadata prefix.
-        return ((uint)(((ulong)(unit)) >> 32)) == 0 && (((uint)((ulong)(unit))) & 0xffff0000) == 0 || (((uint)((ulong)(unit))) & 65535) >= GroupMetadataPages * MetadataSpan;
+        uint span = memory.Read32(context + GeometryQ) * ((policy & 4) != 0 ? 2u : 1u);
+        uint prefix = (memory.Read32(context + PageBytes) == 512 ? 33u : 17u) * span;
+        return high == 0 && low < 65536 || (low & 65535) >= prefix;
     }
 
     private StepResult TrimStep()

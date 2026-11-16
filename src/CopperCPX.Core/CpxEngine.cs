@@ -637,10 +637,24 @@ public partial struct CpxEngine<TMemory>
 
     private bool Allocatable(ulong unit)
     {
-        if (ShadowVolume && (((uint)unit & (MetadataSpan - 1)) != 0 || !PageAddress(unit + Q) || !DataUnit(unit + 2 * Q - 1))) return false;
-        if (!PageAddress(unit) || !DataUnit(unit))
-            return false;
-        return true;
+        uint context = Arena, policy = memory.Read32(context + CheckpointPolicy);
+        uint span = memory.Read32(context + GeometryQ) * ((policy & 4) != 0 ? 2u : 1u);
+        uint low = (uint)unit, high = (uint)(unit >> 32);
+        if ((low & (span - 1)) != 0) return false;
+        uint endLow = unchecked(low + span), endHigh = unchecked(high + (endLow < low ? 1u : 0u));
+        uint backupHigh = memory.Read32(context + GeometryBackup);
+        if (endHigh < high || endHigh > backupHigh ||
+            endHigh == backupHigh && endLow > memory.Read32(context + GeometryBackup + 4) ||
+            high == 0 && low < memory.Read32(context + GeometryFirst)) return false;
+        if ((policy & 4) != 0)
+        {
+            uint storage = policy & ~7u, firstHigh = memory.Read32(storage + 40);
+            if (high < firstHigh || high == firstHigh && low < memory.Read32(storage + 44)) return false;
+        }
+        // Span divides 65536. An aligned metadata pair cannot straddle a
+        // group boundary, and the backup bounds its complete exclusive end.
+        uint prefix = (memory.Read32(context + PageBytes) == 512 ? 33u : 17u) * span;
+        return high == 0 && low < 65536 || (low & 65535) >= prefix;
     }
 
     private uint Crc(uint buffer,uint bytes,bool page)

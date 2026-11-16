@@ -1838,6 +1838,84 @@
         "physicalMedia": "not run",
         "unrelatedBroadCopperStartRun": "Interrupted after desktop C68K0004 external Install reference failure; not a pass"
       }
+    },
+    "A20": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "One exact aligned metadata-range admission, local wide address comparisons, and reuse of authenticated reserve bitmap window identity",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1100,
+          "CompletedFrames": 1100,
+          "HostSeconds": 4.8939667,
+          "PhaseCycles": {
+            "mutationCycles": 2627070,
+            "flushCycles": 762440,
+            "remountCycles": 757360,
+            "verifyCycles": 1383610
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3734,
+          "CompletedFrames": 3734,
+          "HostSeconds": 25.1444832,
+          "PhaseCycles": {
+            "mutationCycles": 3226040,
+            "flushCycles": 905940,
+            "remountCycles": 781930,
+            "verifyCycles": 365499380
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "8CB438BFEB185839640A493E6C47285C9647C16ACFF7CF7A62FC98194F7E6B88",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHost": 36,
+        "independentArithmeticBoundaryTheories": 6,
+        "compiledFilesystemAndEngine": "running",
+        "fullSolution": "not run for this intermediate candidate",
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run"
+      }
     }
   },
   "shadowProtocol": {
