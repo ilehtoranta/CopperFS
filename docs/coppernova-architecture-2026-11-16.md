@@ -481,3 +481,18 @@ entry order and corresponding checkpoint checksums; its evidence is retained.
 The full solution/replay snapshot precedes the final warm-cache guard; the two
 ROM probes and workload screens cover that final native binary. Both reference
 filesystems remain faster in both workloads.
+
+A29 publishes the engine's already admitted, sealed descriptors through a direct
+bounded continuation. The engine owns the single completion token throughout;
+the standalone public publication kernel keeps its original admission API.
+The metadata barrier precedes both non-surviving checkpoint writes, and their
+persistence barrier precedes generation advancement and group retirement.
+The native handler shrinks from 270,084 to 263,736 bytes.
+
+All 602 CPX host cases, 30 focused native cases and 141 rebuilt CopperStart replay
+cases pass. The Release solution builds; the complete solution run is pending.
+Both legacy and CPX5 ROM allocation probes pass on 512 KiB Chip RAM, no Fast RAM,
+with matched source inputs, intact 4 KiB stack guards and no operation-time
+Exec allocations. The unchanged workloads pass with identical image hashes at
+**5,194,870 mixed** and **369,967,260 streaming** cycles. Both reference handlers
+still win both workloads; the objective remains unmet.

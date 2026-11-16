@@ -75,18 +75,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         return StepResult.Pending;
     }
 
-    private StepResult BeginShadowKernel(ulong root)
-    {
-        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift)), state = BufferedUndo(0);
-        var commit = new CpxShadowCommit<TMemory>(memory, state);
-        CpxError error = commit.Initialize(1u << (int)memory.Read32(Arena + (SectorShift)), (memory.Read32(Arena + (PageBytes))), ((((ulong)(memory.Read32((Arena) + ((Capacity))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Capacity) + 4)))))), ((((ulong)(memory.Read32((Arena) + ((Identity))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Identity) + 4)))))), ((((ulong)(memory.Read32((Arena) + ((Generation))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Generation) + 4)))))),
-            ((((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift)))) << (int)shift, memory.Read32(storage + 32), ShadowRootInput, ((((ulong)(memory.Read32((storage + 24)))) << 32 | ((ulong)(memory.Read32((storage + 24) + 4))))),
-            (memory.Read32(Arena + (GeometryCrc))), BufferedStorageAddress, shift);
-        if (error == CpxError.None && (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2)) error = commit.UseOwnedControlRoot(((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes)))));
-        if (error == CpxError.None) error = commit.BeginOwnedImages(state + 1024, memory.Read32(storage + 60), root);
-        if (error != CpxError.None) return Fail(error);
-        memory.Write32(storage, 3); memory.Write32(Arena + (Phase), 103); return StepResult.Pending;
-    }
+    private StepResult BeginShadowKernel(ulong root) => BeginOwnedShadowPublication(root);
 
     private CpxError GetShadowGeometry(out CpxShadowMapGeometry geometry)
     {
@@ -175,14 +164,8 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     {
         uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         uint owner = memory.Read32(storage);
-        if (owner == 0) return;
-        if (owner == 3)
-        {
-            var commit = new CpxShadowCommit<TMemory>(memory, BufferedUndo(0));
-            CpxIo request = commit.Request;
-            commit.CompleteIo(request.Token, success ? request.Bytes : 0, success);
-            return;
-        }
+        if (owner is 0 or 3) return;
+
         if (GetShadowGeometry(out var geometry) != CpxError.None) return;
         if (owner == 1)
         {
@@ -279,24 +262,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         return Fail(CpxError.Corrupt);
     }
 
-    private StepResult ShadowKernelStep()
-    {
-        uint context = Arena, storage = memory.Read32(context + CheckpointPolicy) & ~7u;
-        uint state = BufferedUndo(0);
-        var commit = new CpxShadowCommit<TMemory>(memory, state);
-        StepResult result = commit.Step();
-        if (result == StepResult.Failed) return Fail(commit.Error);
-        if (result == StepResult.NeedIo)
-        {
-            CpxIo request = commit.Request;
-            return Issue(request.Kind, (ulong)request.Sector >> (int)(memory.Read32(context + UnitShift) - memory.Read32(context + SectorShift)), request.Buffer, request.Bytes, 103);
-        }
-        if (result != StepResult.Complete) return result;
-        PutWide(storage + 24, commit.DurableMappingRoot);
-        memory.Write32(storage + 32, commit.SurvivingCheckpoint); memory.Write32(storage, 0);
-        ClearShadowCache();
-        memory.Write32(Arena + (Phase), 15); return StepResult.Pending;
-    }
+    private StepResult ShadowKernelStep() => OwnedShadowPublicationStep();
 
     private StepResult ShadowRecoveryStep()
     {
