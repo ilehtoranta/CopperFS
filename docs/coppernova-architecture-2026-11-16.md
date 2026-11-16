@@ -340,7 +340,8 @@ schedules, with changed retries and independent ownership/payload checks. Fourte
 compiled filesystem cases pass the 4 KiB stack guard; filesystem replay passes 141.
 Mixed operations improve by 291,150 cycles to **5,661,100**; streaming passes at
 **370,586,020**. Both persisted image hashes match A18. Both reference filesystems
-still win both workloads. The complete Release snapshot is running.
+still win both workloads. The complete Release snapshot passes **2,527 tests**,
+with zero failures and nine skips, including 579 CPX host and 117 native cases.
 An accidentally broader CopperStart run was interrupted after an unrelated desktop
 compiler error (`C68K0004`, external `Install` reference); it is not a pass.
 
@@ -348,7 +349,7 @@ A20 combines metadata alignment, reserved-prefix and exclusive-end admission in
 one range check. Reserve validation reuses bitmap window identity without
 reconstructing two bitmap addresses per entry. Six arithmetic boundary theories
 cover legacy and shadow geometries at small and large capacities, including
-overflow; all 36 focused host cases pass. Native qualification is running.
+overflow; all 36 focused host and 20 focused native cases pass.
 The unchanged workloads pass at **5,530,480 mixed** and **370,413,290 streaming**
 cycles, preserving both persisted image hashes. These remain screening results;
 both original handlers still win both workloads. No complete Release rerun is

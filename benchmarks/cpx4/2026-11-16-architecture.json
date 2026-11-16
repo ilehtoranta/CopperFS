@@ -1833,7 +1833,14 @@
         "focusedHostShrinkAndEveryCut": 4,
         "compiledFilesystemWithFourKiBStackGuard": 14,
         "copperStartRebuiltFilesystemReplay": 141,
-        "fullSolution": "running",
+        "fullSolution": {
+          "passed": 2527,
+          "failed": 0,
+          "skipped": 9,
+          "hostCpx": 579,
+          "nativePassed": 117,
+          "nativeRomSkipped": 6
+        },
         "fullRom": "separate gate not run",
         "physicalMedia": "not run",
         "unrelatedBroadCopperStartRun": "Interrupted after desktop C68K0004 external Install reference failure; not a pass"
@@ -1911,7 +1918,7 @@
       "coverage": {
         "focusedHost": 36,
         "independentArithmeticBoundaryTheories": 6,
-        "compiledFilesystemAndEngine": "running",
+        "compiledFilesystemAndEngine": 20,
         "fullSolution": "not run for this intermediate candidate",
         "fullRom": "separate gate not run",
         "physicalMedia": "not run"
