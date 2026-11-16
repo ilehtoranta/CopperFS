@@ -14,7 +14,10 @@ public static class ShadowFilesystemProbe
         bool promotion = memory.Read32(0x8314) != 0;
         var engine = new CpxEngine<GuestMemory>(memory, 0x60000);
         if (engine.Initialize(512, unit, Wide.From(8192), 1, metadataPageBytes: smallMetadata ? unit : 0) != CpxError.None) return 1;
-        if (engine.EnableBufferedWrites(0x70000, CpxEngine<GuestMemory>.BufferedStorageBytes(unit < 1024 ? 1024 : unit)) != CpxError.None) return 2;
+        bool arenaUndo = memory.Read32(0x8324) != 0;
+        CpxError buffering = arenaUndo ? engine.EnableArenaUndoBufferedWrites(0x70000, CpxEngine<GuestMemory>.ArenaUndoBufferedStorageBytes(true), CpxArena.Bytes(4096)) :
+            engine.EnableBufferedWrites(0x70000, CpxEngine<GuestMemory>.BufferedStorageBytes(unit < 1024 ? 1024 : unit));
+        if (buffering != CpxError.None) return 2;
         if (engine.EnableShadowVolume(0xe0000, 32768) != CpxError.None) return 3;
         if (engine.BeginOperation(CpxOperation.Mount) != CpxError.None) return 4;
         uint phase = 0; Wide id = default;
@@ -194,7 +197,11 @@ public class ShadowFilesystemInstructions
     public void CompiledAppendsCrossBitmapWindowsAndVerifyEveryByteWithinFourKiBStack(bool catalogue)
         => Run(512, false, true, true, false, catalogue, false, false, true);
 
-    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false, bool append = false)
+    [Theory][InlineData(false,false)][InlineData(true,false)][InlineData(true,true)]
+    public void CompiledArenaUndoAppendsAndCataloguePromotionRespectBothWorkspaceGuards(bool catalogue,bool promotion)
+        => Run(512,false,true,true,false,catalogue,promotion,false,!promotion,true);
+
+    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false, bool append = false, bool arenaUndo = false)
     {
         var compiled = Compilation.Value;
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
@@ -212,6 +219,9 @@ public class ShadowFilesystemInstructions
         bus.Put(0x8318, directInodes ? 1u : 0u);
         bus.Put(0x831c, fastShrink ? 1u : 0u);
         bus.Put(0x8320, append ? 1u : 0u);
+        bus.Put(0x8324, arenaUndo ? 1u : 0u);
+        uint arenaEnd=0x60000+CpxArena.Bytes(4096),bufferEnd=0x70000+CpxEngine<GuestMemory>.ArenaUndoBufferedStorageBytes(true);
+        if(arenaUndo) { bus.Memory.AsSpan((int)arenaEnd,32).Fill(0xa5); bus.Memory.AsSpan((int)bufferEnd,32).Fill(0xa5); }
         bus.Memory.AsSpan(0xee000, 8192).Fill(0xa5); bus.Put(0xf0000, 0xf1000);
         using var cpu = M68kCoreFactory.Default.Create(M68kCpuModel.M68000, bus);
         cpu.Reset(0x10000 + compiled.EntryPoint, 0xf0000);
@@ -222,6 +232,11 @@ public class ShadowFilesystemInstructions
         }
         Assert.Equal(0xf1000u, cpu.State.ProgramCounter); Assert.Equal(0u, cpu.State.D[0]);
         Assert.All(bus.Memory.AsSpan(0xee000, 4096).ToArray(), b => Assert.Equal(0xa5, b));
+        if(arenaUndo)
+        {
+            Assert.All(bus.Memory.AsSpan((int)arenaEnd,32).ToArray(),b=>Assert.Equal(0xa5,b));
+            Assert.All(bus.Memory.AsSpan((int)bufferEnd,32).ToArray(),b=>Assert.Equal(0xa5,b));
+        }
         var check = new Cpx4Volume<EngineInstructions.Bus>(bus, new byte[49152]); check.Check();
         if (promotion)
         {

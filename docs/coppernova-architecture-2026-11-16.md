@@ -454,3 +454,30 @@ The fixture is built through the portable engine and independently checked;
 its two aliases are long Latin-1 names, and it does not claim UTF-8 import coverage.
 The original legacy fixture retains its UTF-8 entry. CPX5 physical-media coverage
 remains unrun. The performance objective remains unmet.
+
+A28 adds an explicit P=512 workspace profile. A caller that owns the full
+maximum-size mount arena can lend its unused 21 KiB tail to the 42-page undo
+bank. Snapshot and cache storage remain in the smaller external allocation;
+geometry changes revoke the lease before rebuilding pointers. External storage
+including shadow context falls from 71,728 to 50,224 bytes (compact: 69,616 to
+48,112). Journal capacity, publication ordering and the four-phase budget stay
+the same. Admission rejects overlapping or insufficient regions before changes.
+
+All 67 focused host cases and 30 native cases pass, including byte-for-byte
+comparison against the contiguous profile, sector-cut retries, 1 MiB appends and
+catalogue promotion with guards around both regions. The full Release snapshot
+passes 2,564 cases with zero failures and ten skips; rebuilt CopperStart replay
+passes 141. A final startup guard prevents re-admitting an already enabled
+workspace at publication, preserving its warmed cache. That final binary passes
+both the legacy and **CPX5 feature-5 ROM allocation gates on 512 KiB Chip RAM and
+no Fast RAM**, with matching sources, intact 4 KiB stack guards and zero
+operation-time Exec allocations. These remain partial packet/allocation gates;
+they do not qualify every ROM workload or physical media.
+
+The final unchanged screening workloads pass at **5,277,530 mixed** and
+**370,030,470 streaming** cycles, with the earlier persisted image hashes
+restored. The initial cold-cache variant was slower and changed only catalogue
+entry order and corresponding checkpoint checksums; its evidence is retained.
+The full solution/replay snapshot precedes the final warm-cache guard; the two
+ROM probes and workload screens cover that final native binary. Both reference
+filesystems remain faster in both workloads.

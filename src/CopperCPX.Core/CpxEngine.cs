@@ -125,6 +125,10 @@ public partial struct CpxEngine<TMemory>
         ulong units = Scalar64.Right(capacitySectors, ds);
         if ((((uint)((ulong)(capacitySectors))) & ((1u << ds) - 1)) != 0 || (units) < (((ulong)(4194304u >> CpxArena.Shift(allocationBytes)))) || !Scalar64.Left(capacitySectors, CpxArena.Shift(sectorBytes), out _))
             return CpxError.InvalidArgument;
+        // A different geometry may consume the former spare arena tail. Drop
+        // its undo lease before rebuilding any page or buffer pointers.
+        if (previous && pageBytes != previousPage)
+            memory.Write32(cpxArenaBase + BufferObjectCursor, 0);
         // Initialization must be called only on a quiescent, caller-owned arena.
         for (uint n = 0; n < 512; n += 4)
             memory.Write32(cpxArenaBase + (n), 0);
@@ -213,7 +217,7 @@ public partial struct CpxEngine<TMemory>
             memory.Write32(cpxArenaBase + (Poisoned), 0);
         }
 
-        if (operation is CpxOperation.Mount or CpxOperation.Recover && ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes))))))
+        if (operation is CpxOperation.Mount or CpxOperation.Recover && ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes))))
         {
             ClearBufferedObjects();
             ClearBufferedClean();
@@ -345,7 +349,7 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         if (memory.Read32(cpxArenaBase + (CallDepth)) == 0 && (CpxOperation)memory.Read32(cpxArenaBase + (OperationAt))is CpxOperation.Mount or CpxOperation.Recover && memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0)
         {
-            memory.Write32(cpxArenaBase + (BufferEnabled), memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))) ? 1u : 0u);
+            memory.Write32(cpxArenaBase + (BufferEnabled), memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes)) ? 1u : 0u);
             memory.Write32(cpxArenaBase + (BufferFormatEnabled), 0);
             memory.Write32(cpxArenaBase + (BufferTrustedMask), 0);
             if ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1))
@@ -386,7 +390,7 @@ public partial struct CpxEngine<TMemory>
 
         if (kind == IoKind.Read)
             InvalidateBufferedPage(buffer);
-        if (kind == IoKind.Write && !(memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes))))))
+        if (kind == IoKind.Write && !(memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes))))
             InvalidateBufferedClean(unit);
         if (memory.Read32(cpxArenaBase + (Waiting)) != 0)
             return Fail(CpxError.Busy);
@@ -661,7 +665,7 @@ public partial struct CpxEngine<TMemory>
     {
         uint arena=Arena;
         var input=new CpxCrcInput { Buffer=buffer,Bytes=bytes,Page=page,Table=memory.Read32(arena+GeometryCrc),Word=arena+4080,
-            Zeros=page&&(memory.Read32(arena+BufferEnabled)==1||memory.Read32(arena+BufferFormatEnabled)!=0&&memory.Read32(arena+BufferBytes)>=CompactBufferedStorageBytes(memory.Read32(arena+PageBytes)))?memory.Read32(arena+BufferAddress):0 };
+            Zeros=page&&(memory.Read32(arena+BufferEnabled)==1||memory.Read32(arena+BufferFormatEnabled)!=0&&memory.Read32(arena+BufferBytes)>=RequiredBufferedStorageBytes(memory.Read32(arena+PageBytes)))?memory.Read32(arena+BufferAddress):0 };
         return CrcKernel(ref memory,in input);
     }
 
@@ -695,7 +699,7 @@ public partial struct CpxEngine<TMemory>
             return true;
         if (memory.Read32(p + 8) != Crc(p, (memory.Read32(cpxArenaBase + (PageBytes))), true))
             return false;
-        if (((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes))))) && memory.Read32(cpxArenaBase + (BufferCommitting)) == 0)
+        if (((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes))) && memory.Read32(cpxArenaBase + (BufferCommitting)) == 0)
         {
             CacheBufferedClean(p, address);
             if ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1))

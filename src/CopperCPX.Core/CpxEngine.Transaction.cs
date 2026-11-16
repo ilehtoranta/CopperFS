@@ -350,7 +350,7 @@ public partial struct CpxEngine<TMemory>
                 // a failed publication poisons the mount and requires recovery.
                 // Borrow five of those slots, leaving every parent scratch page
                 // and the capacity-retry snapshot untouched.
-                MakePublication((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + (42 + ((uint)(0))) * (memory.Read32(cpxArenaBase + (PageBytes)))), 8, Journal(tx), tx);
+                MakePublication(BufferedUndo((uint)(0)), 8, Journal(tx), tx);
                 memory.Write32(cpxArenaBase + (Cursor), 0);
                 memory.Write32(cpxArenaBase + (Phase), 26);
                 return StepResult.Pending;
@@ -359,7 +359,7 @@ public partial struct CpxEngine<TMemory>
                 uint records = begin < memory.Read32(cpxArenaBase + (StagedCount)) ? memory.Read32(cpxArenaBase + (StagedCount)) - begin : 0;
                 if (records > (((memory.Read32(cpxArenaBase + (PageBytes))) - 64) >> 5))
                     records = ((memory.Read32(cpxArenaBase + (PageBytes))) - 64) >> 5;
-                uint descriptorBuffer = (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + (42 + ((uint)(descriptorPage + 1))) * (memory.Read32(cpxArenaBase + (PageBytes))));
+                uint descriptorBuffer = BufferedUndo((uint)(descriptorPage + 1));
                 Header(descriptorBuffer, 9, Descriptor(tx, descriptorPage), tx);
                 memory.Write16(descriptorBuffer + 48, records);
                 Copy(descriptorBuffer + 64, (memory.Read32(cpxArenaBase + (GeometryIndex))) + begin * 32, records * 32);
@@ -370,7 +370,7 @@ public partial struct CpxEngine<TMemory>
                     return StepResult.Pending;
                 }
 
-                return Issue(IoKind.Write, Journal(tx), (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + (42 + ((uint)(0))) * (memory.Read32(cpxArenaBase + (PageBytes)))), 5 * (memory.Read32(cpxArenaBase + (PageBytes))), 4);
+                return Issue(IoKind.Write, Journal(tx), BufferedUndo((uint)(0)), 5 * (memory.Read32(cpxArenaBase + (PageBytes))), 4);
             default:
                 return Fail(CpxError.Corrupt);
         }

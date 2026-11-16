@@ -235,16 +235,27 @@ internal static class NativeCpxLifecycle
     }
     private static void PrepareBufferedStorage(ref CpxEngine<NativeCpxMemory> engine,bool shadow=false)
     {
-        if(engine.BufferedStorageAddress!=0) return;
+        bool arenaUndo=engine.MetadataPageBytes==512;
+        if(engine.BufferedStorageAddress!=0)
+        {
+            // Publish revisits this after mount has warmed the metadata cache.
+            // Only a geometry change that disabled buffering needs re-admission.
+            if(engine.BufferedWrites) return;
+            // Media discovery can revisit geometry. Re-admit the same owned
+            // allocation without retaining an undo lease from another layout.
+            if(arenaUndo) engine.EnableArenaUndoBufferedWrites(engine.BufferedStorageAddress,engine.BufferedStorageCapacity,CpxArena.Bytes(4096));
+            else engine.EnableBufferedWrites(engine.BufferedStorageAddress,engine.BufferedStorageCapacity);
+            return;
+        }
         uint extra=shadow?CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes):0;
-        uint bytes=CpxEngine<NativeCpxMemory>.BufferedStorageBytes(engine.MetadataPageBytes)+extra;
+        uint bytes=(arenaUndo?CpxEngine<NativeCpxMemory>.ArenaUndoBufferedStorageBytes():CpxEngine<NativeCpxMemory>.BufferedStorageBytes(engine.MetadataPageBytes))+extra;
         uint storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
         if(storage==0)
         {
-            bytes=CpxEngine<NativeCpxMemory>.CompactBufferedStorageBytes(engine.MetadataPageBytes)+extra;
+            bytes=(arenaUndo?CpxEngine<NativeCpxMemory>.ArenaUndoBufferedStorageBytes(true):CpxEngine<NativeCpxMemory>.CompactBufferedStorageBytes(engine.MetadataPageBytes))+extra;
             storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
         }
-        if(storage!=0&&engine.EnableBufferedWrites(storage,bytes)!=CpxError.None) Exec.FreeMem(storage,bytes);
+        if(storage!=0&&(arenaUndo?engine.EnableArenaUndoBufferedWrites(storage,bytes,CpxArena.Bytes(4096)):engine.EnableBufferedWrites(storage,bytes))!=CpxError.None) Exec.FreeMem(storage,bytes);
         engine.EnableAlternatingCheckpoints();
         engine.EnableCpuBatching();
     }

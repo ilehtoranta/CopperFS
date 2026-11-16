@@ -32,11 +32,11 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         // Native startup may append this context to the same Exec allocation.
         // Count only the prefix before it when selecting four/eight cache pages.
         if (buffered != 0 && storage >= buffered && (ulong)storage < (ulong)buffered + usable) usable = storage - buffered;
-        uint bufferedUsed = usable >= BufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) ? BufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) : CompactBufferedStorageBytes((memory.Read32(Arena + (PageBytes))));
+        uint bufferedUsed = usable >= RequiredBufferedStorageBytes(memory.Read32(Arena + PageBytes), true) ? RequiredBufferedStorageBytes(memory.Read32(Arena + PageBytes), true) : RequiredBufferedStorageBytes(memory.Read32(Arena + PageBytes));
         if (memory.Read32(Arena + (Signature)) != CpxArena.Magic || features > 5 || ((memory.Read32(Arena + (PageBytes))) == 512) && features is not (0 or 4 or 5) || storage == 0 || (storage & 7) != 0 ||
             bytes < ShadowStorageBytes((memory.Read32(Arena + (PageBytes)))) || storage > uint.MaxValue - bytes ||
-            (ulong)storage < (ulong)Arena + CpxArena.Bytes((memory.Read32(Arena + (PageBytes)))) && (ulong)Arena < (ulong)storage + bytes ||
-            buffered != 0 && (usable < CompactBufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) ||
+            (ulong)storage < (ulong)Arena + CpxArena.Bytes(BufferedUndoDelta != 0 ? 4096u : memory.Read32(Arena + PageBytes)) && (ulong)Arena < (ulong)storage + bytes ||
+            buffered != 0 && (usable < RequiredBufferedStorageBytes(memory.Read32(Arena + PageBytes)) ||
                 (ulong)storage < (ulong)buffered + bufferedUsed && (ulong)buffered < (ulong)storage + bytes))
             return CpxError.InvalidArgument;
         if (memory.Read32(Arena + (Waiting)) != 0 || memory.Read32(Arena + (Finished)) == 0 || memory.Read32(Arena + (Active)) != 0 || memory.Read32(Arena + (Mounted)) != 0) return CpxError.Busy;
@@ -52,7 +52,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         PutWide(storage + 40, dataStart);
         geometry.Store(ref memory, storage + 64);
         memory.Write32(storage + 56, features);
-        uint cachePages = usable >= BufferedStorageBytes((memory.Read32(Arena + (PageBytes)))) ? 8u : 4u;
+        uint cachePages = usable >= RequiredBufferedStorageBytes(memory.Read32(Arena + PageBytes), true) ? 8u : 4u;
         memory.Write32(storage + 48, cachePages);
         if (CanCacheMetadata) { memory.Write32((memory.Read32(Arena + 4084)) + 4, cachePages); ClearBufferedClean(); }
         return CpxError.None;
@@ -77,7 +77,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 
     private StepResult BeginShadowKernel(ulong root)
     {
-        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift)), state = (memory.Read32((Arena) + (BufferAddress)) + 4096 + (42 + (0)) * (memory.Read32((Arena) + (PageBytes))));
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift)), state = BufferedUndo(0);
         var commit = new CpxShadowCommit<TMemory>(memory, state);
         CpxError error = commit.Initialize(1u << (int)memory.Read32(Arena + (SectorShift)), (memory.Read32(Arena + (PageBytes))), ((((ulong)(memory.Read32((Arena) + ((Capacity))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Capacity) + 4)))))), ((((ulong)(memory.Read32((Arena) + ((Identity))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Identity) + 4)))))), ((((ulong)(memory.Read32((Arena) + ((Generation))))) << 32 | ((ulong)(memory.Read32((Arena) + ((Generation) + 4)))))),
             ((((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift)))) << (int)shift, memory.Read32(storage + 32), ShadowRootInput, ((((ulong)(memory.Read32((storage + 24)))) << 32 | ((ulong)(memory.Read32((storage + 24) + 4))))),
@@ -178,7 +178,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (owner == 0) return;
         if (owner == 3)
         {
-            var commit = new CpxShadowCommit<TMemory>(memory, (memory.Read32((Arena) + (BufferAddress)) + 4096 + (42 + (0)) * (memory.Read32((Arena) + (PageBytes)))));
+            var commit = new CpxShadowCommit<TMemory>(memory, BufferedUndo(0));
             CpxIo request = commit.Request;
             commit.CompleteIo(request.Token, success ? request.Bytes : 0, success);
             return;
@@ -191,7 +191,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         }
         else if (owner == 2)
         {
-            var writer = new CpxShadowMapWriteCursor<TMemory>(memory, (memory.Read32((Arena) + (BufferAddress)) + 4096 + (42 + (0)) * (memory.Read32((Arena) + (PageBytes)))), geometry);
+            var writer = new CpxShadowMapWriteCursor<TMemory>(memory, BufferedUndo(0), geometry);
             writer.AcceptIo(success);
         }
     }
@@ -202,7 +202,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (stage == 103) return ShadowKernelStep();
         if (stage is 104 or 105)
         {
-            uint descriptors = memory.Read32(Arena + BufferAddress) + 5120 + 42 * memory.Read32(Arena + PageBytes);
+            uint descriptors = BufferedUndo(0) + 1024;
             return stage == 104 ? ShadowCatalogueUpdate(descriptors) : ShadowCataloguePromote(descriptors);
         }
         return PrepareShadowCommitStep(stage);
@@ -212,7 +212,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     // Geometry and preparation temporaries have no lifetime during I/O service.
     private StepResult PrepareShadowCommitStep(uint stage)
     {
-        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), state = (memory.Read32((Arena) + (BufferAddress)) + 4096 + (42 + (0)) * (memory.Read32((Arena) + (PageBytes)))), descriptors = state + 1024;
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), state = BufferedUndo(0), descriptors = state + 1024;
         uint shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift));
         if (stage == 0) { memory.Write32(Arena + (Cursor), 0); memory.Write32(storage + 60, 0); memory.Write32(Arena + (Phase), 100); return StepResult.Pending; }
         if (stage == 100)
@@ -282,7 +282,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult ShadowKernelStep()
     {
         uint context = Arena, storage = memory.Read32(context + CheckpointPolicy) & ~7u;
-        uint state = memory.Read32(context + BufferAddress) + 4096 + 42 * memory.Read32(context + PageBytes);
+        uint state = BufferedUndo(0);
         var commit = new CpxShadowCommit<TMemory>(memory, state);
         StepResult result = commit.Step();
         if (result == StepResult.Failed) return Fail(commit.Error);

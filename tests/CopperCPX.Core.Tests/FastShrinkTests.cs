@@ -6,11 +6,12 @@ namespace CopperCPX.Tests;
 
 public class FastShrinkTests
 {
-    private static CpxEngine<Ram> Mount(IBlockDevice disk, Ram ram, bool catalogue)
+    private static CpxEngine<Ram> Mount(IBlockDevice disk, Ram ram, bool catalogue, bool arenaUndo = false)
     {
         var engine = new CpxEngine<Ram>(ram, 32);
         Assert.Equal(CpxError.None, engine.Initialize(512, 512, disk.SectorCount, 1, metadataPageBytes: 512));
-        Assert.Equal(CpxError.None, engine.EnableBufferedWrites(300000, CpxEngine<Ram>.BufferedStorageBytes(512)));
+        Assert.Equal(CpxError.None, arenaUndo ? engine.EnableArenaUndoBufferedWrites(300000, CpxEngine<Ram>.ArenaUndoBufferedStorageBytes(true), CpxArena.Bytes(4096)) :
+            engine.EnableBufferedWrites(300000, CpxEngine<Ram>.BufferedStorageBytes(512)));
         Assert.Equal(CpxError.None, engine.EnableShadowVolume(900000, 32768, catalogue ? 5u : 4u));
         engine.BeginOperation(CpxOperation.Mount); EngineTests.Drive(ref engine, ram, disk);
         return engine;
@@ -26,11 +27,11 @@ public class FastShrinkTests
         return id;
     }
 
-    [Theory][InlineData(false)][InlineData(true)]
-    public void ShrinkIsOneBoundedStepAndLaterGrowthZerosThePartialTail(bool catalogue)
+    [Theory][InlineData(false,false)][InlineData(true,false)][InlineData(false,true)][InlineData(true,true)]
+    public void ShrinkIsOneBoundedStepAndLaterGrowthZerosThePartialTail(bool catalogue,bool arenaUndo)
     {
         var disk = new MemoryDevice(); Cpx4Volume<MemoryDevice>.FormatDirectInodes(disk, 512, new byte[49152], 12345, true, catalogue);
-        var ram = new Ram(new byte[1000000]); var engine = Mount(disk, ram, catalogue);
+        var ram = new Ram(new byte[1000000]); var engine = Mount(disk, ram, catalogue,arenaUndo);
         Wide id = Seed(ref engine, ram, disk);
         Assert.Equal(CpxError.None, engine.BeginResize(id, Wide.From(6003)));
         Assert.Equal(StepResult.Complete, engine.Step());
@@ -61,16 +62,16 @@ public class FastShrinkTests
         }
     }
 
-    [Theory][InlineData(false)][InlineData(true)]
-    public void EverySectorCutPreservesOldPayloadAndAcknowledgedShrinkThenAllowsChangedRetry(bool catalogue)
+    [Theory][InlineData(false,false)][InlineData(true,false)][InlineData(false,true)][InlineData(true,true)]
+    public void EverySectorCutPreservesOldPayloadAndAcknowledgedShrinkThenAllowsChangedRetry(bool catalogue,bool arenaUndo)
     {
         var initial = new MemoryDevice(); Cpx4Volume<MemoryDevice>.FormatDirectInodes(initial, 512, new byte[49152], 12345, true, catalogue);
-        var seedRam = new Ram(new byte[1000000]); var seed = Mount(initial, seedRam, catalogue);
+        var seedRam = new Ram(new byte[1000000]); var seed = Mount(initial, seedRam, catalogue,arenaUndo);
         Wide id = Seed(ref seed, seedRam, initial);
         seed.BeginPersistenceBarrier(); EngineTests.Drive(ref seed, seedRam, initial);
         void Change(IBlockDevice disk, List<int>? acknowledged = null)
         {
-            var ram = new Ram(new byte[1000000]); var engine = Mount(disk, ram, catalogue);
+            var ram = new Ram(new byte[1000000]); var engine = Mount(disk, ram, catalogue,arenaUndo);
             Warm(ref engine, ram, disk, id);
             engine.BeginResize(id, Wide.From(6003)); Assert.Equal(StepResult.Complete, engine.Step());
             "temp"u8.CopyTo(ram.Bytes.AsSpan(100000)); engine.BeginCreate(Wide.From(1), 100000, 4); EngineTests.Drive(ref engine, ram, disk);
@@ -93,7 +94,7 @@ public class FastShrinkTests
             Assert.True(length is 6003 or 8192);
             if (acknowledged[0] < cut) Assert.Equal(6003, length);
             for (int n = 0; n < length; n++) Assert.Equal((byte)(n * 17 + 3), bytes[n]);
-            var ram = new Ram(new byte[1000000]); var engine = Mount(recovered, ram, catalogue);
+            var ram = new Ram(new byte[1000000]); var engine = Mount(recovered, ram, catalogue,arenaUndo);
             ram.Bytes[100000] = 0x92; engine.BeginMappedWrite(id, Wide.From(44), 100000, 1); EngineTests.Drive(ref engine, ram, recovered);
             engine.BeginPersistenceBarrier(); EngineTests.Drive(ref engine, ram, recovered);
             check = new Cpx4Volume<MemoryDevice>(recovered, new byte[49152]); check.Check();

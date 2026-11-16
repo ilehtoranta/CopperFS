@@ -8,6 +8,16 @@ public partial struct CpxEngine<TMemory>
     private const uint Buffered = 16320, BufferAddress = Buffered, BufferBytes = Buffered + 4, BufferEnabled = Buffered + 8, BufferCommitting = Buffered + 12, BufferSnapshot = Buffered + 16, BufferFullSnapshot = Buffered + 20, BufferOldCount = Buffered + 24, BufferUndoLow = Buffered + 28, BufferUndoHigh = Buffered + 32, BufferTrustedMask = Buffered + 36, BufferTrustedKeys = 3024, BufferFreed = Buffered + 40, BufferNewCount = Buffered + 44, BufferOldFreed = Buffered + 48, BufferOldNew = Buffered + 52, BufferObjectCursor = Buffered + 56, BufferFormatEnabled = Buffered + 60;
     public static uint BufferedStorageBytes(uint pageBytes) => 4096 + 84 * pageBytes + 512 + 8192 + 6 * pageBytes + CpxArena.IndexBytes + 2688 + 8 + 8 * (16 + pageBytes);
     public static uint CompactBufferedStorageBytes(uint pageBytes) => BufferedStorageBytes(pageBytes) - 4 * (16 + pageBytes);
+    // At P=512, the unused tail of a maximum-size mount arena is exactly the
+    // 42-page undo bank. The cursor's low three bits remain the cache cursor;
+    // its otherwise unused high bit records this explicit ownership profile.
+    private const uint ArenaUndoFlag = 0x80000000, ArenaUndoBytes = 42 * 512;
+    private const uint ArenaUndoAt = CpxArena.Scratch + 6 * 512 + CpxArena.IndexBytes + CpxArena.PoolBytes + CpxArena.CrcTableBytes;
+    private uint BufferedUndoDelta => (memory.Read32(Arena + BufferObjectCursor) & ArenaUndoFlag) != 0 ? ArenaUndoBytes : 0;
+    public static uint ArenaUndoBufferedStorageBytes(bool compact = false) =>
+        (compact ? CompactBufferedStorageBytes(512) : BufferedStorageBytes(512)) - ArenaUndoBytes;
+    private uint RequiredBufferedStorageBytes(uint pageBytes, bool full = false) =>
+        (full ? BufferedStorageBytes(pageBytes) : CompactBufferedStorageBytes(pageBytes)) - BufferedUndoDelta;
     public uint BufferedStorageAddress => memory.Read32(Arena + (BufferAddress));
     public uint BufferedStorageCapacity => memory.Read32(Arena + (BufferBytes));
     public bool BufferedWrites => memory.Read32(Arena + (BufferEnabled)) == 1;
@@ -30,7 +40,8 @@ public partial struct CpxEngine<TMemory>
     private uint BufferedUndo(uint slot)
     {
         uint cpxArenaBase = Arena;
-        return memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + (42 + slot) * (memory.Read32(cpxArenaBase + (PageBytes)));
+        return BufferedUndoDelta != 0 ? Arena + ArenaUndoAt + slot * 512 :
+            memory.Read32(cpxArenaBase + BufferAddress) + 4096 + (42 + slot) * memory.Read32(cpxArenaBase + PageBytes);
     }
 
     private uint BufferedHeader
@@ -38,7 +49,7 @@ public partial struct CpxEngine<TMemory>
         get
         {
             uint cpxArenaBase = Arena;
-            return memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes)));
+            return memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes))) - BufferedUndoDelta;
         }
     }
 
@@ -47,7 +58,7 @@ public partial struct CpxEngine<TMemory>
         get
         {
             uint cpxArenaBase = Arena;
-            return memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes))) + 512;
+            return BufferedHeader + 512;
         }
     }
 
@@ -56,7 +67,7 @@ public partial struct CpxEngine<TMemory>
         get
         {
             uint cpxArenaBase = Arena;
-            return memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 90 * (memory.Read32(cpxArenaBase + (PageBytes))) + 8704;
+            return memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 90 * (memory.Read32(cpxArenaBase + (PageBytes))) + 8704 - BufferedUndoDelta;
         }
     }
 
@@ -71,14 +82,14 @@ public partial struct CpxEngine<TMemory>
         get
         {
             uint cpxArenaBase = Arena;
-            return (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes))));
+            return (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) || memory.Read32(cpxArenaBase + (BufferFormatEnabled)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes));
         }
     }
 
     private void InitializeBufferedGeometry()
     {
         uint cpxArenaBase = Arena;
-        uint trust = memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 90 * (memory.Read32(cpxArenaBase + (PageBytes))) + 8704 + CpxArena.IndexBytes;
+        uint trust = BufferedIndex + CpxArena.IndexBytes;
         memory.Write32(cpxArenaBase + 4092, trust);
         memory.Write32(cpxArenaBase + 4088, trust + 512);
         memory.Write32(cpxArenaBase + 4084, trust + 2688);
@@ -87,19 +98,35 @@ public partial struct CpxEngine<TMemory>
     /// <summary>Caller owns this storage for the mount lifetime. Data writes
     /// reach the device before reply; metadata publication waits for a barrier.
     /// The original strict policy remains available when buffering is disabled.</summary>
-    public CpxError EnableBufferedWrites(uint address, uint bytes)
+    public CpxError EnableBufferedWrites(uint address, uint bytes) => EnableBufferedWritesCore(address, bytes, false);
+
+    /// <summary>Explicit P=512 profile. The caller also owns the full maximum-
+    /// size mount arena for its lifetime; its unused tail supplies undo storage.
+    /// Neither region may overlap the other. No allocation occurs here.</summary>
+    public CpxError EnableArenaUndoBufferedWrites(uint address, uint bytes, uint arenaBytes)
+    {
+        if (memory.Read32(Arena + PageBytes) != 512 || arenaBytes < CpxArena.Bytes(4096) ||
+            Arena > uint.MaxValue - arenaBytes ||
+            (ulong)address < (ulong)Arena + arenaBytes && (ulong)Arena < (ulong)address + bytes)
+            return CpxError.InvalidArgument;
+        return EnableBufferedWritesCore(address, bytes, true);
+    }
+
+    private CpxError EnableBufferedWritesCore(uint address, uint bytes, bool arenaUndo)
     {
         uint cpxArenaBase = Arena;
         if (memory.Read32(cpxArenaBase + (Signature)) != CpxArena.Magic || memory.Read32(cpxArenaBase + (Waiting)) != 0 || memory.Read32(cpxArenaBase + (Finished)) == 0 || memory.Read32(cpxArenaBase + (Active)) != 0)
             return CpxError.Busy;
-        if (address == 0 || (address & 3) != 0 || bytes < CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))) || address > uint.MaxValue - bytes)
+        uint required = CompactBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes)) - (arenaUndo ? ArenaUndoBytes : 0);
+        if (address == 0 || (address & 3) != 0 || bytes < required || address > uint.MaxValue - bytes)
             return CpxError.InvalidArgument;
+        memory.Write32(cpxArenaBase + BufferObjectCursor, arenaUndo ? ArenaUndoFlag : 0);
         memory.Write32(cpxArenaBase + (BufferAddress), address);
         memory.Write32(cpxArenaBase + (BufferBytes), bytes);
         memory.Write32(cpxArenaBase + (BufferEnabled), 1);
         memory.Write32(cpxArenaBase + (BufferCommitting), 0);
         InitializeBufferedGeometry();
-        memory.Write32((memory.Read32(cpxArenaBase + 4084)) + 4, bytes >= BufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))) ? 8u : 4u);
+        memory.Write32((memory.Read32(cpxArenaBase + 4084)) + 4, bytes >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes), true) ? 8u : 4u);
         InitializeZeroCrcTable();
         memory.Write32(cpxArenaBase + (FastPointer), (memory.Read32(cpxArenaBase + 4092)) + 448);
         InvalidateFastWrite();
@@ -128,13 +155,13 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (BufferTrustedMask), 0);
         memory.Write32(cpxArenaBase + (BufferFreed), 0);
         memory.Write32(cpxArenaBase + (BufferNewCount), 0);
-        if (memory.Read32(cpxArenaBase + (BufferBytes)) < CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))))
+        if (memory.Read32(cpxArenaBase + (BufferBytes)) < RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes)))
             memory.Write32(cpxArenaBase + (BufferEnabled), 0);
         InitializeBufferedGeometry();
         memory.Write32(cpxArenaBase + (FastPointer), (memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) ? (memory.Read32(cpxArenaBase + 4092)) + 448 : 0u);
-        if (memory.Read32(cpxArenaBase + (BufferAddress)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= CompactBufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))))
+        if (memory.Read32(cpxArenaBase + (BufferAddress)) != 0 && memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes)))
         {
-            memory.Write32((memory.Read32(cpxArenaBase + 4084)) + 4, ShadowVolume ? memory.Read32(ShadowStorage + 48) : memory.Read32(cpxArenaBase + (BufferBytes)) >= BufferedStorageBytes((memory.Read32(cpxArenaBase + (PageBytes)))) ? 8u : 4u);
+            memory.Write32((memory.Read32(cpxArenaBase + 4084)) + 4, ShadowVolume ? memory.Read32(ShadowStorage + 48) : memory.Read32(cpxArenaBase + (BufferBytes)) >= RequiredBufferedStorageBytes(memory.Read32(cpxArenaBase + PageBytes), true) ? 8u : 4u);
             ClearBufferedObjects();
             ClearBufferedClean();
         }
@@ -253,12 +280,12 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (BufferSnapshot), 1);
         memory.Write32(cpxArenaBase + (BufferFullSnapshot), count != 0 && count + credits > 42 ? 1u : 0u);
         // Only active descriptors belong to the rollback snapshot.
-        Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 90 * (memory.Read32(cpxArenaBase + (PageBytes))) + 8704), (memory.Read32(cpxArenaBase + (GeometryIndex))), count * 32);
+        Copy(BufferedIndex, (memory.Read32(cpxArenaBase + (GeometryIndex))), count * 32);
         if (memory.Read32(cpxArenaBase + (BufferFullSnapshot)) == 0)
             return;
-        Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes)))), cpxArenaBase, 512);
-        Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes))) + 512), cpxArenaBase + CpxArena.MountBytes, 8128);
-        Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes))) + 512) + 8192, (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), 6 * (memory.Read32(cpxArenaBase + (PageBytes))));
+        Copy(BufferedHeader, cpxArenaBase, 512);
+        Copy(BufferedOperation, cpxArenaBase + CpxArena.MountBytes, 8128);
+        Copy(BufferedOperation + 8192, (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), 6 * (memory.Read32(cpxArenaBase + (PageBytes))));
         Copy((memory.Read32(cpxArenaBase + 4092)), cpxArenaBase + BufferTrustedMask, 4);
         Copy((memory.Read32(cpxArenaBase + 4092)) + 4, cpxArenaBase + BufferTrustedKeys, 48);
     }
@@ -271,7 +298,7 @@ public partial struct CpxEngine<TMemory>
         uint field = slot < 32 ? BufferUndoLow : BufferUndoHigh, mask = 1u << (int)(slot & 31);
         if ((memory.Read32(cpxArenaBase + (field)) & mask) != 0)
             return;
-        Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + (42 + ((uint)(slot))) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)(slot)) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (PageBytes))));
+        Copy(BufferedUndo((uint)(slot)), (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)(slot)) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (PageBytes))));
         memory.Write32(cpxArenaBase + (field), memory.Read32(cpxArenaBase + (field)) | mask);
     }
 
@@ -280,8 +307,8 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         for (uint slot = 0; slot < memory.Read32(cpxArenaBase + (BufferOldCount)); slot++)
             if ((memory.Read32(cpxArenaBase + (slot < 32 ? BufferUndoLow : BufferUndoHigh)) & (1u << (int)(slot & 31))) != 0)
-                Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)(slot)) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + (42 + ((uint)(slot))) * (memory.Read32(cpxArenaBase + (PageBytes)))), (memory.Read32(cpxArenaBase + (PageBytes))));
-        Copy((memory.Read32(cpxArenaBase + (GeometryIndex))), (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 90 * (memory.Read32(cpxArenaBase + (PageBytes))) + 8704), memory.Read32(cpxArenaBase + BufferOldCount) * 32);
+                Copy((memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)(slot)) * (memory.Read32(cpxArenaBase + (PageBytes)))), BufferedUndo((uint)(slot)), (memory.Read32(cpxArenaBase + (PageBytes))));
+        Copy((memory.Read32(cpxArenaBase + (GeometryIndex))), BufferedIndex, memory.Read32(cpxArenaBase + BufferOldCount) * 32);
         Copy(((memory.Read32(cpxArenaBase + 4092)) + 64), ((memory.Read32(cpxArenaBase + 4092)) + 256), 192);
         memory.Write32(cpxArenaBase + (BufferNewCount), memory.Read32(cpxArenaBase + (BufferOldNew)));
     }
@@ -308,12 +335,12 @@ public partial struct CpxEngine<TMemory>
             return Fail(CpxError.TransactionLimit);
         uint nextToken = memory.Read32(cpxArenaBase + (NextToken));
         RestoreBufferedImages();
-        Copy(cpxArenaBase, (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes)))), 512);
+        Copy(cpxArenaBase, BufferedHeader, 512);
         // I/O identity belongs to the mount, not the rolled-back operation.
         // Reads completed since admission must never have their tokens reused.
         memory.Write32(cpxArenaBase + (NextToken), nextToken);
-        Copy(cpxArenaBase + CpxArena.MountBytes, (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes))) + 512), 8128);
-        Copy((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + 84 * (memory.Read32(cpxArenaBase + (PageBytes))) + 512) + 8192, 6 * (memory.Read32(cpxArenaBase + (PageBytes))));
+        Copy(cpxArenaBase + CpxArena.MountBytes, BufferedOperation, 8128);
+        Copy((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))), BufferedOperation + 8192, 6 * (memory.Read32(cpxArenaBase + (PageBytes))));
         Copy(cpxArenaBase + BufferTrustedMask, (memory.Read32(cpxArenaBase + 4092)), 4);
         Copy(cpxArenaBase + BufferTrustedKeys, (memory.Read32(cpxArenaBase + 4092)) + 4, 48);
         ClearBufferedObjects();
@@ -378,7 +405,7 @@ public partial struct CpxEngine<TMemory>
         InvalidateFastWrite();
         for (uint n = 0; n < 8; n++)
             memory.Write32((memory.Read32(cpxArenaBase + 4088)) + n * 272 + 268, 0);
-        memory.Write32(cpxArenaBase + (BufferObjectCursor), 0);
+        memory.Write32(cpxArenaBase + BufferObjectCursor, memory.Read32(cpxArenaBase + BufferObjectCursor) & ArenaUndoFlag);
     }
 
     private bool ReadBufferedObject(ulong id)
@@ -434,7 +461,8 @@ public partial struct CpxEngine<TMemory>
             if (target == 8)
             {
                 target = memory.Read32(cpxArenaBase + (BufferObjectCursor)) & 7;
-                memory.Write32(cpxArenaBase + (BufferObjectCursor), memory.Read32(cpxArenaBase + (BufferObjectCursor)) + 1);
+                uint cursor = memory.Read32(cpxArenaBase + BufferObjectCursor);
+                memory.Write32(cpxArenaBase + BufferObjectCursor, (cursor & ArenaUndoFlag) | ((cursor + 1) & 7));
             }
 
             uint dest = (memory.Read32(cpxArenaBase + 4088)) + target * 272;
