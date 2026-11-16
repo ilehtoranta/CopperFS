@@ -394,11 +394,23 @@ public partial struct CpxEngine<TMemory>
             InvalidateBufferedClean(unit);
         if (memory.Read32(cpxArenaBase + (Waiting)) != 0)
             return Fail(CpxError.Busy);
-        if (!Scalar64.Left(unit, (int)(memory.Read32(cpxArenaBase + (UnitShift)) - memory.Read32(cpxArenaBase + (SectorShift))), out var sector))
-            return Fail(CpxError.Corrupt);
+        uint sectorLow = (uint)unit, sectorHigh = (uint)(unit >> 32);
+        uint sectorShift = memory.Read32(cpxArenaBase + SectorShift), delta = memory.Read32(cpxArenaBase + UnitShift) - sectorShift;
+        if (delta != 0)
+        {
+            // Initialized geometry permits at most an eight-sector unit.
+            // Keep both overflow checks explicit without aggregate temporaries.
+            if (delta > 3 || (sectorHigh >> (int)(32 - delta)) != 0) return Fail(CpxError.Corrupt);
+            sectorHigh = (sectorHigh << (int)delta) | (sectorLow >> (int)(32 - delta));
+            sectorLow <<= (int)delta;
+        }
         if (kind is IoKind.Read or IoKind.Write or IoKind.Discard)
         {
-            if ((bytes & ((1u << (int)memory.Read32(cpxArenaBase + (SectorShift))) - 1)) != 0 || bytes == 0 || !Scalar64.Add(sector, ((ulong)(bytes >> (int)memory.Read32(cpxArenaBase + (SectorShift)))), out var end) || (end) > (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Capacity)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Capacity)) + 4))))))))
+            uint endLow = unchecked(sectorLow + (bytes >> (int)sectorShift));
+            uint endHigh = unchecked(sectorHigh + (endLow < sectorLow ? 1u : 0u));
+            uint capacityHigh = memory.Read32(cpxArenaBase + Capacity);
+            if ((bytes & ((1u << (int)sectorShift) - 1)) != 0 || bytes == 0 || endHigh < sectorHigh ||
+                endHigh > capacityHigh || endHigh == capacityHigh && endLow > memory.Read32(cpxArenaBase + Capacity + 4))
                 return Fail(CpxError.Corrupt);
         }
 
@@ -410,12 +422,8 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (NextToken), next);
         memory.Write32(cpxArenaBase + (Token), next);
         memory.Write32(cpxArenaBase + (PendingKind), (uint)kind);
-        {
-            uint cpxWideAddress = cpxArenaBase + (uint)(PendingSector);
-            ulong cpxWideValue = sector;
-            memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-            memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-        }
+        memory.Write32(cpxArenaBase + PendingSector, sectorHigh);
+        memory.Write32(cpxArenaBase + PendingSector + 4, sectorLow);
 
         memory.Write32(cpxArenaBase + (PendingBuffer), buffer);
         memory.Write32(cpxArenaBase + (PendingBytes), bytes);

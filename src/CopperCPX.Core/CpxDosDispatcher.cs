@@ -285,6 +285,22 @@ public partial struct CpxDosDispatcher<TMemory>
             return LifecycleStep();
         if (phase >= 40)
             return InformationStep();
+        if (phase == 20)
+            return TransferPacketStep(action);
+        return OrdinaryPacketStep(phase, action);
+    }
+
+    private StepResult TransferPacketStep(uint action)
+    {
+        StepResult result = engine.Step();
+        if (result is StepResult.Pending or StepResult.NeedIo) return result;
+        return FinishTransfer(result == StepResult.Failed ?
+            action == 82 && engine.Error == CpxError.Protected ? 224u : ToDosError(engine.Error) : 0);
+    }
+
+    private StepResult OrdinaryPacketStep(uint phase, uint action)
+    {
+        uint cpxArenaBase = arena;
         if (phase == 10)
         {
             if (action == 26406)

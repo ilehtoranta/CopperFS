@@ -549,3 +549,19 @@ cases across seven geometry combinations, including carries, overflow, capacity
 ends and malformed spans. Native coverage includes DMA and storage cancellation.
 These intermediate candidates did not receive separate full solution runs.
 FFS remains faster in both workloads; the performance goal remains unmet.
+
+A36 retains early append admission, checkpoint batching and checked scalar I/O,
+while dropping the unhelpful descriptor hints and general file-frame split.
+Packet transfers, mapping-tree completion callbacks and slow split transfers now
+have separate continuations. Compiler reports confirm common packet and mapping
+callback frames fall from 208/184 bytes to zero, transport from 224 to 80 bytes,
+and issue from 44 to 16 bytes. Bounds and the four-phase budget are unchanged.
+
+All 207 focused host cases, 630 CPX host cases in the full solution snapshot,
+48 native cases and 141 rebuilt CopperStart replay cases pass. The Release
+solution builds; its complete native run is pending. Both source-matched ROM
+allocation gates pass with intact 4 KiB stack guards and zero operation-time
+Exec allocations. The unchanged screens pass at **4,954,590 mixed** and
+**369,493,380 streaming** cycles, with identical persisted images. FFS still wins
+both workloads, and mixed work also trails SFS 1.279. This is further measured
+progress, not completion of the performance objective.

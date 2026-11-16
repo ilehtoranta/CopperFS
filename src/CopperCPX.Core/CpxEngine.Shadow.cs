@@ -164,8 +164,13 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     {
         uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         uint owner = memory.Read32(storage);
-        if (owner is 0 or 3) return;
+        if (owner is not (1 or 2)) return;
+        CompleteShadowMapIo(storage, owner, success);
+    }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void CompleteShadowMapIo(uint storage, uint owner, bool success)
+    {
         if (GetShadowGeometry(out var geometry) != CpxError.None) return;
         if (owner == 1)
         {
@@ -267,17 +272,28 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult ShadowRecoveryStep()
     {
         uint phase = memory.Read32(Arena + Phase);
-        if (phase >= 24) return RecoveryStep();
+        return phase >= 24 ? RecoveryStep() : ShadowCheckpointRecoveryStep(phase);
+    }
+
+    private StepResult ShadowCheckpointRecoveryStep(uint phase)
+    {
         bool catalogue = (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5), rootControl = (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2);
         uint rootBytes = ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))), span = (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift))), control = ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes))));
-        uint p = ShadowRootInput, storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
+        uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
+        // Recovery starts only with a quiescent, unpublished-image-free mount.
+        // The 42-page undo bank has no snapshot owner then; three checkpoints
+        // occupy at most six of those pages. The plain workspace path retains
+        // independent reads. Every checkpoint is still validated separately.
+        uint batch = CanCacheMetadata ? BufferedUndo(0) : 0;
         if (phase == 0)
         {
             RememberAllocationEnd(0);
             ClearShadowCache();
             memory.Write32(Arena + (Cursor), 0); memory.Write32(Arena + (ValidOne), 0); WW(Generation, 0); PutWide(storage + 24, 0);
-            return Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + span, p, rootBytes, 1);
+            return Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + span,
+                batch == 0 ? ShadowRootInput : batch, batch == 0 ? rootBytes : 3 * rootBytes, 1);
         }
+        uint p = batch == 0 ? ShadowRootInput : batch + memory.Read32(Arena + Cursor) * rootBytes;
         ulong at = (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span;
         bool valid = memory.Read32(p) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 0x43505835u : CpxArena.Magic) && memory.Read16(p + 6) == (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) ? 5u : 4u) && memory.Read16(p + 4) == 2 &&
             ((((ulong)(memory.Read32((p + 16)))) << 32 | ((ulong)(memory.Read32((p + 16) + 4))))) == at && ((((ulong)(memory.Read32((p + 24)))) << 32 | ((ulong)(memory.Read32((p + 24) + 4))))) == 0 && memory.Read32(p + 8) == Crc(p, rootBytes, true);
@@ -305,7 +321,8 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             }
         }
         memory.Write32(Arena + (Cursor), memory.Read32(Arena + (Cursor)) + 1);
-        if (memory.Read32(Arena + (Cursor)) < 3) return Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span, p, rootBytes, 1);
+        if (memory.Read32(Arena + (Cursor)) < 3)
+            return batch == 0 ? Issue(IoKind.Read, (((ulong)(memory.Read32(Arena + (GeometryAnchor))))) + (memory.Read32(Arena + (Cursor)) + 1) * span, p, rootBytes, 1) : StepResult.Pending;
         if (memory.Read32(Arena + (ValidOne)) == 0) return Fail(CpxError.Corrupt);
         if ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 3))
         {

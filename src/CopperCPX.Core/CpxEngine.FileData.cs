@@ -16,6 +16,7 @@ public partial struct CpxEngine<TMemory>
         if ((buffer == 0 && bytes != 0) || buffer > uint.MaxValue - bytes || !Scalar64.Add(position, ((ulong)(bytes)), out _))
             return CpxError.InvalidArgument;
         if (op == CpxOperation.ReadFile && TryBeginCachedRead(id, position, buffer, bytes)) return CpxError.None;
+        if (op == CpxOperation.WriteMapped && TryBeginCachedAppend(id, position, buffer, bytes)) return CpxError.None;
         CpxError error = StartOperation(op, id);
         if (error != CpxError.None)
             return error;

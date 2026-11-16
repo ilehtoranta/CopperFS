@@ -135,19 +135,22 @@ public static class NativeCpxTransport
         }
         uint done=APTR.ReadUInt32(s,52);
         if(done>io.Bytes) return StepResult.Failed;
-        if(!TryDirect(s,in io,out var command))
-        {
+        if(!TryDirect(s,in io,out var command)&&!NextSplitTransfer(arena,s,in io,done,out command)) return StepResult.Failed;
+        APTR.WriteUInt32(s,56,command.Length); APTR.WriteUInt32(s,60,command.Bounced?1u:0u);
+        if(io.Kind==IoKind.Write&&command.Bounced) Copy(io.Buffer+done,command.Buffer,command.Length);
+        if(NativeCpxIo.Submit(request,s,command,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
+        return APTR.ReadUInt32(s,0)==3?ReapTransfer(arena,s,request,in io,out completed):StepResult.Pending;
+    }
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool NextSplitTransfer(uint arena,APTR s,in CpxIo io,uint done,out DeviceRequest command)
+    {
+        command=default;
         var cursor=new Td64Transfer();
         int shift=SectorShift(arena);
         CpxError begin=cursor.Begin(new(APTR.ReadUInt32(s,20),APTR.ReadUInt32(s,24)),new(APTR.ReadUInt32(s,28),APTR.ReadUInt32(s,32)),
             io.Sector+(done>>shift),shift,io.Bytes-done,io.Buffer+done,APTR.ReadUInt32(s,36),APTR.ReadUInt32(s,40),
             APTR.ReadUInt32(s,Bounce),APTR.ReadUInt32(s,BounceBytes),io.Kind==IoKind.Write,APTR.ReadUInt32(s,44)!=0,APTR.ReadUInt32(s,ForceBounce)!=0);
-        if(begin!=CpxError.None||cursor.Next(out command)!=StepResult.NeedIo) return StepResult.Failed;
-        }
-        APTR.WriteUInt32(s,56,command.Length); APTR.WriteUInt32(s,60,command.Bounced?1u:0u);
-        if(io.Kind==IoKind.Write&&command.Bounced) Copy(io.Buffer+done,command.Buffer,command.Length);
-        if(NativeCpxIo.Submit(request,s,command,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
-        return APTR.ReadUInt32(s,0)==3?ReapTransfer(arena,s,request,in io,out completed):StepResult.Pending;
+        return begin==CpxError.None&&cursor.Next(out command)==StepResult.NeedIo;
     }
     private static StepResult ReapTransfer(uint arena,APTR s,APTR request,in CpxIo io,out uint completed)
     {
