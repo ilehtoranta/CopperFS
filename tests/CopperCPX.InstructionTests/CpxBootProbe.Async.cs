@@ -24,7 +24,8 @@ public static partial class CpxBootProbe
         var first=DOS.Open("CPX0:Payload",DOS.FileMode.ReadWrite); var second=DOS.Open("CPX0:Payload",DOS.FileMode.ReadWrite);
         if(!first.HasValue||!second.HasValue) return 171;
         uint a=APTR.ReadUInt32(APTR.FromPointer(first.Value.Raw<<2),36),b=APTR.ReadUInt32(APTR.FromPointer(second.Value.Raw<<2),36);
-        APTR.WriteUInt32(control,0,a-(CpxArena.Scratch+6*1024+CpxArena.IndexBytes+8)); APTR.WriteUInt32(control,28,172);
+        uint metadataBytes=(APTR.ReadUInt32(control,60)&8192)!=0?512u:1024u;
+        APTR.WriteUInt32(control,0,a-(CpxArena.Scratch+6*metadataBytes+CpxArena.IndexBytes+8)); APTR.WriteUInt32(control,28,172);
         // Full grant pool, cooperative ranges beyond EOF, then retain one lock.
         for(uint n=0;n<32;n++) if(DOS.LockRecord(first.Value,n*16,8,1,0)==0) return 172;
         if(DOS.LockRecord(first.Value,4096,8,1,0)!=0||(uint)DOS.IoErr()!=103) return 173;

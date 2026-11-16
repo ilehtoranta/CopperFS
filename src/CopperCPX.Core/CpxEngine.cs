@@ -722,8 +722,19 @@ public partial struct CpxEngine<TMemory>
     {
         uint n = 0;
         if ((p & 1) == 0)
+        {
+            // Bound each group to eight ordered stores. Page clearing spends
+            // fewer native loop instructions while retaining exact byte bounds.
+            for (; count - n >= 32; n += 32)
+            {
+                memory.Write32(p + n, 0); memory.Write32(p + n + 4, 0);
+                memory.Write32(p + n + 8, 0); memory.Write32(p + n + 12, 0);
+                memory.Write32(p + n + 16, 0); memory.Write32(p + n + 20, 0);
+                memory.Write32(p + n + 24, 0); memory.Write32(p + n + 28, 0);
+            }
             for (; count - n >= 4; n += 4)
                 memory.Write32(p + n, 0);
+        }
         for (; n < count; n++)
             memory.Write8(p + n, 0);
     }

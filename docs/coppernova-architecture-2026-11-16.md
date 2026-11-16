@@ -412,7 +412,8 @@ their pool base. Warm-cache protection tests exposed an existing attribute-write
 dependency on stale page scratch; buffered direct inodes now update their owned
 record with undo. All 595 CPX host cases, 29 focused compiled-native cases and 141
 rebuilt CopperStart filesystem replay cases pass. The Release solution builds;
-its complete test snapshot is running. The separate legacy CPX4 allocation gate
+its complete test snapshot passes 2,551 cases, with zero failures and nine skips
+(125 compiled-native cases; six unrun ROM gates). The separate legacy CPX4 allocation gate
 passes with matched sources and zero operation-time allocation.
 Both unchanged workloads pass with identical persisted media hashes at
 **5,390,960 mixed** and **370,201,990 streaming** cycles. Both references remain
@@ -430,3 +431,26 @@ pass; four additional borrowed-path cancellation cases pass. The legacy CPX4
 allocation gate passes with matching sources and an intact 4 KiB stack guard.
 Unchanged workloads pass at **5,333,610 mixed** and **370,095,910 streaming** cycles
 with identical persisted image hashes. The performance objective remains unmet.
+
+A fresh two-trial comparison for A26 passes all six trials in each workload.
+Mixed medians are **5,340,870 CPX5**, **2,782,740 FFS** and **3,931,355 SFS 1.279**;
+streaming medians are **370,095,530**, **367,442,715** and **369,856,955** cycles.
+The mixed guest probe retains SHA-256
+`0984E37B49A652D20E62ED24A524713C228E1071B8422A5676A78E177C0AD5B1`.
+
+A27 routes repeated publication visits through a smaller kernel frame and checks
+recovery phase before computing unrelated geometry. Page clearing uses bounded
+groups of eight ordered stores with exact tails. All 84 focused host and 29
+compiled filesystem/engine/event-loop cases pass. Both unchanged workloads pass
+with identical media hashes at **5,266,590 mixed** and **370,017,610 streaming**
+cycles. The legacy CPX4 ROM allocation gate passes.
+
+The new explicit CPX5 feature-5 ROM allocation probe **fails** at startup with
+DOS error 103 on 512 KiB Chip RAM and no Fast RAM. Its stack guard is intact
+(936-byte peak); no operation-time allocation occurs because mount never finishes.
+The compact buffer and shadow context require 69,616 bytes, exceeding the 68,360
+bytes remaining. This is a failed CPX5 platform gate, not a qualification pass.
+The fixture is built through the portable engine and independently checked;
+its two aliases are long Latin-1 names, and it does not claim UTF-8 import coverage.
+The original legacy fixture retains its UTF-8 entry. CPX5 physical-media coverage
+remains unrun. The performance objective remains unmet.

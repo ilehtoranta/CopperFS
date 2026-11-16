@@ -198,8 +198,22 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 
     private StepResult ShadowCommitStep()
     {
+        uint stage = memory.Read32(Arena + Phase);
+        if (stage == 103) return ShadowKernelStep();
+        if (stage is 104 or 105)
+        {
+            uint descriptors = memory.Read32(Arena + BufferAddress) + 5120 + 42 * memory.Read32(Arena + PageBytes);
+            return stage == 104 ? ShadowCatalogueUpdate(descriptors) : ShadowCataloguePromote(descriptors);
+        }
+        return PrepareShadowCommitStep(stage);
+    }
+
+    // Keep repeated kernel visits out of the descriptor-preparation frame.
+    // Geometry and preparation temporaries have no lifetime during I/O service.
+    private StepResult PrepareShadowCommitStep(uint stage)
+    {
         uint storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u), state = (memory.Read32((Arena) + (BufferAddress)) + 4096 + (42 + (0)) * (memory.Read32((Arena) + (PageBytes)))), descriptors = state + 1024;
-        uint stage = memory.Read32(Arena + (Phase)), shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift));
+        uint shift = memory.Read32(Arena + (UnitShift)) - memory.Read32(Arena + (SectorShift));
         if (stage == 0) { memory.Write32(Arena + (Cursor), 0); memory.Write32(storage + 60, 0); memory.Write32(Arena + (Phase), 100); return StepResult.Pending; }
         if (stage == 100)
         {
@@ -262,33 +276,35 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             memory.Write32(storage, 0);
             return BeginShadowKernel(root);
         }
-        if (stage == 104) return ShadowCatalogueUpdate(descriptors);
-        if (stage == 105) return ShadowCataloguePromote(descriptors);
-        if (stage == 103)
-        {
-            var commit = new CpxShadowCommit<TMemory>(memory, state);
-            StepResult result = commit.Step();
-            if (result == StepResult.Failed) return Fail(commit.Error);
-            if (result == StepResult.NeedIo)
-            {
-                CpxIo request = commit.Request;
-                return Issue(request.Kind, (ulong)request.Sector >> (int)shift, request.Buffer, request.Bytes, 103);
-            }
-            if (result != StepResult.Complete) return result;
-            PutWide(storage + 24, commit.DurableMappingRoot);
-            memory.Write32(storage + 32, commit.SurvivingCheckpoint); memory.Write32(storage, 0);
-            ClearShadowCache();
-            memory.Write32(Arena + (Phase), 15); return StepResult.Pending;
-        }
         return Fail(CpxError.Corrupt);
+    }
+
+    private StepResult ShadowKernelStep()
+    {
+        uint context = Arena, storage = memory.Read32(context + CheckpointPolicy) & ~7u;
+        uint state = memory.Read32(context + BufferAddress) + 4096 + 42 * memory.Read32(context + PageBytes);
+        var commit = new CpxShadowCommit<TMemory>(memory, state);
+        StepResult result = commit.Step();
+        if (result == StepResult.Failed) return Fail(commit.Error);
+        if (result == StepResult.NeedIo)
+        {
+            CpxIo request = commit.Request;
+            return Issue(request.Kind, (ulong)request.Sector >> (int)(memory.Read32(context + UnitShift) - memory.Read32(context + SectorShift)), request.Buffer, request.Bytes, 103);
+        }
+        if (result != StepResult.Complete) return result;
+        PutWide(storage + 24, commit.DurableMappingRoot);
+        memory.Write32(storage + 32, commit.SurvivingCheckpoint); memory.Write32(storage, 0);
+        ClearShadowCache();
+        memory.Write32(Arena + (Phase), 15); return StepResult.Pending;
     }
 
     private StepResult ShadowRecoveryStep()
     {
+        uint phase = memory.Read32(Arena + Phase);
+        if (phase >= 24) return RecoveryStep();
         bool catalogue = (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5), rootControl = (((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 2);
         uint rootBytes = ((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))), span = (((((memory.Read32(Arena + (CheckpointPolicy)) & 4) != 0) && memory.Read32((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 56) >= 5) && (memory.Read32(Arena + (PageBytes))) < 1024 ? 1024u : (memory.Read32(Arena + (PageBytes)))) >> (int)memory.Read32(Arena + (UnitShift))), control = ((memory.Read32(Arena + (CheckpointPolicy)) & ~7u) + 288 + 3 * (memory.Read32(Arena + (PageBytes))));
-        uint p = ShadowRootInput, phase = memory.Read32(Arena + (Phase)), storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
-        if (phase >= 24) return RecoveryStep();
+        uint p = ShadowRootInput, storage = (memory.Read32(Arena + (CheckpointPolicy)) & ~7u);
         if (phase == 0)
         {
             RememberAllocationEnd(0);

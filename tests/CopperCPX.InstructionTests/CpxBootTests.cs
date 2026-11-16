@@ -26,10 +26,10 @@ public partial class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
     [CpxBootTheory][InlineData(false)]
     public System.Threading.Tasks.Task BufferedDosFormatRetiresEarlierWrites(bool unused)
     { Assert.False(unused); return RunBoot(false,false,true,false,false,false,false,true); }
-    private async System.Threading.Tasks.Task RunBoot(bool deep,bool replay,bool format,bool owners,bool damaged,bool dma,bool allocationOnly,bool bufferedFormat=false)
+    private async System.Threading.Tasks.Task RunBoot(bool deep,bool replay,bool format,bool owners,bool damaged,bool dma,bool allocationOnly,bool bufferedFormat=false,bool cpx5=false)
     {
         bool diagnostic=Environment.GetEnvironmentVariable("COPPERCPX_ASYNC_DIAGNOSTIC")=="1";
-        string repo=FindRoot(),root=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_BOOT_ROOT")??Path.Combine(repo,"artifacts",diagnostic?"cpx4-async-diagnostic":"cpx4-boot-512k"),bufferedFormat?"buffered-format":allocationOnly?"allocation":dma?"dma-fallback":damaged?"backup-anchor":owners&&format?"unsupported-trim":owners?"owners-depth8":format?"format":replay?"recovery":deep?"depth8":"growth"),handler=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_HANDLER_ROOT")??Path.Combine(repo,"artifacts","native-cpx4-handler"),"CopperCPX4");
+        string repo=FindRoot(),root=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_BOOT_ROOT")??Path.Combine(repo,"artifacts",diagnostic?"cpx4-async-diagnostic":"cpx4-boot-512k"),cpx5?"cpx5-allocation":bufferedFormat?"buffered-format":allocationOnly?"allocation":dma?"dma-fallback":damaged?"backup-anchor":owners&&format?"unsupported-trim":owners?"owners-depth8":format?"format":replay?"recovery":deep?"depth8":"growth"),handler=Path.Combine(Environment.GetEnvironmentVariable("COPPERCPX_HANDLER_ROOT")??Path.Combine(repo,"artifacts","native-cpx4-handler"),"CopperCPX4");
         string? romPath=Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM"); Assert.True(File.Exists(romPath),"Licensed Kickstart ROM is unavailable."); Assert.True(File.Exists(handler),"Rebuild CopperCPX4 first.");
         var build=ValidateBuild(repo,handler);
         Directory.CreateDirectory(Path.Combine(root,"boot","S"));
@@ -40,14 +40,14 @@ public partial class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         File.WriteAllBytes(Path.Combine(root,"boot","PROBE"),probe.Image); File.Copy(handler,Path.Combine(root,"boot","HANDLER"),true);
         File.WriteAllText(Path.Combine(root,"boot","S","startup-sequence"),"PROBE\n");
         var boot=await FileSystemAdf.CreateAsync(Path.Combine(root,"boot"),"CPX4Boot");
-        var disk=new Image(); if(damaged) PrepareDamagedAnchor(disk); else if(!format||bufferedFormat) Format(disk,allocationOnly); if(deep) MakeDeep(disk); if(replay) MakeReplay(disk); string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,disk.Bytes);
+        var disk=new Image(); if(damaged) PrepareDamagedAnchor(disk); else if(!format||bufferedFormat) Format(disk,allocationOnly,cpx5); if(deep) MakeDeep(disk); if(replay) MakeReplay(disk); string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,disk.Bytes);
         var hook=new Storage(!(format&&owners)); using var machine=new LightweightA500Machine(new() { CpuModel=M68kCpuModel.M68000,ChipRamBytes=512*1024,FastRamBytes=0,SlowRamBytes=0,
             FloppyDriveCount=1,Hardfiles=[new(0,media,readOnly:false){ExposeBootNode=false,IoHook=hook}] });
         machine.LoadKickstart(File.ReadAllBytes(romPath!)); machine.MountAdf(0,boot); machine.SetDriveWriteProtected(0,true); machine.Reset();
         var sampler=new StackSampler(machine); uint control=0,pointer=0; int octets=0,idleStart=0,idleDiscards=0; bool done=false,failed=false;
         machine.ParallelDataWritten+=(value,_,_)=>
         {
-            if(octets!=0) { pointer=(pointer<<8)|value; if(--octets==0) { control=pointer; sampler.Control=control; BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(machine.ChipRam).Span.Slice((int)control+60),(deep?1u:0)|(replay?2u:0)|(diagnostic?4u:0)|(format?8u:0)|(owners?16u:0)|(damaged?32u:0)|(dma?64u:0)|(allocationOnly?128u:0)|(bufferedFormat?4096u:0)); } return; }
+            if(octets!=0) { pointer=(pointer<<8)|value; if(--octets==0) { control=pointer; sampler.Control=control; BinaryPrimitives.WriteUInt32BigEndian(System.Runtime.InteropServices.MemoryMarshal.AsMemory(machine.ChipRam).Span.Slice((int)control+60),(deep?1u:0)|(replay?2u:0)|(diagnostic?4u:0)|(format?8u:0)|(owners?16u:0)|(damaged?32u:0)|(dma?64u:0)|(allocationOnly?128u:0)|(bufferedFormat?4096u:0)|(cpx5?8192u:0)); } return; }
             if(value==200) { octets=4; pointer=0; }
             if(value==224) { sampler.Code=Read(machine,control+32); sampler.Startup=true; }
             if(value==225) sampler.Startup=false;
@@ -81,7 +81,7 @@ public partial class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         if(!done||failed) File.WriteAllBytes(Path.Combine(root,"failed-chipram.bin"),machine.ChipRam.ToArray());
         uint extraDmaBytes=dma?Read(machine,control+1880):0,arenaBytes=CpxArena.Bytes(4096);
         uint diagnosticArena=control==0?0:Read(machine,control);
-        var receipt=new { Passed=done&&!failed,AsyncDiagnosticOnly=diagnostic,AllocationOnly=allocationOnly,PartialPacketCoverage=true,MaximumDepthFixture=deep,CommittedJournalReplay=replay,ChipRam=512*1024,FastRam=0,SlowRam=0,Cpu="MC68000",Stage=stage,DosError=error,
+        var receipt=new { Passed=done&&!failed,MediaVersion=cpx5?5:4,FeatureLevel=cpx5?5:0,MetadataPageBytes=cpx5?512:1024,AliasFixture=cpx5?"two long Latin-1 names":"UTF-8 import and long Latin-1 name",AsyncDiagnosticOnly=diagnostic,AllocationOnly=allocationOnly,PartialPacketCoverage=true,MaximumDepthFixture=deep,CommittedJournalReplay=replay,ChipRam=512*1024,FastRam=0,SlowRam=0,Cpu="MC68000",Stage=stage,DosError=error,
             Substage=control==0?0:Read(machine,control+28),DiagnosticArena=diagnosticArena,
             TimerWords=diagnosticArena==0||done&&!failed?[]:Enumerable.Range(0,52).Select(n=>Read(machine,diagnosticArena+2816+(uint)n*4)).ToArray(),
             WaitWords=diagnosticArena==0||done&&!failed?[]:Enumerable.Range(0,16).Select(n=>Read(machine,diagnosticArena+CpxArena.Scratch+6*Read(machine,diagnosticArena+12)+CpxArena.IndexBytes+14336+(uint)n*4)).ToArray(),
@@ -120,7 +120,7 @@ public partial class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         if(damaged&&!dma) { Assert.InRange(idleDiscards,1,2); Assert.InRange(sampler.PeriodicPeak,1u,sampler.Peak); }
         if(!damaged&&!allocationOnly) Assert.Equal(hook.SupportsDiscard?1+(int)manual+(int)sampler.PeriodicDiscards:0,hook.Discards);
         machine.Dispose(); // Release the host hardfile handle before independent reopening.
-        if(damaged) VerifyDamagedAnchor(File.ReadAllBytes(media)); else if(owners&&!format) VerifyOwners(File.ReadAllBytes(media)); else if(format) VerifyFormat(File.ReadAllBytes(media)); else if(allocationOnly) new Cpx4Volume<Image>(new Image{Bytes=File.ReadAllBytes(media)},new byte[36864]).Check(); else if(!diagnostic) Verify(File.ReadAllBytes(media),deep);
+        if(damaged) VerifyDamagedAnchor(File.ReadAllBytes(media)); else if(owners&&!format) VerifyOwners(File.ReadAllBytes(media)); else if(format) VerifyFormat(File.ReadAllBytes(media)); else if(allocationOnly) new Cpx4Volume<Image>(new Image{Bytes=File.ReadAllBytes(media)},new byte[Cpx4Volume<Image>.RequiredScratchBytes(4096,true)]).Check(); else if(!diagnostic) Verify(File.ReadAllBytes(media),deep);
         Assert.Equal(build.HunkSha256,ValidateBuild(repo,handler).HunkSha256);
         File.WriteAllText(Path.Combine(root,"qualification.json"),json);
     }
@@ -131,6 +131,13 @@ public partial class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.False(unused);
         Assert.NotEqual("1",Environment.GetEnvironmentVariable("COPPERCPX_ASYNC_DIAGNOSTIC"));
         return RunBoot(false,false,false,false,false,false,true);
+    }
+    [CpxBootTheory] [InlineData(false)]
+    public System.Threading.Tasks.Task NativeCpx5HandlerExAllAndAsyncOperationsAvoidExecAllocation(bool unused)
+    {
+        Assert.False(unused);
+        Assert.NotEqual("1",Environment.GetEnvironmentVariable("COPPERCPX_ASYNC_DIAGNOSTIC"));
+        return RunBoot(false,false,false,false,false,false,true,cpx5:true);
     }
     private static void PrepareDamagedAnchor(Image image)
     {
@@ -184,8 +191,9 @@ public partial class CpxBootTests(Xunit.Abstractions.ITestOutputHelper output)
     private static string FindRoot()
     { string? p=AppContext.BaseDirectory; while(p!=null&&!File.Exists(Path.Combine(p,"CopperFS.slnx"))) p=Path.GetDirectoryName(p); return p??throw new InvalidOperationException("Repository not found."); }
     private static uint Read(LightweightA500Machine machine,uint p)=>BinaryPrimitives.ReadUInt32BigEndian(machine.ChipRam.Span.Slice((int)p,4));
-    private static void Format(Image disk,bool allocationOnly = false)
+    private static void Format(Image disk,bool allocationOnly = false,bool cpx5=false)
     {
+        if(cpx5) { FormatCpx5Allocation(disk); return; }
         Cpx4Volume<Image>.Format(disk,512,new byte[36864],12345); var v=new Cpx4Volume<Image>(disk,new byte[36864]);
         v.Create("Inline"u8,out ulong id); if(allocationOnly) v.SetComment(id,"native comment"u8); v.Create("Payload"u8,out id); byte[] data=Enumerable.Range(0,4096).Select(n=>(byte)(n*7+11)).ToArray(); v.Write(id,0,data,out _);
         v.Create("Wide"u8,out id); v.Write(id,0x100000009UL,new byte[]{0x5a},out _);
