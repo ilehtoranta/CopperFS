@@ -1655,15 +1655,109 @@
         "managedAllocationSiteCount": 0
       },
       "coverage": {
-        "fullSolution": "running",
+        "fullSolution": {
+          "passed": 2512,
+          "failed": 0,
+          "skipped": 9,
+          "hostCpx": 575,
+          "nativePassed": 106,
+          "nativeRomSkipped": 6
+        },
         "fullRom": "separate gate not run",
-        "physicalMedia": "not run"
+        "physicalMedia": "not run",
+        "copperStartRebuiltReplay": 141
       },
       "diagnosticEvidence": {
         "A15CallingCliRomCycles": 15236587,
         "FFSCallingCliRomCycles": 13592010,
         "A15DosReadRomCycles32Calls": 121298,
         "explanation": "Most extra ROM work was outside DOS.Read; hot code reads CIA timer registers. VBlank maintenance reduced the unprofiled streaming result by 1837080 cycles."
+      }
+    },
+    "A18": {
+      "format": 5,
+      "features": 5,
+      "metadataPageBytes": 512,
+      "checkpointBytes": 1024,
+      "description": "Explicit portable memory-copy primitive with native Exec bulk copies for disjoint ranges; ordered scalar fallback for small/overlapping ranges",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1094,
+          "CompletedFrames": 1094,
+          "HostSeconds": 4.5781964,
+          "PhaseCycles": {
+            "mutationCycles": 2955730,
+            "flushCycles": 778780,
+            "remountCycles": 855160,
+            "verifyCycles": 1362580
+          },
+          "ReadCommands": 33,
+          "WriteCommands": 18,
+          "ReadRequests": 71,
+          "WriteRequests": 36,
+          "ReadBytes": 36352,
+          "WriteBytes": 18432,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "C080461812B63E57EFFEB00C8A7E097AA8726CDF4B56FD33397CCE589C9353C4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3722,
+          "CompletedFrames": 3722,
+          "HostSeconds": 19.7165321,
+          "PhaseCycles": {
+            "mutationCycles": 3236980,
+            "flushCycles": 922190,
+            "remountCycles": 875400,
+            "verifyCycles": 365552640
+          },
+          "ReadCommands": 65,
+          "WriteCommands": 51,
+          "ReadRequests": 4157,
+          "WriteRequests": 4118,
+          "ReadBytes": 2128384,
+          "WriteBytes": 2108416,
+          "Flushes": 4,
+          "InitialMediaSha256": "75A91120DF7C99F4F68312278BCAF2F0C6BD5BFE339DE38664D5E887824D020C",
+          "ResultMediaSha256": "A581D285B41163E82D8CC9BD3F8DD5FCBACEDAD3F720A70CC75A0E934FD993B4",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "F8D86D33D00825337157E480A596A1535E39AB600A4A827147F579662B21732B",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHost": 62,
+        "focusedNative": 21,
+        "additionalNativeCopyCases": 9,
+        "copperStartRebuiltReplay": 141,
+        "fullSolution": {
+          "passed": 2521,
+          "failed": 0,
+          "skipped": 9,
+          "hostCpx": 575,
+          "nativePassed": 115,
+          "nativeRomSkipped": 6
+        },
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run"
       }
     }
   },

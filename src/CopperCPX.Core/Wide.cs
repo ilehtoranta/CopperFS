@@ -102,6 +102,9 @@ public interface ICpxMemory
     void Write16(uint address, uint value);
     uint Read32(uint address);
     void Write32(uint address, uint value);
+    // Caller-owned RAM ranges. Implementations preserve Forward's copy order
+    // for overlapping ranges; a native adapter can accelerate disjoint copies.
+    void Copy(uint destination, uint source, uint bytes);
 }
 
 public enum StepResult : uint

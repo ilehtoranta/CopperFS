@@ -572,30 +572,7 @@ public partial struct CpxEngine<TMemory>
         return StepResult.Pending;
     }
 
-    private void Copy(uint destination, uint source, uint bytes)
-    {
-        uint n = 0;
-        if (((destination | source) & 1) == 0)
-        {
-            for (; bytes - n >= 32; n += 32)
-            {
-                memory.Write32(destination + n, memory.Read32(source + n));
-                memory.Write32(destination + n + 4, memory.Read32(source + n + 4));
-                memory.Write32(destination + n + 8, memory.Read32(source + n + 8));
-                memory.Write32(destination + n + 12, memory.Read32(source + n + 12));
-                memory.Write32(destination + n + 16, memory.Read32(source + n + 16));
-                memory.Write32(destination + n + 20, memory.Read32(source + n + 20));
-                memory.Write32(destination + n + 24, memory.Read32(source + n + 24));
-                memory.Write32(destination + n + 28, memory.Read32(source + n + 28));
-            }
-
-            for (; bytes - n >= 4; n += 4)
-                memory.Write32(destination + n, memory.Read32(source + n));
-        }
-
-        for (; n < bytes; n++)
-            memory.Write8(destination + n, memory.Read8(source + n));
-    }
+    private void Copy(uint destination, uint source, uint bytes) => memory.Copy(destination, source, bytes);
 
     private StepResult BeginTx(uint credits, uint nextPhase)
     {

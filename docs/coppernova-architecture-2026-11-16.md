@@ -313,5 +313,19 @@ and little of that was inside DOS.Read. Hot ROM code reads CIA timer registers.
 The timer change reduces streaming by 1,837,080 cycles to **370,604,920**. Mixed
 passes at **5,969,360** cycles. Both guest and independent persisted-image checks
 pass and final image hashes match A16. FFS and SFS still win both workloads.
-The A17 full Release snapshot is running. No separate CPX5 full-ROM or physical
-media release gate is claimed.
+The A17 full Release snapshot passes 2,512 tests, with nine skips and zero
+failures; rebuilt CopperStart replay passes 141 cases.
+
+A18 supplies an explicit portable memory-copy primitive. Its native adapter uses
+Exec bulk copies for disjoint ranges of at least 64 bytes and preserves the
+original ordered scalar behavior for overlap and small ranges. Nine native cases
+check alignment, overlap, self-copy, empty ranges, allocation compatibility and
+the 4 KiB stack guard. The experimental managed memory interface gains a required
+method; packet ABI, arena layout and disk format are unchanged.
+The unchanged workloads pass at **5,952,250 mixed** and **370,587,210 streaming**
+cycles, with identical persisted image hashes to A17. The gain is small; both
+references still win both workloads. Full Release coverage is **2,521 passed,
+zero failed, nine skipped**, including 575 CPX host and 115 native cases.
+The build succeeds with the existing nullable warning in the external compiler.
+Rebuilt CopperStart replay passes 141 cases. No separate CPX5 full-ROM or
+physical-media release gate is claimed.

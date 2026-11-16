@@ -6,6 +6,7 @@ namespace CopperCPX.Tests;
 
 internal struct Ram(byte[] bytes) : ICpxMemory
 {
+        public void Copy(uint destination,uint source,uint bytes) => CpxMemoryCopy.Forward(ref this,destination,source,bytes);
         public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
         public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
     public byte[] Bytes=bytes;
