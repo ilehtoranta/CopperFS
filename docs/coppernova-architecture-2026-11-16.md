@@ -404,3 +404,17 @@ operation-time Exec allocations and an intact 4 KiB stack guard.
 The unchanged CPX5 workloads pass at **5,423,230 mixed** and **370,316,940 streaming**
 cycles, with unchanged media hashes. Both original handlers still win both
 workloads. No full CPX5 ROM or physical-media qualification is claimed.
+
+A25 admits classic absolute resize packets directly when a healthy idle engine
+already owns the cached regular-file record. Normal resize validation still
+enforces protection and other open handles' positions. DOS resource scans reuse
+their pool base. Warm-cache protection tests exposed an existing attribute-write
+dependency on stale page scratch; buffered direct inodes now update their owned
+record with undo. All 595 CPX host cases, 29 focused compiled-native cases and 141
+rebuilt CopperStart filesystem replay cases pass. The Release solution builds;
+its complete test snapshot is running. The separate legacy CPX4 allocation gate
+passes with matched sources and zero operation-time allocation.
+Both unchanged workloads pass with identical persisted media hashes at
+**5,390,960 mixed** and **370,201,990 streaming** cycles. Both references remain
+faster; these single screening trials do not establish acceptance. CPX5 full-ROM
+and physical-media gates remain unrun.

@@ -9,9 +9,10 @@ public partial struct CpxDosDispatcher<TMemory>
     {
         uint cpxArenaBase = arena;
         // Exactly 64 slots; performed in its own dispatcher phase.
+        uint pool = cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes;
         for (uint n = 0; n < 32; n++)
         {
-            uint h = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + n * 64 + 8, l = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + 2048 + n * 48 + 8;
+            uint h = pool + n * 64 + 8, l = pool + 2048 + n * 48 + 8;
             if (h != except && memory.Read32(h - 8) == 1 && Wide.Equal(G(h), id))
                 return true;
             if (l != except && memory.Read32(l - 8) == 1 && Wide.Equal(G(l + 20), id))

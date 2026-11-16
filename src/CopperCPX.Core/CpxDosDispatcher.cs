@@ -38,8 +38,9 @@ public partial struct CpxDosDispatcher<TMemory>
     {
         get
         {
+            uint pool = arena + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes;
             for (uint n = 0; n < 32; n++)
-                if (memory.Read32((arena + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + n * 64) != 0 || memory.Read32((arena + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + 2048 + n * 48) != 0)
+                if (memory.Read32(pool + n * 64) != 0 || memory.Read32(pool + 2048 + n * 48) != 0)
                     return true;
             return false;
         }
@@ -185,9 +186,10 @@ public partial struct CpxDosDispatcher<TMemory>
     private bool Conflicts(Wide id, bool exclusive)
     {
         uint cpxArenaBase = arena;
+        uint pool = cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes;
         for (uint n = 0; n < 32; n++)
         {
-            uint h = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + n * 64, l = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + 2048 + n * 48;
+            uint h = pool + n * 64, l = pool + 2048 + n * 48;
             if (memory.Read32(h) == 1 && Wide.Equal((new CopperCPX.Wide(memory.Read32((h + 8)), memory.Read32((h + 8) + 4))), id) && (exclusive || memory.Read32(h + 24) == uint.MaxValue))
                 return true;
             if (memory.Read32(l) == 1 && Wide.Equal((new CopperCPX.Wide(memory.Read32((l + 28)), memory.Read32((l + 28) + 4))), id) && (exclusive || memory.Read32(l + 16) == uint.MaxValue))
@@ -533,12 +535,12 @@ public partial struct CpxDosDispatcher<TMemory>
         return Start(engine.BeginOperation(CpxOperation.ReadObject, engine.LookupId), 12);
     }
 
-    private StepResult SeekFinish()
+    private StepResult SeekFinish(bool cachedFile = false)
     {
         uint cpxArenaBase = arena;
         bool wide = memory.Read32(cpxArenaBase + 512 + (Action))is 26400 or 26401, resize = memory.Read32(cpxArenaBase + 512 + (Action))is 1022 or 26401;
         uint failure = wide ? 0u : uint.MaxValue;
-        if (!engine.ObjectFound)
+        if (!cachedFile && !engine.ObjectFound)
             return Finish(failure, 205);
         uint h = memory.Read32(cpxArenaBase + 512 + (Handle)), mode = (memory.Read32(memory.Read32(arena + 512 + (Packet)) + 20 + (2) * 4));
         Wide old = (new CopperCPX.Wide(memory.Read32((h + 8)), memory.Read32((h + 8) + 4))), basis, offset;
@@ -574,9 +576,10 @@ public partial struct CpxDosDispatcher<TMemory>
         {
             if (memory.Read32(h + 20) == 0)
                 return Finish(failure, 223);
+            uint pool = cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes;
             for (uint n = 0; n < 32; n++)
             {
-                uint other = (cpxArenaBase + CpxArena.Scratch + 6 * engine.MetadataPageBytes + CpxArena.IndexBytes) + n * 64 + 8;
+                uint other = pool + n * 64 + 8;
                 if (other != h && memory.Read32(other - 8) == 1 && Wide.Equal((new CopperCPX.Wide(memory.Read32((other)), memory.Read32((other) + 4))), (new CopperCPX.Wide(memory.Read32((h)), memory.Read32((h) + 4)))) && Wide.Compare((new CopperCPX.Wide(memory.Read32((other + 8)), memory.Read32((other + 8) + 4))), next) > 0)
                     next = (new CopperCPX.Wide(memory.Read32((other + 8)), memory.Read32((other + 8) + 4)));
             }
@@ -679,6 +682,8 @@ public partial struct CpxDosDispatcher<TMemory>
                 if (!ValidResource(a, ResourceKind.Handle))
                     return Finish(action >= 26400 ? 0u : uint.MaxValue, 211);
                 memory.Write32(cpxArenaBase + 512 + (Handle), a);
+                if (action == 1022 && Arg(2) == uint.MaxValue && (Arg(1) & 0x80000000) == 0 && engine.HasCachedRegularFile(G(a)))
+                    return SeekFinish(true);
                 return Start(engine.BeginOperation(CpxOperation.ReadObject, (new CopperCPX.Wide(memory.Read32((a)), memory.Read32((a) + 4)))), 23);
             case 15:
                 if (a == 0)

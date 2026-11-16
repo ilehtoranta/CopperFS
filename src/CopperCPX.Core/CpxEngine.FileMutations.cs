@@ -150,6 +150,10 @@ public partial struct CpxEngine<TMemory>
             case 103:
                 return BeginTx(6, 102);
             case 102:
+                // A cached object lookup supplies its record and identity,
+                // while the scratch page may still contain another inode.
+                // Use the owned inode path, including its buffered undo.
+                if (BufferedWrites && DirectInodes) return SaveObject(record, 200);
                 uint dest = p + 64 + (memory.Read32(cpxArenaBase + (TreeSlot)) - 1) * 256;
                 Copy(dest, record, 256);
                 return StagePage(p, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(TreeAddress)) + 4)))))), 200);

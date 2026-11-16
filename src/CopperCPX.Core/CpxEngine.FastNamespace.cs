@@ -2,6 +2,18 @@ namespace CopperCPX;
 public partial struct CpxEngine<TMemory>
     where TMemory : struct, ICpxMemory
 {
+    // The dispatcher can omit a separate object-read operation for an absolute
+    // resize. BeginResize still owns admission, protection and size changes.
+    internal bool HasCachedRegularFile(Wide id)
+    {
+        uint context = Arena;
+        if (memory.Read32(context + Signature) != CpxArena.Magic || memory.Read32(context + Waiting) != 0 ||
+            memory.Read32(context + Finished) == 0 || memory.Read32(context + Mounted) == 0 ||
+            memory.Read32(context + Poisoned) != 0 || memory.Read32(context + BufferEnabled) != 1) return false;
+        uint record = CachedObject(id);
+        return record != 0 && memory.Read8(record + 84) == 1;
+    }
+
     private uint CachedObject(ulong id)
     {
         uint objects = (memory.Read32(Arena + 4088));
