@@ -10,13 +10,13 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private void ValidateReserve()
     {
         Load(layout.Reserve, B(3)); int count = U16(B(3), 64);
-        if (!IsPage(B(3), PageType.Reserve, layout.Reserve, 0) || count > ReserveCapacity) throw new InvalidDataException("Invalid reserve control.");
+        if (!VolumePage(B(3), PageType.Reserve, layout.Reserve, 0) || count > ReserveCapacity) throw new InvalidDataException("Invalid reserve control.");
         for (int i = 0; i < count; i++)
         {
             ulong address = U64(B(3), 72 + i * 8);
             if (!layout.AllocatablePage(address)) throw new InvalidDataException("Invalid reserve page address.");
             for (int j = 0; j < i; j++) if (U64(B(3), 72 + j * 8) == address) throw new InvalidDataException("Duplicate reserve ownership.");
-            for (ulong unit = address; unit < address + layout.Q; unit++) if (!Allocated(unit)) throw new InvalidDataException("Reserve references bitmap-free space.");
+            for (ulong unit = address; unit < address + layout.MetadataSpan; unit++) if (!Allocated(unit)) throw new InvalidDataException("Reserve references bitmap-free space.");
         }
     }
     private bool Allocated(ulong unit)
@@ -28,7 +28,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     private void ValidateBitmap(scoped ReadOnlySpan<byte> p, ulong group, int map)
     {
-        if (!IsPage(p, PageType.Bitmap, layout.Bitmap(group, map), group) || U32(p, 12) != map)
+        if (!VolumePage(p, PageType.Bitmap, layout.Bitmap(group, map), group) || U32(p, 12) != map)
             throw new InvalidDataException("Bitmap identity mismatch.");
     }
     private bool FindFree(uint wanted, bool metadata, out ulong address, out uint count)

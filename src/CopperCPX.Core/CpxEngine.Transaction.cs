@@ -100,7 +100,7 @@ public partial struct CpxEngine<TMemory>
         ulong tx = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))) + 1;
         uint type = memory.Read16(p + 4);
         ulong owner = ((((ulong)(memory.Read32(((uint)(p + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 24)) + 4)))));
-        if (memory.Read32(p) != CpxArena.Magic || memory.Read16(p + 6) != 4 || !TargetValid(target, type, owner) || !PayloadValid(p))
+        if (memory.Read32(p) != MediaMagic || memory.Read16(p + 6) != MediaVersion || !TargetValid(target, type, owner) || !PayloadValid(p))
             return Fail(CpxError.Corrupt);
         int slot = FindStaged(target);
         if (slot < 0)
@@ -184,6 +184,7 @@ public partial struct CpxEngine<TMemory>
             return Done();
         }
 
+        if (ShadowVolume && phase != 15) return ShadowCommitStep();
         switch (phase)
         {
             case 0:

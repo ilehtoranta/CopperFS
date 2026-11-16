@@ -274,9 +274,9 @@ public partial struct CpxEngine<TMemory>
         switch (memory.Read32(cpxArenaBase + (Phase)))
         {
             case 0:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 1);
+                return ReadStaged(StateAddress, (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 1);
             case 1:
-                if (!Control((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)))))
+                if (!Control((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 3, StateAddress) || !ReadableGeneration((memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)))))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(SaveRoot);

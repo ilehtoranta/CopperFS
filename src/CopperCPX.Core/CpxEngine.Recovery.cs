@@ -186,16 +186,16 @@ public partial struct CpxEngine<TMemory>
             case 23:
                 return Issue(IoKind.Flush, default, 0, 0, 24);
             case 24:
-                return Issue(IoKind.Read, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 4 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, (memory.Read32(cpxArenaBase + (PageBytes))), 25);
+                return Issue(IoKind.Read, CharsetAddress, p, (memory.Read32(cpxArenaBase + (PageBytes))), 25);
             case 25:
-                if (!Control(p, 5, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 4 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read32(p + 64) != 1 || memory.Read16(p + 52) != 4)
+                if (!Control(p, 5, CharsetAddress) || memory.Read32(p + 64) != 1 || memory.Read16(p + 52) != 4)
                     return Fail(CpxError.Corrupt);
-                return Issue(IoKind.Read, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, (memory.Read32(cpxArenaBase + (PageBytes))), 26);
+                return ReadStaged(StateAddress, p, 26);
             case 26:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || (((((ulong)(memory.Read32(((uint)(p + 64))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64)) + 4)))))) < (((ulong)(2))) || (((ulong)(((((ulong)(memory.Read32(((uint)(p + 72))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 72)) + 4))))))) == 0) || !Allocatable(((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4)))))) || !ValidStateLabel(p))
+                if (!Control(p, 3, StateAddress) || (((((ulong)(memory.Read32(((uint)(p + 64))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64)) + 4)))))) < (((ulong)(2))) || (((ulong)(((((ulong)(memory.Read32(((uint)(p + 72))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 72)) + 4))))))) == 0) || !Allocatable(((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4)))))) || !ValidStateLabel(p))
                     return Fail(CpxError.Corrupt);
                 CacheStateLabel(p);
-                return Issue(IoKind.Read, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), (memory.Read32(cpxArenaBase + (PageBytes))), 27);
+                return ReadStaged(Anchor + 8 * Q, Page(3), 27);
             case 27:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)));
                 if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read16(reserve + 64) > 64 || memory.Read16(reserve + 52) != 520)
@@ -227,7 +227,7 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         ulong group = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & 0xffff0000)));
-        return ((((ulong)(group)) == 0) ? ((ulong)(131072u >> (int)memory.Read32(cpxArenaBase + (UnitShift)))) : group) + (1 + ((((uint)((ulong)(at))) & 65535) >> 12)) * (memory.Read32(cpxArenaBase + (GeometryQ)));
+        return ((((ulong)(group)) == 0) ? ((ulong)(131072u >> (int)memory.Read32(cpxArenaBase + (UnitShift)))) : group) + (1 + ((((uint)((ulong)(at))) & 65535) >> 12)) * MetadataSpan;
     }
 
     private bool ControlBitmap(uint p, ulong at, ulong owner) => ValidPage(p, Bitmap(at)) && memory.Read16(p + 4) == 7 && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 24)) + 4))))))) == ((ulong)(owner))) && memory.Read32(p + 12) == ((((uint)((ulong)(at))) & 65535) >> 12) && memory.Read16(p + 52) == 512;
@@ -337,7 +337,7 @@ public partial struct CpxEngine<TMemory>
         if (!PageAddress(address))
             return false;
         if (type == 3)
-            return (((ulong)(owner)) == 0) && (((ulong)(address)) == ((ulong)((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))))));
+            return (((ulong)(owner)) == 0) && (((ulong)(address)) == ((ulong)(StateAddress)));
         if (type == 4)
             return (((ulong)(owner)) == 0) && (((ulong)(address)) == ((ulong)((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))))));
         if (type == 6 || type == 7)
@@ -345,7 +345,7 @@ public partial struct CpxEngine<TMemory>
             if ((((uint)((ulong)(owner))) & 65535) != 0 || (owner) >= (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4))))))))
                 return false;
             Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), owner, out var remaining);
-            if (!(((ulong)(owner)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 65536 && ((uint)((ulong)(remaining))) < 18 * (memory.Read32(cpxArenaBase + (GeometryQ))))
+            if (!(((ulong)(owner)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 65536 && ((uint)((ulong)(remaining))) < 18 * MetadataSpan)
                 return false;
             ulong descriptor = (((ulong)(owner)) == 0) ? ((ulong)(131072u >> (int)memory.Read32(cpxArenaBase + (UnitShift)))) : owner;
             if (type == 6)

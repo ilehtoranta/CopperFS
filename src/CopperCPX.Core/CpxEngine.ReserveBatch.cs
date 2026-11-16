@@ -20,6 +20,12 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         {
             if (cursor == count)
             {
+                if (ShadowVolume && R(ReadOnlyAt) == 0)
+                {
+                    if (!CanCacheMetadata) return Fail(CpxError.ResourceExhausted);
+                    W(BufferEnabled, 1);
+                    ClearBufferedObjects();
+                }
                 memory.Write32(arena + Mounted, 1);
                 memory.Write32(arena + Poisoned, 0);
                 Clear(table, CpxArena.IndexBytes);
@@ -45,7 +51,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
             if (!inserted) return Fail(CpxError.Corrupt);
             bool cached = cursor != 0 && Bitmap(address) == Bitmap(previous);
             WW(Target, address);
-            if (!cached) return Issue(IoKind.Read, Bitmap(address), bitmap, P, 29);
+            if (!cached) return ReadStaged(Bitmap(address), bitmap, 29);
             if (!ReserveBitsAllocated(bitmap, address)) return Fail(CpxError.Corrupt);
             previous = address;
             memory.Write32(arena + Cursor, ++cursor);
@@ -56,7 +62,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 
     private bool ReserveBitsAllocated(uint bitmap, ulong address)
     {
-        uint bit = (uint)address & 4095, width = Q;
+        uint bit = (uint)address & 4095, width = MetadataSpan;
         for (uint n = 0; n < width; n++)
             if ((memory.Read8(bitmap + 64 + ((bit + n) >> 3)) & (0x80 >> ((int)(bit + n) & 7))) == 0)
                 return false;

@@ -24,7 +24,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         while (true)
         {
             if (depth == MaxHeight) throw new InvalidDataException("Tree depth overflow.");
-            TreePage(address, kind, owner, B(0), expected); MarkOwned(address, layout.Q, window); pages++;
+            TreePage(address, kind, owner, B(0), expected); MarkOwned(address, layout.MetadataSpan, window); pages++;
             Put64(Path, depth * 16, address); Put16(Path, depth * 16 + 8, 0); depth++;
             int level = U16(B(0), 50);
             if (level != 0) { expected = level - 1; address = U64(B(0), 64 + KeyBytes(kind)); continue; }
@@ -61,7 +61,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
                 for (int bit = 0; bit < BitmapUnits; bit++) if (window + (uint)bit >= layout.Units || layout.Permanent(window + (uint)bit)) SetBit(B(2), bit, true);
                 ulong pages = MarkTree(root, TreeKind.Object, 0, window);
                 Load(layout.Reserve, B(3));
-                for (int i = 0; i < reserve; i++) MarkOwned(U64(B(3), 72 + i * 8), layout.Q, window);
+                for (int i = 0; i < reserve; i++) MarkOwned(U64(B(3), 72 + i * 8), layout.MetadataSpan, window);
                 ulong objectId = 0;
                 while (TreeNext(root, TreeKind.Object, 0, objectId, 0, false, obj))
                 {
@@ -76,7 +76,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
                             if (!GetObject(U64(entry, 16), target) || U32(target, 76) == 0) throw new InvalidDataException("Dangling directory entry.");
                             int length = StoredName(entry, OtherNameScratch);
                             if (high != (ulong)NameHash(OtherNameScratch[..length]) << 32) throw new InvalidDataException("Incorrect name hash.");
-                            if (U64(entry, 24) != 0) { MarkOwned(U64(entry, 24), layout.Q, window); pages++; }
+                            if (U64(entry, 24) != 0) { MarkOwned(U64(entry, 24), layout.MetadataSpan, window); pages++; }
                         }
                         if (count != U64(obj, 8)) throw new InvalidDataException("Directory count mismatch.");
                         if (firstWindow) entries += count;
@@ -101,13 +101,13 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
                     {
                         ulong length=U64(obj,8); if(length==0||length>768||U64(obj,16)!=0) throw new InvalidDataException("Invalid symlink.");
                         if(obj[85]==0) { if(length>160||U16(obj,88)!=length) throw new InvalidDataException("Invalid inline symlink."); }
-                        else { ulong page=U64(obj,96); if(obj[85]!=3||!layout.AllocatablePage(page)) throw new InvalidDataException("Invalid symlink page."); Load(page,B(4)); if(!IsPage(B(4),PageType.Symlink,page,objectId)||U16(B(4),64)!=length) throw new InvalidDataException("Invalid symlink payload."); MarkOwned(page,layout.Q,window); pages++; }
+                        else { ulong page=U64(obj,96); if(obj[85]!=3||!layout.AllocatablePage(page)) throw new InvalidDataException("Invalid symlink page."); Load(page,B(4)); if(!VolumePage(B(4),PageType.Symlink,page,objectId)||U16(B(4),64)!=length) throw new InvalidDataException("Invalid symlink payload."); MarkOwned(page,layout.MetadataSpan,window); pages++; }
                     }
                     else throw new InvalidDataException("Unsupported object type.");
                     if(U64(obj,48)!=0)
-                    { ulong page=U64(obj,48); Load(page,B(4)); if(!IsPage(B(4),PageType.Attribute,page,objectId)||U16(B(4),64)==2&&!ownership) throw new InvalidDataException("Invalid attributes."); MarkOwned(page,layout.Q,window); pages++; }
+                    { ulong page=U64(obj,48); Load(page,B(4)); if(!VolumePage(B(4),PageType.Attribute,page,objectId)||U16(B(4),64)==2&&!ownership) throw new InvalidDataException("Invalid attributes."); MarkOwned(page,layout.MetadataSpan,window); pages++; }
                 }
-                if (firstWindow) { metadata = (pages + (uint)reserve) * layout.Q; firstWindow = false; }
+                if (firstWindow) { metadata = (pages + (uint)reserve) * layout.MetadataSpan; firstWindow = false; }
                 Load(layout.Bitmap(group, map), B(0)); ValidateBitmap(B(0), group, map);
                 if (!B(0).Slice(64, 512).SequenceEqual(B(2).Slice(64, 512))) throw new InvalidDataException("Allocation leak or bitmap-free owner.");
                 uint local = 0; for (int bit = 0; bit < BitmapUnits; bit++) if (!Bit(B(0), bit)) local++;

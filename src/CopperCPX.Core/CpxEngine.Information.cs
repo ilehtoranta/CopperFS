@@ -11,7 +11,7 @@ public partial struct CpxEngine<TMemory>
         get
         {
             uint cpxArenaBase = Arena;
-            return (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)));
+            return StateAddress;
         }
     }
 

@@ -181,10 +181,11 @@ internal static class NativeCpxLifecycle
         }
         else
         {
-            CpxError check=engine.InspectAnchor(io.Buffer,page,sector,capacity,location,out uint unit,out Wide identity);
+            CpxError check=engine.InspectAnchor(io.Buffer,page,sector,capacity,location,out uint unit,out Wide identity,out uint version);
             if(check!=CpxError.None&&check!=CpxError.NotFound) return Refuse(state,port,213,true);
             if(check==CpxError.None)
             {
+                if(version==5) unit|=0x80000000;
                 uint previous=APTR.ReadUInt32(state,FoundUnit);
                 if(previous!=0&&(previous!=unit||APTR.ReadUInt32(state,FoundHigh)!=identity.High||
                     APTR.ReadUInt32(state,FoundLow)!=identity.Low)) return Refuse(state,port,213,true);
@@ -194,22 +195,32 @@ internal static class NativeCpxLifecycle
         if(backup==0) { APTR.WriteUInt32(state,BackupCopy,1); return StepResult.Pending; }
         if(page<4096) { APTR.WriteUInt32(state,ProbePage,page*2); APTR.WriteUInt32(state,BackupCopy,0); return StepResult.Pending; }
         uint chosen=APTR.ReadUInt32(state,FoundUnit);
+        bool shadow=(chosen&0x80000000)!=0; chosen&=0x7fffffff;
         if(chosen==0&&APTR.ReadUInt32(state,ReadFault)!=0) return Refuse(state,port,213,true);
         if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1)!=CpxError.None) return Refuse(state,port,213,true);
-        PrepareBufferedStorage(ref engine);
+        if(engine.DisableShadowVolume()!=CpxError.None) return Refuse(state,port,213,true);
+        PrepareBufferedStorage(ref engine,shadow);
+        if(shadow)
+        {
+            uint extra=CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes);
+            if(engine.BufferedStorageAddress==0||engine.BufferedStorageCapacity<extra) return Refuse(state,port,103,true);
+            uint storage=engine.BufferedStorageAddress+engine.BufferedStorageCapacity-extra;
+            if(engine.EnableShadowVolume(storage,extra)!=CpxError.None) return Refuse(state,port,103,true);
+        }
         if(chosen==0) return Next(state,Phase.Timers); // readable unformatted medium, explicit DOS Format remains available
         if(engine.BeginMountFromDiscoveredAnchor(new(APTR.ReadUInt32(state,FoundHigh),APTR.ReadUInt32(state,FoundLow)))!=CpxError.None)
             return Refuse(state,port,213,true);
         return Next(state,Phase.Mount);
     }
-    private static void PrepareBufferedStorage(ref CpxEngine<NativeCpxMemory> engine)
+    private static void PrepareBufferedStorage(ref CpxEngine<NativeCpxMemory> engine,bool shadow=false)
     {
         if(engine.BufferedStorageAddress!=0) return;
-        uint bytes=CpxEngine<NativeCpxMemory>.BufferedStorageBytes(engine.MetadataPageBytes);
+        uint extra=shadow?CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes):0;
+        uint bytes=CpxEngine<NativeCpxMemory>.BufferedStorageBytes(engine.MetadataPageBytes)+extra;
         uint storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
         if(storage==0)
         {
-            bytes=CpxEngine<NativeCpxMemory>.CompactBufferedStorageBytes(engine.MetadataPageBytes);
+            bytes=CpxEngine<NativeCpxMemory>.CompactBufferedStorageBytes(engine.MetadataPageBytes)+extra;
             storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
         }
         if(storage!=0&&engine.EnableBufferedWrites(storage,bytes)!=CpxError.None) Exec.FreeMem(storage,bytes);

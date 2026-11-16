@@ -17,7 +17,7 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
         Cursor = 64, RootCursor = 68, FirstNewRoot = 72, Waiting = 76,
         Token = 80, NextToken = 84, ErrorAt = 88, Status = 92, CancelAt = 96,
         Kind = 100, PendingSector = 104, PendingBuffer = 112, PendingBytes = 116,
-        NextMappingRoot = 120, DurableMappingRootAt = 128, ChecksumTable = 136, ChecksumZeros = 140, ChecksumWord = 144;
+        NextMappingRoot = 120, DurableMappingRootAt = 128, ChecksumTable = 136, ChecksumZeros = 140, ChecksumWord = 144, LogicalAddressShift = 148, OwnedImages = 152;
 
     public CpxShadowCommit(TMemory memory, uint arena) { this.memory = memory; Arena = arena; }
     private uint R(uint at) => memory.Read32(Arena + at);
@@ -31,12 +31,12 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
 
     public CpxError Initialize(uint sectorBytes, uint pageBytes, Wide capacitySectors,
         Wide volumeIdentity, Wide generation, Wide rootSector, uint survivor, uint workspace, Wide mappingRoot = default,
-        uint checksumTable = 0, uint checksumZeros = 0)
+        uint checksumTable = 0, uint checksumZeros = 0, uint logicalAddressShift = 0)
     {
         if (Arena == 0 || (Arena & 3) != 0 || Arena > uint.MaxValue - StateBytes) return CpxError.InvalidArgument;
         if (memory.Read32(Arena + Signature) == ContextMagic && R(Waiting) != 0) return CpxError.Busy;
         if (!CpxArena.ValidUnit(sectorBytes) || pageBytes < sectorBytes || pageBytes > 4096
-            || (pageBytes & (pageBytes - 1)) != 0 || survivor >= 3 || volumeIdentity.IsZero
+            || (pageBytes & (pageBytes - 1)) != 0 || logicalAddressShift > 3 || survivor >= 3 || volumeIdentity.IsZero
             || !Buffer(workspace, pageBytes) || Overlap(Arena, StateBytes, workspace, pageBytes))
             return CpxError.InvalidArgument;
         ulong capacity = capacitySectors, roots = rootSector;
@@ -49,6 +49,7 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
         Put(Arena + Capacity, capacity); Put(Arena + Roots, roots);
         Put(Arena + DurableMappingRootAt, mappingRoot);
         W(ChecksumTable, checksumTable); W(ChecksumZeros, checksumZeros);
+        W(LogicalAddressShift, logicalAddressShift);
         W(Survivor, survivor); W(Workspace, workspace); W(NextToken, next);
         return CpxError.None;
     }
@@ -67,9 +68,21 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
             || Overlap(descriptors, count * DescriptorBytes, R(Workspace), R(Page)))
             return CpxError.InvalidArgument;
         W(Descriptors, descriptors); W(Count, count); W(Cursor, 0); W(RootCursor, 0);
+        W(OwnedImages, 0);
         Put(Arena + NextMappingRoot, mappingRoot);
         W(Phase, 0); W(ErrorAt, 0); W(CancelAt, 0); W(Status, 1);
         return CpxError.None;
+    }
+
+    // The engine admits logical targets and headers before sealing its pinned
+    // contiguous image array; the map writer admits its unique physical pairs
+    // and all descriptor/buffer ranges. Those owned invariants make repeating
+    // public untrusted-descriptor admission unnecessary here.
+    internal CpxError BeginOwnedImages(uint descriptors, uint count, Wide mappingRoot)
+    {
+        CpxError error = Begin(descriptors, count, mappingRoot);
+        if (error == CpxError.None) { W(OwnedImages, 1); W(Phase, 1); }
+        return error;
     }
 
     public CpxIo Request => new() { Kind = (IoKind)R(Kind), Sector = G(Arena + PendingSector),
@@ -142,7 +155,7 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
             || Overlap(image, page, R(Workspace), page) || Overlap(image, page, R(Descriptors), R(Count) * DescriptorBytes)
             || memory.Read32(image) != Magic || memory.Read16(image + 6) != 5
             || G(image + 16) != G(descriptor) || G(image + 32) != transaction
-            || memory.Read32(image + 8) != Crc(image, page)) return false;
+            || R(OwnedImages) == 0 && memory.Read32(image + 8) != Crc(image, page)) return false;
         for (uint n = 0; n < index; n++)
         {
             uint previous = R(Descriptors) + n * DescriptorBytes;
@@ -156,7 +169,7 @@ public struct CpxShadowCommit<TMemory> where TMemory : struct, ICpxMemory
     {
         for (uint at = 0; at < R(Page); at += 4) memory.Write32(buffer + at, 0);
         memory.Write32(buffer, Magic); memory.Write16(buffer + 4, 2); memory.Write16(buffer + 6, 5);
-        Put(buffer + 16, address); Put(buffer + 32, transaction); memory.Write16(buffer + 52, 32);
+        Put(buffer + 16, address >> (int)R(LogicalAddressShift)); Put(buffer + 32, transaction); memory.Write16(buffer + 52, 32);
         Put(buffer + 72, G(Arena + Identity)); Put(buffer + 80, transaction);
         Put(buffer + 88, G(Arena + NextMappingRoot));
         memory.Write32(buffer + 8, Crc(buffer, R(Page)));

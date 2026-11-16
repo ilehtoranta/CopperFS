@@ -84,7 +84,7 @@ public partial struct CpxEngine<TMemory>
                         if ((((ulong)(((((ulong)(memory.Read32(((uint)(p + 72 + n * 8))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 72 + n * 8)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4))))))))))
                             return Fail(CpxError.Corrupt);
                     if (count == 64)
-                        return ChangeAllocation(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4)))))), (memory.Read32(cpxArenaBase + (GeometryQ))), false, 3);
+                        return ChangeAllocation(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4)))))), MetadataSpan, false, 3);
                     {
                         uint cpxWideAddress = (uint)(p + 72 + count * 8);
                         ulong cpxWideValue = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4))))));
@@ -155,9 +155,9 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(p + local, memory.Read32(cpxArenaBase + (AllocationUsed)) != 0 ? window - count : window + count);
                 return StagePage(p, descriptor, 6);
             case 6:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 7);
+                return ReadStaged(StateAddress, p, 7);
             case 7:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
                 ulong available;
                 if (memory.Read32(cpxArenaBase + (AllocationUsed)) != 0 ? !Scalar64.Subtract(((((ulong)(memory.Read32(((uint)(p + 96))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 96)) + 4))))), ((ulong)(count)), out available) : !Scalar64.Add(((((ulong)(memory.Read32(((uint)(p + 96))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 96)) + 4))))), ((ulong)(count)), out available))
@@ -169,7 +169,7 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 8);
+                return StagePage(p, StateAddress, 8);
             case 8:
                 return Done();
             default:
@@ -208,7 +208,7 @@ public partial struct CpxEngine<TMemory>
                     return memory.Read32(cpxArenaBase + (RefillWindows)) == 0 ? Call(CpxOperation.AbortTransaction, 10) : Call(CpxOperation.CommitTransaction, 10);
                 ulong group = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & 0xffff0000)));
                 Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), group, out var remaining);
-                if (!(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 18 * (memory.Read32(cpxArenaBase + (GeometryQ))))
+                if (!(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 18 * MetadataSpan)
                 {
                     {
                         uint cpxWideAddress = cpxArenaBase + (uint)(RefillScan);
@@ -228,7 +228,7 @@ public partial struct CpxEngine<TMemory>
                 return StepResult.Pending;
             case 4:
                 ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~4095u)));
-                uint q = (memory.Read32(cpxArenaBase + (GeometryQ)));
+                uint q = MetadataSpan;
                 for (uint bit = ((uint)((ulong)(at))) & 4095; bit < 4096; bit += q)
                 {
                     if (memory.Read8(p + 64 + (bit >> 3)) == 255)
@@ -265,7 +265,7 @@ public partial struct CpxEngine<TMemory>
                         memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
                     }
 
-                    return ChangeAllocation(window + bit, (memory.Read32(cpxArenaBase + (GeometryQ))), true, 5);
+                    return ChangeAllocation(window + bit, MetadataSpan, true, 5);
                 }
 
             {
@@ -283,7 +283,7 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (RefillCount), memory.Read32(cpxArenaBase + (RefillCount)) + 1);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(RefillScan);
-                ulong cpxWideValue = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(RefillScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(RefillScan)) + 4)))))) + (memory.Read32(cpxArenaBase + (GeometryQ)));
+                ulong cpxWideValue = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(RefillScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(RefillScan)) + 4)))))) + MetadataSpan;
                 memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }

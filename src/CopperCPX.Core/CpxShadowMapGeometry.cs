@@ -20,6 +20,32 @@ public readonly struct CpxShadowMapGeometry
         PairCount = capacity >> (int)PairShift;
     }
 
+    private CpxShadowMapGeometry(uint sector, uint page, uint height, uint pairShift, uint leafShift, uint branchShift,
+        ulong capacity, ulong start, ulong end, ulong pairs)
+    {
+        SectorBytes = sector; PageBytes = page; Height = height; PairShift = pairShift;
+        LeafShift = leafShift; BranchShift = branchShift; CapacitySectors = capacity;
+        MapBaseSector = start; MapEndSector = end; PairCount = pairs;
+    }
+
+    // The owning engine validates geometry once and retains these scalars in
+    // caller storage. Resuming a cursor must not repeat geometry admission.
+    internal void Store<TMemory>(ref TMemory memory, uint at) where TMemory : struct, ICpxMemory
+    {
+        memory.Write32(at, SectorBytes); memory.Write32(at + 4, PageBytes); memory.Write32(at + 8, Height);
+        memory.Write32(at + 12, PairShift); memory.Write32(at + 16, LeafShift); memory.Write32(at + 20, BranchShift);
+        StoreWide(ref memory, at + 24, CapacitySectors); StoreWide(ref memory, at + 32, MapBaseSector);
+        StoreWide(ref memory, at + 40, MapEndSector); StoreWide(ref memory, at + 48, PairCount);
+    }
+    internal static CpxShadowMapGeometry Restore<TMemory>(ref TMemory memory, uint at) where TMemory : struct, ICpxMemory
+        => new(memory.Read32(at), memory.Read32(at + 4), memory.Read32(at + 8), memory.Read32(at + 12),
+            memory.Read32(at + 16), memory.Read32(at + 20), LoadWide(ref memory, at + 24), LoadWide(ref memory, at + 32),
+            LoadWide(ref memory, at + 40), LoadWide(ref memory, at + 48));
+    private static ulong LoadWide<TMemory>(ref TMemory memory, uint at) where TMemory : struct, ICpxMemory
+        => ((ulong)memory.Read32(at) << 32) | memory.Read32(at + 4);
+    private static void StoreWide<TMemory>(ref TMemory memory, uint at, ulong value) where TMemory : struct, ICpxMemory
+    { memory.Write32(at, (uint)(value >> 32)); memory.Write32(at + 4, (uint)value); }
+
     public static CpxError TryCreate(uint sectorBytes, uint pageBytes, Wide capacitySectors,
         Wide mapBaseSector, out CpxShadowMapGeometry geometry)
     {

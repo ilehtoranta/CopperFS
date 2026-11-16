@@ -1,8 +1,10 @@
 # Experimental CPX5 shadow publication
 
 This is a proposed incompatible format, not a CPX4 journal-policy change. The
-publication kernel uses magic `CPX5` and page version 5. No native handler mounts
-CPX5 volumes yet, and there are no CPX5 filesystem benchmark results. Existing
+publication kernel uses magic `CPX5` and page version 5. The experimental branch
+now mounts and mutates independently formatted CPX5 fixtures. Its first passing
+filesystem benchmark is slower than CPX4 and both references; see the
+[experiment report](coppernova-architecture-2026-11-16.md). Existing
 CPX4 media, namespaces, handler identities and published packages are unchanged.
 
 ## Publication invariant
@@ -51,7 +53,11 @@ It owns no allocator, namespace, mount implementation or DOS registration. The
 caller supplies an authenticated current generation/surviving checkpoint, valid
 allocation decisions, a pinned immutable descriptor list, sealed metadata images
 and a separate checkpoint workspace. The kernel verifies image identity,
-generation and CRC before issuing any write. Admission is bounded to 42 images.
+generation and CRC before issuing any write. The integrated engine has an internal
+entry for its own freshly sealed, immutable pinned images. The engine admits their
+headers/targets/payloads, and the map writer admits unique pairs and buffer ranges;
+internal publication avoids repeating that admission and checksum calculation.
+The public entry retains full untrusted admission. Admission is bounded to 42 images.
 One step authenticates or submits at most one image or checkpoint. I/O completion
 tokens remain monotonic across reuse of the same arena; stale, short, cancelled
 and failed completions cannot acknowledge a generation.

@@ -22,7 +22,7 @@ public partial struct CpxEngine<TMemory>
         if (memory.Read32(record + 8) != 0 || (size & ((1u << (int)shift) - 1)) != 0 || (size >> (int)shift) != length || length == 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 16))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 16)) + 4))))))) == ((ulong)(((ulong)(length))))))
             return;
         ulong physical = ((((ulong)(memory.Read32(((uint)(record + 104))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 104)) + 4))))), next = physical + length;
-        int bitmap = FindStaged(Bitmap(next)), state = FindStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))), leaf = FindStaged(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(SavedLeaf)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(SavedLeaf)) + 4)))))));
+        int bitmap = FindStaged(Bitmap(next)), state = FindStaged(StateAddress), leaf = FindStaged(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(SavedLeaf)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(SavedLeaf)) + 4)))))));
         ulong group = (((ulong)(((uint)(((ulong)(next)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(next))) & 0xffff0000))), descriptor = (((ulong)(group)) == 0) ? ((ulong)(131072u >> (int)shift)) : group;
         int counts = FindStaged(descriptor);
         if (bitmap < 0 || state < 0 || leaf < 0 || counts < 0)
@@ -231,7 +231,7 @@ public partial struct CpxEngine<TMemory>
         if (record == 0 || memory.Read8(record + 84) != 1 || memory.Read8(record + 85) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 8)) + 4))))))) == 0) || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 16))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 16)) + 4))))))) == 0) || memory.Read16(record + 88) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 24)) + 4))))))) == 0) || (memory.Read32(record + 72) & 4) != 0)
             return false;
         uint entry = record - 12, slot = memory.Read32(entry + 8);
-        int leaf = FindStaged(((((ulong)(memory.Read32(((uint)(entry))))) << 32 | ((ulong)(memory.Read32(((uint)(entry)) + 4)))))), state = FindStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))));
+        int leaf = FindStaged(((((ulong)(memory.Read32(((uint)(entry))))) << 32 | ((ulong)(memory.Read32(((uint)(entry)) + 4)))))), state = FindStaged(StateAddress);
         if (leaf < 0 || state < 0 || slot == 0)
             return false;
         uint h = memory.Read32(cpxArenaBase + (FastPointer)), objectAt = (memory.Read32(cpxArenaBase + (BufferAddress)) + 4096 + ((uint)((uint)leaf)) * (memory.Read32(cpxArenaBase + (PageBytes)))) + 64 + (slot - 1) * 256;

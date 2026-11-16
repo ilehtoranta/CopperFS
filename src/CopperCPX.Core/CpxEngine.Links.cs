@@ -133,9 +133,9 @@ public partial struct CpxEngine<TMemory>
             case 4:
                 return BeginTx(22, 5);
             case 5:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 6);
+                return ReadStaged(StateAddress, p, 6);
             case 6:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(NsEntryId);
@@ -146,7 +146,7 @@ public partial struct CpxEngine<TMemory>
 
                 if (!AdjustWide(p + 72, 1, true) || !AdjustWide(p + 104, 1, true))
                     return Reject(CpxError.ResourceExhausted);
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 7);
+                return StagePage(p, StateAddress, 7);
             case 7:
                 return BuildEntry(8);
             case 8:

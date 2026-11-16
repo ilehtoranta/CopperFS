@@ -340,18 +340,18 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 9);
+                return ReadStaged(StateAddress, p, 9);
             case 9:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsHops)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsHops)) + 4))))))) >= (((((ulong)(memory.Read32(((uint)(p + 64))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64)) + 4)))))))
+                if (!Control(p, 3, StateAddress) || (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsHops)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsHops)) + 4))))))) >= (((((ulong)(memory.Read32(((uint)(p + 64))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 64)) + 4)))))))
                     return Fail(CpxError.Corrupt);
                 memory.Write32(cpxArenaBase + (Phase), 7);
                 return StepResult.Pending;
             case 10:
                 return BeginTx(39, 11);
             case 11:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 12);
+                return ReadStaged(StateAddress, p, 12);
             case 12:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(NsResult);
@@ -388,7 +388,7 @@ public partial struct CpxEngine<TMemory>
                     memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
                 }
 
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 13);
+                return StagePage(p, StateAddress, 13);
             case 13:
                 if (memory.Read32(cpxArenaBase + (NsDirectory)) == 3)
                 {
@@ -420,9 +420,9 @@ public partial struct CpxEngine<TMemory>
                     return Fail(CpxError.Corrupt);
                 return SaveObject((cpxArenaBase + 10800), 16);
             case 16:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 17);
+                return ReadStaged(StateAddress, p, 17);
             case 17:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))))
+                if (!Control(p, 3, StateAddress))
                     return Fail(CpxError.Corrupt);
                 return MutateTree(CpxTreeKind.Object, ((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4))))), default, (cpxArenaBase + 11312), 0, 18);
             case 18:
@@ -433,9 +433,9 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 19);
+                return ReadStaged(StateAddress, p, 19);
             case 19:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))))
+                if (!Control(p, 3, StateAddress))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = (uint)(p + 80);
@@ -444,7 +444,7 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 20);
+                return StagePage(p, StateAddress, 20);
             case 20:
                 return Call(CpxOperation.CommitTransaction, 99);
             case 30:
@@ -537,9 +537,9 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (Phase), 60);
                 return StepResult.Pending;
             case 60:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 61);
+                return ReadStaged(StateAddress, p, 61);
             case 61:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read32((cpxArenaBase + 11568) + 76) == 0 || memory.Read16((cpxArenaBase + 11568) + 86) != 0)
+                if (!Control(p, 3, StateAddress) || memory.Read32((cpxArenaBase + 11568) + 76) == 0 || memory.Read16((cpxArenaBase + 11568) + 86) != 0)
                     return Fail(CpxError.Corrupt);
                 uint links = memory.Read32((cpxArenaBase + 11568) + 76) - 1;
                 memory.Write32((cpxArenaBase + 11568) + 76, links);
@@ -563,7 +563,7 @@ public partial struct CpxEngine<TMemory>
 
                 if (!AdjustWide(p + 104, 1, false))
                     return Fail(CpxError.Corrupt);
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 62);
+                return StagePage(p, StateAddress, 62);
             case 62:
                 return SaveObject((cpxArenaBase + 11568), 63);
             case 63:

@@ -1,10 +1,12 @@
 # CopperNova architecture experiment, 16 November 2026
 
 The performance objective is active and unmet. This isolated worktree starts
-from the qualified CPX4 checkpoint plus the V26 source patch. The first candidate
+from the qualified CPX4 checkpoint plus the V26 source patch. The first three candidates
 changes buffered retirement, with an explicit opt-in and unchanged default
 portable policy. It does not change the on-disk format or native allocation bound.
 The native handler opts into the experimental policy; it is not a release.
+The subsequent CPX5 experiments use an explicit incompatible format and separate
+fixtures; they do not convert CPX4 media.
 
 ## Four-barrier retirement
 
@@ -70,8 +72,47 @@ bounded and retain all persistent execution state in caller-owned memory.
 
 The [CPX5 shadow-publication design](cpx5-shadow-publication-design.md) prototypes
 paired metadata, a persistent selector tree and three checkpoints. Its protocol
-uses two publication barriers and an explicit mapping root. It is not connected
-to the filesystem handler yet, so the table above contains no CPX5 results.
+uses two publication barriers and an explicit mapping root. It is now connected
+to the filesystem handler in this experimental branch. An independent formatter
+and read-only decoder extend the reference project without a production-core
+dependency. Ownership checks reserve both copies of every metadata allocation.
+The mapping region starts at 512 KiB: the earlier 256 KiB proposal collided with
+the final group-zero bitmap at 4 KiB metadata size and was corrected before use.
+
+| CPX5 candidate | Mixed total | Streaming total | Result |
+|---|---:|---:|---|
+| A4, first integration | excluded | excluded | Guest reopen failed after remount; persisted images independently valid |
+| A5, corrected nested continuation | 9,773,520 | 378,005,590 | Guest, ownership and complete payload checks pass |
+| A6, retained geometry and authenticated map cache | 8,415,830 | 376,429,610 | Guest, ownership and complete payload checks pass |
+| A7, geometry only in mapping phases and admitted owned publication | 8,179,710 | 376,099,050 | Guest, ownership and complete payload checks pass |
+
+A5 is a functional integration checkpoint, not a performance improvement. It
+uses the same guest probe bytes as A3 (SHA-256
+`0984E37B49A652D20E62ED24A524713C228E1071B8422A5676A78E177C0AD5B1`
+for mixed). A rebuilt-runner A3 control measured 6,384,370 mixed cycles versus
+6,384,830 previously. Reference handler comparisons must be repeated before any
+acceptance claim. The A4 defect was loss of a caller's nested phase translation
+across the inserted map-read continuation. Host and compiled tests now explicitly
+look up a name after remount, in addition to reading by object ID.
+
+A5 profiling identifies repeated geometry admission and uncached authenticated
+map traversal as substantial new CPU costs. A6 retains validated geometry in
+caller storage and adds two authenticated map-cache pages, invalidated after
+publication and recovery. An internal engine-owned publication path also avoids
+checking a just-sealed pinned image twice; the public publication API retains its
+checksum admission. A6 remains slower than A3 and both references. Its 19 focused
+compiled component/filesystem cases pass with zero managed allocation sites and
+the 4 KiB per-instruction stack guard. Further publication and geometry-view
+overhead remains visible in the CPU profile.
+
+A7 restores geometry only for mapping work. The engine validates every owned
+image's header/target/payload and seals it; the map writer admits unique physical
+pairs and buffer ranges. Internal publication then avoids repeating public
+descriptor admission. Public untrusted publication still performs its full checks.
+The focused shadow host set passes 36 cases; five additional cancellation cases
+cover map reads/writes, ordinary metadata writes and both barriers, followed by
+quiescent remount and independent ownership validation. Both compiled filesystem
+cases pass again. This still misses the performance target substantially.
 
 The initial generation-only selector failed a new crash/retry regression: an
 abandoned page could reappear when a different transaction reused its generation.
@@ -87,7 +128,16 @@ mapping-tree publication, restart with a different write set, all checkpoint
 survivor slots, cancellation, short completions, wide geometry, and reuse of
 quiescent mapping scratch for publication. Every compiled case checks a 4 KiB
 stack bound and zero managed allocation sites. These are component tests;
-full-filesystem and full-ROM CPX5 coverage remain pending.
+these component cases alone are not full-filesystem coverage.
+
+The first integrated backend additionally passes 14 focused host cases, including
+all four allocation-unit sizes, every sector/barrier cut across three successive
+publications under five persistence patterns, and the two-barrier count plus
+explicit final device drain. Two compiled full-core cases create/write/flush,
+remount, look up and read the file with a 4 KiB stack guard and no managed
+allocation sites. A6's focused host run has 35 passes plus a separate four-generation
+map-cache selector-reuse regression. A full CPX host snapshot before the phase
+fix and caching changes passed 523 cases in 8 minutes 9 seconds.
 
 The Release solution snapshot before the shared-checksum bridge passed 2,432
 tests across six suites, with nine skips and zero failures. That run included

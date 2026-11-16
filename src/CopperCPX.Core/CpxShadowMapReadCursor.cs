@@ -12,7 +12,7 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
     public uint Arena;
     private const uint Signature = 0, Status = 4, ErrorAt = 8, Level = 12,
         Node = 16, Physical = 24, Pair = 32, Generation = 40, Identity = 48,
-        Scratch = 56, HaveRead = 60, Requested = 64, Copy = 68, ChecksumTable = 72, ChecksumZeros = 76, ChecksumWord = 80;
+        Scratch = 56, HaveRead = 60, Requested = 64, Copy = 68, ChecksumTable = 72, ChecksumZeros = 76, ChecksumWord = 80, Authenticated = 84;
 
     public CpxShadowMapReadCursor(TMemory memory, uint arena, CpxShadowMapGeometry geometry)
     { this.memory = memory; Arena = arena; this.geometry = geometry; }
@@ -52,8 +52,19 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
     {
         if (R(Requested) == 0 || R(Status) != 1) return CpxError.StaleCompletion;
         W(Requested, 0);
+        W(Authenticated, 0);
         if (!success) { Fail(CpxError.Io); return CpxError.Io; }
         W(HaveRead, 1); return CpxError.None;
+    }
+
+    // Only the owning engine can supply bytes previously authenticated for the
+    // same selected physical page and durable root. Device completions always
+    // take the ordinary checksum path above.
+    internal CpxError AcceptCachedRead()
+    {
+        CpxError error = AcceptRead(true);
+        if (error == CpxError.None) W(Authenticated, 1);
+        return error;
     }
 
     public StepResult Step()
@@ -70,7 +81,7 @@ public struct CpxShadowMapReadCursor<TMemory> where TMemory : struct, ICpxMemory
             || G(buffer + 16) != (0x8000000000000000ul | pair) || G(buffer + 24) != G(Arena + Identity)
             || G(buffer + 32) == 0 || G(buffer + 32) > G(Arena + Generation)
             || memory.Read16(buffer + 48) != entries || memory.Read16(buffer + 50) != level
-            || memory.Read16(buffer + 52) != payload || memory.Read32(buffer + 8) != Crc(buffer))
+            || memory.Read16(buffer + 52) != payload || R(Authenticated) == 0 && memory.Read32(buffer + 8) != Crc(buffer))
             return Fail(CpxError.Corrupt);
         ulong index = G(Arena + Pair);
         if (level == 0)

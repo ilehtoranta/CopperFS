@@ -48,7 +48,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             if (s.NeedGroup)
             {
                 Load(layout.GroupDescriptor(s.Group), B(0)); s.PagesRead++;
-                if (!IsPage(B(0), PageType.Group, layout.GroupDescriptor(s.Group), s.Group) || U32(B(0), 64) != layout.ValidUnits(s.Group)) throw new InvalidDataException("Invalid group descriptor.");
+                if (!VolumePage(B(0), PageType.Group, layout.GroupDescriptor(s.Group), s.Group) || U32(B(0), 64) != layout.ValidUnits(s.Group)) throw new InvalidDataException("Invalid group descriptor.");
                 if (U32(B(0), 68) == 0) { s.Group += GroupUnits; continue; }
                 s.NeedGroup = false; s.Map = 0; if (s.PagesRead == 4) return ScanResult.Pending;
             }

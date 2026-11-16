@@ -20,7 +20,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         Load(address, page); int level = U16(page, 50), count = U16(page, 48);
         int width = level == 0 ? LeafBytes(kind) : KeyBytes(kind) + 8;
         if (level >= MaxHeight || expectedLevel >= 0 && level != expectedLevel ||
-            !IsPage(page, TreeType(kind, level != 0), address, owner) || U64(page, 40) != 0 ||
+            !VolumePage(page, TreeType(kind, level != 0), address, owner) || U64(page, 40) != 0 ||
             count > (layout.PageBytes - 64) / width || level != 0 && count == 0)
             throw new InvalidDataException("Invalid tree page/level/count/owner.");
         for (int i = 0; i < count; i++)

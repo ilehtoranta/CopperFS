@@ -613,6 +613,227 @@
         "bytes": 202736,
         "sha256": "FCC5779771761C89BA1B955E2FCC7B600769E648B68468B2465739A948D075DB"
       }
+    },
+    "A5": {
+      "format": 5,
+      "description": "CPX5 paired metadata and explicit mapping-root publication; corrected nested continuation",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1047,
+          "CompletedFrames": 1047,
+          "HostSeconds": 5.2482037,
+          "PhaseCycles": {
+            "mutationCycles": 3368340,
+            "flushCycles": 2722480,
+            "remountCycles": 1982860,
+            "verifyCycles": 1699840
+          },
+          "ReadCommands": 57,
+          "WriteCommands": 21,
+          "ReadRequests": 134,
+          "WriteRequests": 50,
+          "ReadBytes": 68608,
+          "WriteBytes": 25600,
+          "Flushes": 4,
+          "InitialMediaSha256": "8ED40EA0F6E5774115D8C98B87049ED924952808EA1D612CB20F677882FB2960",
+          "ResultMediaSha256": "FA686D76D46767988A1374CF419A5E1A07E7B175D08012D50490EE42038D8E43",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28524,\"MetadataUnits\":132,\"ReservePages\":28}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3703,
+          "CompletedFrames": 3703,
+          "HostSeconds": 25.1467551,
+          "PhaseCycles": {
+            "mutationCycles": 4581490,
+            "flushCycles": 3112710,
+            "remountCycles": 2232090,
+            "verifyCycles": 368079300
+          },
+          "ReadCommands": 94,
+          "WriteCommands": 53,
+          "ReadRequests": 4232,
+          "WriteRequests": 4132,
+          "ReadBytes": 2166784,
+          "WriteBytes": 2115584,
+          "Flushes": 4,
+          "InitialMediaSha256": "8ED40EA0F6E5774115D8C98B87049ED924952808EA1D612CB20F677882FB2960",
+          "ResultMediaSha256": "53372975B882E819D52F478818A4F90440479E43D4E68DB284398E4982F29579",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24424,\"MetadataUnits\":148,\"ReservePages\":32}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "DEB043863D75174537BC91380174CC016EE509DF78ABD3E5E58708379650D8E6",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "hostFocusedFilesystem": 14,
+        "compiledFilesystem": 2,
+        "fullRom": "not run",
+        "physicalMedia": "not run"
+      }
+    },
+    "A6": {
+      "format": 5,
+      "description": "A5 plus retained geometry, two authenticated map-cache pages and no duplicate checksum for pinned owned images",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1038,
+          "CompletedFrames": 1038,
+          "HostSeconds": 4.859516,
+          "PhaseCycles": {
+            "mutationCycles": 3352900,
+            "flushCycles": 2043900,
+            "remountCycles": 1500630,
+            "verifyCycles": 1518400
+          },
+          "ReadCommands": 41,
+          "WriteCommands": 21,
+          "ReadRequests": 102,
+          "WriteRequests": 50,
+          "ReadBytes": 52224,
+          "WriteBytes": 25600,
+          "Flushes": 4,
+          "InitialMediaSha256": "8ED40EA0F6E5774115D8C98B87049ED924952808EA1D612CB20F677882FB2960",
+          "ResultMediaSha256": "FA686D76D46767988A1374CF419A5E1A07E7B175D08012D50490EE42038D8E43",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28524,\"MetadataUnits\":132,\"ReservePages\":28}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3688,
+          "CompletedFrames": 3688,
+          "HostSeconds": 19.4334261,
+          "PhaseCycles": {
+            "mutationCycles": 4576840,
+            "flushCycles": 2330320,
+            "remountCycles": 1682020,
+            "verifyCycles": 367840430
+          },
+          "ReadCommands": 74,
+          "WriteCommands": 53,
+          "ReadRequests": 4192,
+          "WriteRequests": 4132,
+          "ReadBytes": 2146304,
+          "WriteBytes": 2115584,
+          "Flushes": 4,
+          "InitialMediaSha256": "8ED40EA0F6E5774115D8C98B87049ED924952808EA1D612CB20F677882FB2960",
+          "ResultMediaSha256": "53372975B882E819D52F478818A4F90440479E43D4E68DB284398E4982F29579",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24424,\"MetadataUnits\":148,\"ReservePages\":32}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "286E7883571E59D521FF15D2B42C47B6933D2DABC418DDF27C86732B96DD9FF6",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "hostFocusedShadow": 35,
+        "additionalMapCacheSelectorReuseRegression": 1,
+        "compiledShadowAndFilesystem": 19,
+        "fullRom": "not run",
+        "physicalMedia": "not run"
+      }
+    },
+    "A7": {
+      "format": 5,
+      "description": "A6 plus geometry restoration only in mapping phases and engine-owned publication admission",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1037,
+          "CompletedFrames": 1037,
+          "HostSeconds": 4.7630674,
+          "PhaseCycles": {
+            "mutationCycles": 3355490,
+            "flushCycles": 1785450,
+            "remountCycles": 1519890,
+            "verifyCycles": 1518880
+          },
+          "ReadCommands": 41,
+          "WriteCommands": 21,
+          "ReadRequests": 102,
+          "WriteRequests": 50,
+          "ReadBytes": 52224,
+          "WriteBytes": 25600,
+          "Flushes": 4,
+          "InitialMediaSha256": "8ED40EA0F6E5774115D8C98B87049ED924952808EA1D612CB20F677882FB2960",
+          "ResultMediaSha256": "FA686D76D46767988A1374CF419A5E1A07E7B175D08012D50490EE42038D8E43",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28524,\"MetadataUnits\":132,\"ReservePages\":28}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3686,
+          "CompletedFrames": 3686,
+          "HostSeconds": 19.0588333,
+          "PhaseCycles": {
+            "mutationCycles": 4572220,
+            "flushCycles": 2070110,
+            "remountCycles": 1671450,
+            "verifyCycles": 367785270
+          },
+          "ReadCommands": 74,
+          "WriteCommands": 53,
+          "ReadRequests": 4192,
+          "WriteRequests": 4132,
+          "ReadBytes": 2146304,
+          "WriteBytes": 2115584,
+          "Flushes": 4,
+          "InitialMediaSha256": "8ED40EA0F6E5774115D8C98B87049ED924952808EA1D612CB20F677882FB2960",
+          "ResultMediaSha256": "53372975B882E819D52F478818A4F90440479E43D4E68DB284398E4982F29579",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24424,\"MetadataUnits\":148,\"ReservePages\":32}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "5030835AC425FB51CC51823C4D30F29C33387B520561A0914BEDC6B53599C1E6",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "hostFocusedShadow": 36,
+        "additionalCancellationOwners": 5,
+        "compiledFilesystem": 2,
+        "fullRom": "not run",
+        "physicalMedia": "not run"
+      }
     }
   },
   "shadowProtocol": {
@@ -625,5 +846,48 @@
     "managedAllocationSites": 0,
     "fullRom": "not run",
     "endToEndBenchmarks": "not run"
+  },
+  "shadowFilesystem": {
+    "status": "active, target unmet",
+    "independentFormatterAndReadonlyDecoder": true,
+    "existingCpx4FormatPreserved": true,
+    "mixedProbeSha256": "0984E37B49A652D20E62ED24A524713C228E1071B8422A5676A78E177C0AD5B1",
+    "rebuiltRunnerA3Control": {
+      "Name": "CPX4",
+      "Trial": 1,
+      "Passed": true,
+      "Stage": 0,
+      "IoErr": 0,
+      "LoopFrames": 952,
+      "CompletedFrames": 952,
+      "HostSeconds": 4.5609857,
+      "PhaseCycles": {
+        "mutationCycles": 3202790,
+        "flushCycles": 862920,
+        "remountCycles": 979380,
+        "verifyCycles": 1339280
+      },
+      "ReadCommands": 43,
+      "WriteCommands": 21,
+      "ReadRequests": 110,
+      "WriteRequests": 74,
+      "ReadBytes": 56320,
+      "WriteBytes": 37888,
+      "Flushes": 6,
+      "InitialMediaSha256": "4019061384AA751644FF47E08C15A521AAF8BAC9B2FC39E2899C556AF22EF131",
+      "ResultMediaSha256": "9EC9B3B86B65F25E5CB4A3851A05DB66F9EB441B61F671A6F6C5D858546624B1",
+      "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28590,\"MetadataUnits\":66,\"ReservePages\":28}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+      "Detail": 0
+    },
+    "excludedA4": "Guest stage26 reopen failed after remount, even though independent persisted images are valid; fixed nested phase translation. Not counted as a performance result.",
+    "standaloneHandlerIdentity": "CopperCPX4 (experimental branch); separate magic/version CPX5 fixtures",
+    "bufferedPublicationBarriers": 2,
+    "explicitFlushRetainsFinalDrain": true,
+    "shadowMapBaseBytes": 524288,
+    "currentLimitations": [
+      "CPX5 native formatting not implemented; explicit formatter supplies disposable fixtures",
+      "Wide permanent-prefix group traversal still requires dedicated qualification",
+      "Complete native/full-ROM/replay release gates remain pending"
+    ]
   }
 }

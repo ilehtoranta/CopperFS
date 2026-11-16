@@ -88,7 +88,7 @@ public partial struct CpxEngine<TMemory>
                     return Reject(CpxError.ReadOnly);
                 return Issue(IoKind.Flush, default, 0, 0, 2);
             case 2:
-                return Issue(IoKind.Read, StatePageAddress, p, (memory.Read32(cpxArenaBase + (PageBytes))), 3);
+                return ReadStaged(StatePageAddress, p, 3);
             case 3:
                 if (!Control(p, 3, StatePageAddress) || !ReadableGeneration(p) || !ValidStateLabel(p) || !Allocatable(((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4)))))))
                     return Fail(CpxError.Corrupt);
@@ -106,7 +106,7 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return Issue(IoKind.Read, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), reserve, (memory.Read32(cpxArenaBase + (PageBytes))), 4);
+                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), reserve, 4);
             case 4:
                 if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || memory.Read16(reserve + 52) != 520 || memory.Read16(reserve + 64) > 64)
                     return Fail(CpxError.Corrupt);
@@ -124,19 +124,19 @@ public partial struct CpxEngine<TMemory>
                 return StepResult.Pending;
             case 6:
                 ulong group = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4))))));
-                if (!Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), group, out var left) || (((ulong)(left)) == 0) || !(((ulong)(group)) == 0) && ((uint)(((ulong)(left)) >> 32)) == 0 && ((uint)((ulong)(left))) < 18 * (memory.Read32(cpxArenaBase + (GeometryQ))))
+                if (!Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), group, out var left) || (((ulong)(left)) == 0) || !(((ulong)(group)) == 0) && ((uint)(((ulong)(left)) >> 32)) == 0 && ((uint)((ulong)(left))) < 18 * MetadataSpan)
                     return FinishManualPass();
                 memory.Write32(cpxArenaBase + (ManualGroupUnits), ((uint)(((ulong)(left)) >> 32)) != 0 || ((uint)((ulong)(left))) >= 65536 ? 65536u : ((uint)((ulong)(left))));
                 memory.Write32(cpxArenaBase + (ManualMap), 0);
                 memory.Write32(cpxArenaBase + (ManualGroupFree), 0);
-                return Issue(IoKind.Read, ManualDescriptor, descriptor, (memory.Read32(cpxArenaBase + (PageBytes))), 7);
+                return ReadStaged(ManualDescriptor, descriptor, 7);
             case 7:
                 if (!ValidPage(descriptor, ManualDescriptor) || !ReadableGeneration(descriptor) || memory.Read16(descriptor + 4) != 6 || !(((ulong)(((((ulong)(memory.Read32(((uint)(descriptor + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(descriptor + 24)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4))))))))) || memory.Read16(descriptor + 52) != 80 || memory.Read32(descriptor + 64) != memory.Read32(cpxArenaBase + (ManualGroupUnits)))
                     return Fail(CpxError.Corrupt);
                 memory.Write32(cpxArenaBase + (Phase), 8);
                 return StepResult.Pending;
             case 8:
-                return Issue(IoKind.Read, Bitmap((((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4)))))) + memory.Read32(cpxArenaBase + (ManualMap)) * 4096)), p, (memory.Read32(cpxArenaBase + (PageBytes))), 9);
+                return ReadStaged(Bitmap((((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4)))))) + memory.Read32(cpxArenaBase + (ManualMap)) * 4096)), p, 9);
             case 9:
                 if (!ControlBitmap(p, (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4)))))) + memory.Read32(cpxArenaBase + (ManualMap)) * 4096), ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4))))))) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
@@ -230,7 +230,7 @@ public partial struct CpxEngine<TMemory>
         if (((uint)(((ulong)(held)) >> 32)) != ((uint)(((ulong)(window)) >> 32)) || (((uint)((ulong)(held))) & ~4095u) != ((uint)((ulong)(window))))
             return true;
         uint bit = ((uint)((ulong)(held))) & 4095, p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(0)) * 4))) + 64;
-        for (uint n = 0; n < (memory.Read32(cpxArenaBase + (GeometryQ))); n++, bit++)
+        for (uint n = 0; n < MetadataSpan; n++, bit++)
             if ((memory.Read8(p + (bit >> 3)) & (128 >> (int)(bit & 7))) == 0)
                 return false;
         return true;
@@ -240,7 +240,7 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         ulong window = (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4)))))) + memory.Read32(cpxArenaBase + (ManualMap)) * 4096);
-        uint floor = (((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4)))))))) == 0) ? 2097152u >> (int)memory.Read32(cpxArenaBase + (UnitShift)) : 17 * (memory.Read32(cpxArenaBase + (GeometryQ)));
+        uint floor = (((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ManualGroup)) + 4)))))))) == 0) ? 2097152u >> (int)memory.Read32(cpxArenaBase + (UnitShift)) : 17 * MetadataSpan;
         uint offset = memory.Read32(cpxArenaBase + (ManualMap)) * 4096, first = offset >= floor ? 0 : floor - offset, end = 4096;
         if (first > 4096)
             first = 4096;

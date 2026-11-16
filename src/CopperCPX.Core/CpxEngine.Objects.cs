@@ -31,6 +31,7 @@ public partial struct CpxEngine<TMemory>
             return StepResult.Pending;
         }
 
+        if (staged < 0 && ShadowVolume) return BeginShadowRead(at, buffer, nextPhase);
         return Issue(IoKind.Read, staged < 0 ? at : Image(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))) + 1, (uint)staged), buffer, (memory.Read32(cpxArenaBase + (PageBytes))), nextPhase);
     }
 
@@ -46,9 +47,9 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (ExpectedLevel), uint.MaxValue);
                 if ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1) && (CpxOperation)memory.Read32(cpxArenaBase + (OperationAt))is CpxOperation.ReadObject or CpxOperation.ReadFile or CpxOperation.WriteMapped or CpxOperation.Lookup && ReadBufferedObject(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ObjectKey)) + 4))))))))
                     return Done();
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
+                return ReadStaged(StateAddress, p, 1);
             case 1:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(TreeAddress);

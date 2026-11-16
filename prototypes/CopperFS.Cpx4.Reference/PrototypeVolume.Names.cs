@@ -76,7 +76,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         else
         {
             Load(address, B(4));
-            if (!IsPage(B(4), PageType.Name, address, U64(entry, 8)) || U16(B(4), 64) != length) throw new InvalidDataException("Invalid external name.");
+            if (!VolumePage(B(4), PageType.Name, address, U64(entry, 8)) || U16(B(4), 64) != length) throw new InvalidDataException("Invalid external name.");
             B(4).Slice(68, length).CopyTo(destination);
         }
         return length;

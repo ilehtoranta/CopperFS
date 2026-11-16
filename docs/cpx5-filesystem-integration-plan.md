@@ -1,8 +1,11 @@
 # CPX5 integration plan, 16 November 2026
 
 This is an implementation plan for an incompatible experimental format. The
-working handler still mounts CPX4. Component protocol tests are not full-filesystem
-coverage, and the original-handler performance target is still unmet.
+working prototype now mounts both explicit CPX4 and CPX5 fixtures. The integrated
+CPX5 backend retains 1 KiB metadata pages and the existing object tree; compact
+inodes and smaller metadata remain planned. The original-handler performance
+target is still unmet. Component tests and focused filesystem tests do not replace
+the complete handler/full-ROM qualification gates.
 
 ## Storage and identity
 
@@ -14,7 +17,7 @@ The selected checkpoint contains an explicit mapping root. Mapping leaves select
 metadata copy A/B; mapping branches select their child copies. Map placement is
 derived from capacity using `CpxShadowMapGeometry`, with depth bounded to eight.
 Allocation must reserve both physical copies of every metadata page. Map nodes
-occupy a permanent region; allocator and independent ownership accounting must
+occupy a permanent region beginning at 512 KiB; allocator and independent ownership accounting must
 exclude that region. Large permanent prefixes must not collide with the fixed
 allocation-group descriptor/bitmap positions: omit non-data prefix groups and
 round the first data group beyond the permanent mapping area.

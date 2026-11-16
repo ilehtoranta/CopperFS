@@ -10,6 +10,9 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         if ((((ulong)(volumeId)) == 0))
             return CpxError.InvalidArgument;
+        // CPX5 fixtures currently use the independent explicit formatter. Do
+        // not let this legacy redo formatter create a partial shadow layout.
+        if (memory.Read32(cpxArenaBase + Signature) == CpxArena.Magic && ShadowVolume) return CpxError.InvalidArgument;
         if (memory.Read32(cpxArenaBase + (Signature)) == CpxArena.Magic && (memory.Read32(cpxArenaBase + (Waiting)) != 0 || memory.Read32(cpxArenaBase + (Finished)) == 0 || memory.Read32(cpxArenaBase + (Active)) != 0))
             return CpxError.Busy;
         if (memory.Read32(cpxArenaBase + (Signature)) == CpxArena.Magic && (memory.Read32(cpxArenaBase + (ReadOnlyAt)) != 0))
@@ -197,7 +200,7 @@ public partial struct CpxEngine<TMemory>
                 Seal(p, 256);
                 return Issue(IoKind.Write, root, p, (memory.Read32(cpxArenaBase + (PageBytes))), 21);
             case 21:
-                Header(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), default);
+                Header(p, 3, StateAddress, default);
             {
                 uint cpxWideAddress = (uint)(p + 64);
                 ulong cpxWideValue = ((ulong)(2));
@@ -229,7 +232,7 @@ public partial struct CpxEngine<TMemory>
                 if (memory.Read32(cpxArenaBase + (LabelLength)) != 0)
                     EncodeStateLabel(p);
                 Seal(p, memory.Read32(cpxArenaBase + (LabelLength)) == 0 ? 48u : 128u);
-                return Issue(IoKind.Write, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, (memory.Read32(cpxArenaBase + (PageBytes))), 22);
+                return Issue(IoKind.Write, StateAddress, p, (memory.Read32(cpxArenaBase + (PageBytes))), 22);
             case 22:
                 Header(p, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), default);
                 memory.Write16(p + 64, 32);
@@ -321,7 +324,7 @@ public partial struct CpxEngine<TMemory>
 
         {
             uint cpxWideAddress = (uint)(p + 120);
-            ulong cpxWideValue = (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)));
+            ulong cpxWideValue = StateAddress;
             memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
             memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
         }

@@ -22,7 +22,7 @@ public partial struct CpxEngine<TMemory> where TMemory:struct,ICpxMemory
     {
         pending=StepResult.Pending;
         ulong parent=RW(NsParent);
-        uint cached=CachedObject(parent),state=CachedMetadata(Anchor+3*Q),reserve=CachedMetadata(Anchor+8*Q);
+        uint cached=CachedObject(parent),state=CachedMetadata(StateAddress),reserve=CachedMetadata(Anchor+8*Q);
         if(cached==0||state==0||memory.Read32(Arena+NsDirectory)>1||memory.Read32(Arena+StagedCount)>35||GetWide(state+88)!=0||!FastName(NsName,memory.Read32(Arena+NsLength))) return DeclineFastCreate();
         ulong root=GetWide(state+80),dir=GetWide(cached+32);
         uint objects=CachedMetadata(root),directory=dir==0?0:CachedMetadata(dir);
@@ -45,7 +45,7 @@ public partial struct CpxEngine<TMemory> where TMemory:struct,ICpxMemory
     {
         uint plan=CreatePlan;
         BeginFastGroup();
-        uint state=OwnMetadata(memory.Read32(plan+40),Anchor+3*Q,3,0),objects=OwnMetadata(memory.Read32(plan+44),GetWide(plan+8),11,0),reserve=OwnMetadata(memory.Read32(plan+48),Anchor+8*Q,4,0);
+        uint state=OwnMetadata(memory.Read32(plan+40),StateAddress,3,0),objects=OwnMetadata(memory.Read32(plan+44),GetWide(plan+8),11,0),reserve=OwnMetadata(memory.Read32(plan+48),Anchor+8*Q,4,0);
         uint directory=memory.Read32(plan+52),available=memory.Read32(plan+72);
         if(directory==0)
         {

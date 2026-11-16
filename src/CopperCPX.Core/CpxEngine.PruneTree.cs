@@ -181,9 +181,9 @@ public partial struct CpxEngine<TMemory>
         switch (memory.Read32(cpxArenaBase + (Phase)))
         {
             case 0:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
+                return ReadStaged(StateAddress, p, 1);
             case 1:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(PruneObjectRoot);
@@ -209,9 +209,9 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 5);
+                return ReadStaged(StateAddress, p, 5);
             case 5:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = (uint)(p + 80);
@@ -220,7 +220,7 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 6);
+                return StagePage(p, StateAddress, 6);
             case 6:
                 return Call(CpxOperation.CommitTransaction, 0);
             default:

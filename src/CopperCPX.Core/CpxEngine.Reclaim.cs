@@ -13,9 +13,9 @@ public partial struct CpxEngine<TMemory>
         switch (memory.Read32(cpxArenaBase + (Phase)))
         {
             case 0:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 1);
+                return ReadStaged(StateAddress, p, 1);
             case 1:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(p))
+                if (!Control(p, 3, StateAddress) || !ReadableGeneration(p))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(CleanupId);
@@ -180,9 +180,9 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (Phase), 33);
                 return StepResult.Pending;
             case 33:
-                return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), p, 34);
+                return ReadStaged(StateAddress, p, 34);
             case 34:
-                if (!Control(p, 3, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 88))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 88)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4))))))))))
+                if (!Control(p, 3, StateAddress) || !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 88))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 88)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupId)) + 4))))))))))
                     return Fail(CpxError.Corrupt);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(CleanupRoot);
@@ -198,7 +198,7 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                return StagePage(p, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 3 * (memory.Read32(cpxArenaBase + (GeometryQ))), 35);
+                return StagePage(p, StateAddress, 35);
             case 35:
                 if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0)
                     return MutateTree(CpxTreeKind.Object, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupRoot)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupRoot)) + 4)))))), default, obj, 2, 36);

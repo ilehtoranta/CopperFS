@@ -37,7 +37,9 @@ internal static class Program
             if (!File.Exists(path)) throw new FileNotFoundException("Required benchmark input is unavailable.", path);
 
         var cpx = new MemoryDevice(new byte[DiskBytes]);
-        Cpx4Volume<MemoryDevice>.Format(cpx, SectorBytes, new byte[36864], 0x43505842454E4348);
+        if(Environment.GetEnvironmentVariable("CPX_BENCH_SHADOW")=="1")
+            Cpx4Volume<MemoryDevice>.FormatShadow(cpx, SectorBytes, new byte[40960], 0x43505842454E4348);
+        else Cpx4Volume<MemoryDevice>.Format(cpx, SectorBytes, new byte[36864], 0x43505842454E4348);
         File.WriteAllBytes(Path.Combine(ArtifactRoot, "cpx4-empty-16m.hdf"), cpx.Bytes);
         var ffs = CreateEmptyFfs();
         File.WriteAllBytes(Path.Combine(ArtifactRoot, "ffs-empty-16m.hdf"), ffs);
@@ -220,7 +222,7 @@ internal static class Program
             if (result.Passed && arm.Name == "CPX4")
             {
                 var checkDevice = new MemoryDevice(finishedMedia);
-                var volume = new Cpx4Volume<MemoryDevice>(checkDevice, new byte[Cpx4Volume<MemoryDevice>.RequiredScratchBytes(4096)]);
+                var volume = new Cpx4Volume<MemoryDevice>(checkDevice, new byte[Cpx4Volume<MemoryDevice>.RequiredScratchBytes(4096, true)]);
                 var check=volume.Check();
                 if(!volume.TryGetInfo("Bench"u8,out var directory)||!volume.TryGetInfo(directory.Id,"Renamed.bin"u8,out var file)||file.Length!=(ulong)PayloadBytes) throw new InvalidDataException("CPX4 persisted payload is missing or has the wrong length.");
                 byte[] payload=new byte[PayloadBytes];
