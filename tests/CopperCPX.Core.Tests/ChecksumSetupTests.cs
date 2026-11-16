@@ -14,6 +14,8 @@ public class ChecksumSetupTests
     public void EveryPreparedAndZeroRunTableEntryMatchesIndependentPolynomialDivision()
     {
         var ram = new Ram(new byte[1000000]); var engine = new CpxEngine<Ram>(ram, 32);
+        Assert.Equal(CpxError.InvalidArgument, engine.PrepareAnchorChecksum(32));
+        Assert.Equal(CpxError.InvalidArgument, engine.PrepareAnchorChecksum(4096));
         Assert.Equal(CpxError.None, engine.PrepareAnchorChecksum(200000));
         for (uint slice = 0; slice < 4; slice++)
         for (uint value = 0; value < 256; value++)

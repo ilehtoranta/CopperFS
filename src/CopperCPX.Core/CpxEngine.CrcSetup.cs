@@ -84,6 +84,9 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
     public CpxError PrepareAnchorChecksum(uint table)
     {
         if (table == 0 || (table & 3) != 0 || table > uint.MaxValue - 4096) return CpxError.InvalidArgument;
+        if ((ulong)table < (ulong)Arena + CpxArena.Scratch && (ulong)Arena < (ulong)table + 4096) return CpxError.InvalidArgument;
+        if (R(Signature) == CpxArena.Magic && (R(Waiting) != 0 || R(Finished) == 0 || R(Mounted) != 0 || R(Active) != 0))
+            return CpxError.Busy;
         InitializeCrcTableAt(table); return CpxError.None;
     }
 }

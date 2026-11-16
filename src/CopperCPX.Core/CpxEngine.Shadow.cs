@@ -29,7 +29,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         // Count only the prefix before it when selecting four/eight cache pages.
         if (buffered != 0 && storage >= buffered && (ulong)storage < (ulong)buffered + usable) usable = storage - buffered;
         uint bufferedUsed = usable >= BufferedStorageBytes(P) ? BufferedStorageBytes(P) : CompactBufferedStorageBytes(P);
-        if (R(Signature) != CpxArena.Magic || features > 3 || storage == 0 || (storage & 7) != 0 ||
+        if (R(Signature) != CpxArena.Magic || features > 4 || SmallMetadata && features is not (0 or 4) || storage == 0 || (storage & 7) != 0 ||
             bytes < ShadowStorageBytes(P) || storage > uint.MaxValue - bytes ||
             (ulong)storage < (ulong)Arena + CpxArena.Bytes(P) && (ulong)Arena < (ulong)storage + bytes ||
             buffered != 0 && (usable < CompactBufferedStorageBytes(P) ||
@@ -39,7 +39,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         W(CheckpointPolicy, storage | (R(CheckpointPolicy) & 3) | 4);
         Clear(storage, ShadowStorageBytes(P));
         CpxError error = CpxShadowMapGeometry.TryCreate(1u << (int)R(SectorShift), P, RW(Capacity),
-            524288UL >> (int)R(SectorShift), out var geometry, features == 3);
+            524288UL >> (int)R(SectorShift), out var geometry, features >= 3);
         if (error != CpxError.None) { W(CheckpointPolicy, R(CheckpointPolicy) & 3); return error; }
         ulong dataStart = 2097152UL >> (int)R(UnitShift);
         ulong mapEnd = (ulong)geometry.MapEndSector >> (int)(R(UnitShift) - R(SectorShift));
@@ -60,7 +60,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         Header(buffer, state ? 3u : 4u, unit, RW(Generation));
         uint length = state ? memory.Read16(ShadowControl + 56) : 264;
         Copy(buffer + 64, ShadowControl + (state ? 96u : 232u), length);
-        memory.Write16(buffer + 52, state ? length : 520u);
+        memory.Write16(buffer + 52, state ? length : ReservePayloadBytes);
         if (CanCacheMetadata)
         {
             TrustBufferedPage(buffer, unit);

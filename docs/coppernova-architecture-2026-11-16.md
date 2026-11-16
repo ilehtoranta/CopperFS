@@ -211,3 +211,33 @@ cost spread across page copying, continuation/publication bookkeeping, selected
 map traversal and mount validation; the first direct-inode integration is not
 an accepted replacement. Separate full-ROM and physical-media gates have not
 been run for these candidates.
+
+The A11 full Release snapshot subsequently passed **2,484 tests**, with zero
+failures and nine media/ROM skips. This includes 553 CPX host and 100 native
+cases. CopperStart's rebuilt geometry/buffer replay passed 141 cases separately.
+
+A12 adds explicit feature 4 for 512-byte metadata. It uses 2,048-bit bitmap
+windows and 32 bitmap pages per allocation group. Existing features keep their
+original geometry. Full-length external names and link targets use authenticated
+type-22 continuation pages, bound to the head address, owner and generation.
+Reads copy at most 64 string bytes per continuation turn; deletion releases both
+pages. Namespace admission accounts for the direct-inode layout and fragments.
+The independent decoder verifies both fragments and counts both allocations.
+
+Focused checks pass: 117 geometry/buffering/trim cases, 172 broader namespace and
+blob cases, 10 direct-filesystem cases, and eight compiled filesystem cases with
+4 KiB stack guards and zero managed allocation sites. The direct set includes
+255-character Latin-1 names, 444/445/768-byte link targets, crash/retry with a
+different write set, and 2 MiB streaming across bitmap boundaries followed by
+truncation. The full Release build passes; its full test snapshot is running.
+
+A12 single unprofiled results are **7,349,570 mixed** and **376,507,650 streaming**
+cycles, both with full guest and persisted-image checks passing. Smaller pages
+reduce bytes transferred but do not meet the target. A streaming profile exposes
+about 5,000 bitmap-geometry helper calls while the allocator rescans occupied
+windows for the next file. Allocation search policy and publication overhead
+still need work. Separate full-ROM and physical-media gates remain unrun.
+
+An A11 68000 compiler-size-profile alternative passed workload checks but was
+slower. A 68020-targeted alternative failed both workloads with DOS error 115;
+those failed runs are excluded from performance comparisons.

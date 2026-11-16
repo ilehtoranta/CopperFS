@@ -24,7 +24,7 @@ public partial struct CpxEngine<TMemory>
                     cursor = first;
                 ulong group = (((ulong)(((uint)(((ulong)(cursor)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(cursor))) & 0xffff0000)));
                 Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), group, out var remaining);
-                if (!(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 18 * MetadataSpan)
+                if (!(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < (GroupMetadataPages + 1) * MetadataSpan)
                 {
                     {
                         uint cpxWideAddress = cpxArenaBase + (uint)(TrimCursor);
@@ -46,7 +46,7 @@ public partial struct CpxEngine<TMemory>
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 1);
             case 1:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), count = memory.Read16(reserve + 64);
-                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > ReserveCapacity || memory.Read16(reserve + 52) != 520)
+                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > ReserveCapacity || memory.Read16(reserve + 52) != ReservePayloadBytes)
                     return Fail(CpxError.Corrupt);
                 return ReadStaged(Bitmap(at), p, 2);
             case 2:
@@ -62,11 +62,11 @@ public partial struct CpxEngine<TMemory>
                     ulong held = ((((ulong)(memory.Read32(((uint)(r + 72 + n * 8))))) << 32 | ((ulong)(memory.Read32(((uint)(r + 72 + n * 8)) + 4)))));
                     if (!Allocatable(held))
                         return Fail(CpxError.Corrupt);
-                    if (((uint)(((ulong)(held)) >> 32)) != ((uint)(((ulong)(at)) >> 32)) || (((uint)((ulong)(held))) >> 12) != (((uint)((ulong)(at))) >> 12))
+                    if (((uint)(((ulong)(held)) >> 32)) != ((uint)(((ulong)(at)) >> 32)) || (((uint)((ulong)(held))) >> (int)BitmapWindowShift) != (((uint)((ulong)(at))) >> (int)BitmapWindowShift))
                         continue;
                     for (uint q = 0; q < MetadataSpan; q++)
                     {
-                        uint bit = (((uint)((ulong)(held))) & 4095) + q, byteAt = p + 64 + (bit >> 3);
+                        uint bit = (((uint)((ulong)(held))) & BitmapWindowMask) + q, byteAt = p + 64 + (bit >> 3);
                         memory.Write8(byteAt, (byte)(memory.Read8(byteAt) | (0x80 >> (int)(bit & 7))));
                     }
                 }
@@ -74,8 +74,8 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (Phase), 4);
                 return StepResult.Pending;
             case 4:
-                ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~4095u)));
-                for (uint bit = ((uint)((ulong)(at))) & 4095; bit < 4096; bit++)
+                ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~BitmapWindowMask)));
+                for (uint bit = ((uint)((ulong)(at))) & BitmapWindowMask; bit < BitmapWindowUnits; bit++)
                 {
                     if ((memory.Read8(p + 64 + (bit >> 3)) & (0x80 >> (int)(bit & 7))) != 0 || !DataUnit(window + bit))
                         continue;
@@ -91,7 +91,7 @@ public partial struct CpxEngine<TMemory>
 
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(TrimCursor);
-                ulong cpxWideValue = window + 4096;
+                ulong cpxWideValue = window + BitmapWindowUnits;
                 memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
@@ -111,7 +111,7 @@ public partial struct CpxEngine<TMemory>
     public CpxError BeginTrim(Wide first, uint units)
     {
         uint cpxArenaBase = Arena;
-        if (units == 0 || units > 4096 - (((uint)((ulong)(first))) & 4095) || !Scalar64.Add(first, ((ulong)(units)), out var end) || (end) > (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4))))))))
+        if (units == 0 || units > BitmapWindowUnits - (((uint)((ulong)(first))) & BitmapWindowMask) || !Scalar64.Add(first, ((ulong)(units)), out var end) || (end) > (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4))))))))
             return CpxError.InvalidArgument;
         CpxError error = StartOperation(CpxOperation.Trim, first);
         if (error == CpxError.None)
@@ -130,7 +130,7 @@ public partial struct CpxEngine<TMemory>
             return false;
         // A unit below the backup and past a group's reserved prefix implies
         // that the group contains its complete 17-page metadata prefix.
-        return ((uint)(((ulong)(unit)) >> 32)) == 0 && (((uint)((ulong)(unit))) & 0xffff0000) == 0 || (((uint)((ulong)(unit))) & 65535) >= 17 * MetadataSpan;
+        return ((uint)(((ulong)(unit)) >> 32)) == 0 && (((uint)((ulong)(unit))) & 0xffff0000) == 0 || (((uint)((ulong)(unit))) & 65535) >= GroupMetadataPages * MetadataSpan;
     }
 
     private StepResult TrimStep()
@@ -152,7 +152,7 @@ public partial struct CpxEngine<TMemory>
                 return ReadStaged((((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ))), (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), 1);
             case 1:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), count = memory.Read16(reserve + 64);
-                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > ReserveCapacity || memory.Read16(reserve + 52) != 520)
+                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || !ReadableGeneration(reserve) || count > ReserveCapacity || memory.Read16(reserve + 52) != ReservePayloadBytes)
                     return Fail(CpxError.Corrupt);
                 ulong end = at + memory.Read32(cpxArenaBase + (TrimCount));
                 for (uint n = 0; n < count; n++)
@@ -170,7 +170,7 @@ public partial struct CpxEngine<TMemory>
                     return Fail(CpxError.Corrupt);
                 // All allocated space is excluded, including unwritten extents. Do
                 // not split a stale hint: a later maintenance step may retry it.
-                uint bit = ((uint)((ulong)(at))) & 4095;
+                uint bit = ((uint)((ulong)(at))) & BitmapWindowMask;
                 for (uint n = 0; n < memory.Read32(cpxArenaBase + (TrimCount)); n++)
                     if ((memory.Read8(p + 64 + ((bit + n) >> 3)) & (0x80 >> (int)((bit + n) & 7))) != 0)
                         return Done();

@@ -31,7 +31,7 @@ public partial struct CpxEngine<TMemory>
                         uint credits = memory.Read32(cpxArenaBase + (StagedLimit));
                         memory.Write32(cpxArenaBase + (MetadataTaken), 0);
                         memory.Write32(cpxArenaBase + (MetadataReleased), 0);
-                        memory.Write32(cpxArenaBase + (MetadataLimit), credits == 39 ? 20u : credits is 22 or 30 ? 10u : credits == 42 ? 18u : credits == 8 ? 2u : credits == 6 ? 1u : 0u);
+                        memory.Write32(cpxArenaBase + (MetadataLimit), credits == 25 ? 14u : credits is 23 or 34 ? 11u : credits == 39 ? 20u : credits is 22 or 30 ? 10u : credits == 42 ? 18u : credits == 8 ? 2u : credits == 6 ? 1u : 0u);
                         if (memory.Read32(cpxArenaBase + (Active)) == 0)
                         {
                             memory.Write32(cpxArenaBase + (StagedCount), 0);
@@ -47,7 +47,7 @@ public partial struct CpxEngine<TMemory>
                     memory.Write32(cpxArenaBase + (StagedCount), 0);
                     memory.Write32(cpxArenaBase + (MetadataTaken), 0);
                     memory.Write32(cpxArenaBase + (MetadataReleased), 0);
-                    memory.Write32(cpxArenaBase + (MetadataLimit), memory.Read32(cpxArenaBase + (StagedLimit)) == 39 ? 20u : memory.Read32(cpxArenaBase + (StagedLimit))is 22 or 30 ? 10u : memory.Read32(cpxArenaBase + (StagedLimit)) == 42 ? 18u : memory.Read32(cpxArenaBase + (StagedLimit)) == 6 ? 1u : 0u);
+                    memory.Write32(cpxArenaBase + (MetadataLimit), memory.Read32(cpxArenaBase + (StagedLimit)) == 39 ? (SmallMetadata ? 22u : 20u) : memory.Read32(cpxArenaBase + (StagedLimit))is 22 or 30 ? 10u : memory.Read32(cpxArenaBase + (StagedLimit)) == 42 ? 18u : memory.Read32(cpxArenaBase + (StagedLimit)) == 6 ? 1u : 0u);
                     Clear((memory.Read32(cpxArenaBase + (GeometryIndex))), 2048);
                     Clear(p, (memory.Read32(cpxArenaBase + (PageBytes))));
                     return Issue(IoKind.Write, Commit(tx), p, (memory.Read32(cpxArenaBase + (PageBytes))), 1);

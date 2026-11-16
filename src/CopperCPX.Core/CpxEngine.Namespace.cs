@@ -466,7 +466,7 @@ public partial struct CpxEngine<TMemory>
                 return SaveObject((cpxArenaBase + 10800), 32);
             case 32:
                 if (!(((ulong)(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24)) + 4))))))) == 0))
-                    return ReleaseMetadata(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24)) + 4))))), 33);
+                    return BeginBlob(GetWide(NsOldEntry + 24), 17, GetWide(NsOldEntry + 8), 0, 0, 2, 33);
                 memory.Write32(cpxArenaBase + (Phase), 33);
                 return StepResult.Pending;
             case 33:
@@ -537,14 +537,14 @@ public partial struct CpxEngine<TMemory>
                 return StepResult.Pending;
             case 48:
                 if (!(((ulong)(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24)) + 4))))))) == 0))
-                    return ReleaseMetadata(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 11952) + 24)) + 4))))), 49);
+                    return BeginBlob(GetWide(NsOldEntry + 24), 17, GetWide(NsOldEntry + 8), 0, 0, 2, 49);
                 memory.Write32(cpxArenaBase + (Phase), 49);
                 return StepResult.Pending;
             case 49:
                 if (memory.Read32(cpxArenaBase + (NsReplacing)) == 0)
                     return Call(CpxOperation.CommitTransaction, 99);
                 if (!(((ulong)(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 12080) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 12080) + 24)) + 4))))))) == 0))
-                    return ReleaseMetadata(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 12080) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 12080) + 24)) + 4))))), 60);
+                    return BeginBlob(GetWide(NsPrevious + 24), 17, GetWide(NsPrevious + 8), 0, 0, 2, 60);
                 memory.Write32(cpxArenaBase + (Phase), 60);
                 return StepResult.Pending;
             case 60:
@@ -645,55 +645,18 @@ public partial struct CpxEngine<TMemory>
 
                 return TakeMetadata(81);
             case 81:
-                uint page = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(4)) * 4)));
-                ulong address = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4))))));
-            {
-                uint cpxWideAddress = (uint)((cpxArenaBase + 11824) + 24);
-                ulong cpxWideValue = address;
-                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-            }
-
-                Header(page, 17, address, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))) + 1);
-            {
-                uint cpxWideAddress = (uint)(page + 24);
-                ulong cpxWideValue = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsEntryId)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsEntryId)) + 4))))));
-                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-            }
-
-                memory.Write16(page + 64, memory.Read32(cpxArenaBase + (NsEncodedLength)));
-                Copy(page + 68, (cpxArenaBase + 12720), memory.Read32(cpxArenaBase + (NsEncodedLength)));
-                memory.Write16(page + 52, memory.Read32(cpxArenaBase + (NsEncodedLength)) + 4);
-                return StagePage(page, address, memory.Read32(cpxArenaBase + (NsNameReturn)));
+                ulong address = RW(MetadataResult);
+                PutWide(NsEntry + 24, address);
+                return BeginBlob(address, 17, RW(NsEntryId), R(NsEncodedLength), NsEncoded, 0, R(NsNameReturn));
             case 99:
                 memory.Write32(cpxArenaBase + (NsPublished), 1);
                 return Done();
             case 100:
                 return Call(CpxOperation.Reclaim, 1);
             case 102:
-                ulong linkPage = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(MetadataResult)) + 4))))));
-                uint link = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(4)) * 4)));
-                memory.Write8((cpxArenaBase + 11312) + 85, 3);
-            {
-                uint cpxWideAddress = (uint)((cpxArenaBase + 11312) + 96);
-                ulong cpxWideValue = linkPage;
-                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-            }
-
-                Header(link, 19, linkPage, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))) + 1);
-            {
-                uint cpxWideAddress = (uint)(link + 24);
-                ulong cpxWideValue = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsResult)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NsResult)) + 4))))));
-                memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
-                memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
-            }
-
-                memory.Write16(link + 64, memory.Read32(cpxArenaBase + (LinkEncoded)));
-                Copy(link + 68, (cpxArenaBase + 15552), memory.Read32(cpxArenaBase + (LinkEncoded)));
-                memory.Write16(link + 52, 4 + memory.Read32(cpxArenaBase + (LinkEncoded)));
-                return StagePage(link, linkPage, 103);
+                ulong linkPage = RW(MetadataResult);
+                memory.Write8(NsObject + 85, 3); PutWide(NsObject + 96, linkPage);
+                return BeginBlob(linkPage, 19, RW(NsResult), R(LinkEncoded), LinkText, 0, 103);
             case 103:
                 return BuildEntry(14);
             default:

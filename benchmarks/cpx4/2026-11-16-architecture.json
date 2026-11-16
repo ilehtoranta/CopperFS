@@ -1149,6 +1149,93 @@
         "additionalDirectorySplitRetirementDeletion": 1,
         "compiledFilesystemAndDma": 13,
         "fullRom": "separate gate not run",
+        "physicalMedia": "not run",
+        "fullSolution": {
+          "passed": 2484,
+          "failed": 0,
+          "skipped": 9,
+          "hostCpx": 553,
+          "native": 100,
+          "nativeRomSkipped": 6
+        },
+        "copperStartRebuiltReplay": 141
+      }
+    },
+    "A12": {
+      "format": 5,
+      "features": 4,
+      "metadataPageBytes": 512,
+      "description": "Explicit 512-byte metadata, 2048-bit allocation windows, full-length parent-bound string continuations, and direct inode namespace admission",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1078,
+          "CompletedFrames": 1078,
+          "HostSeconds": 4.5441685,
+          "PhaseCycles": {
+            "mutationCycles": 3235490,
+            "flushCycles": 1363650,
+            "remountCycles": 1100400,
+            "verifyCycles": 1650030
+          },
+          "ReadCommands": 41,
+          "WriteCommands": 21,
+          "ReadRequests": 73,
+          "WriteRequests": 37,
+          "ReadBytes": 37376,
+          "WriteBytes": 18944,
+          "Flushes": 4,
+          "InitialMediaSha256": "D8982BB1D509F49B00BA10F506867FD501A6B0010964B53231552FE2701BD8C1",
+          "ResultMediaSha256": "DE66574D3FDF5746EA342C55A78642BDE7A69151D1A956684190A9D1DF686812",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3737,
+          "CompletedFrames": 3737,
+          "HostSeconds": 19.481081,
+          "PhaseCycles": {
+            "mutationCycles": 5885100,
+            "flushCycles": 1562860,
+            "remountCycles": 1261740,
+            "verifyCycles": 367797950
+          },
+          "ReadCommands": 74,
+          "WriteCommands": 54,
+          "ReadRequests": 4160,
+          "WriteRequests": 4119,
+          "ReadBytes": 2129920,
+          "WriteBytes": 2108928,
+          "Flushes": 4,
+          "InitialMediaSha256": "D8982BB1D509F49B00BA10F506867FD501A6B0010964B53231552FE2701BD8C1",
+          "ResultMediaSha256": "4F55CA62F6467F506E7EF8FF6F4EC9D2EAFA17280A1142170A4D710FBE39812C",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24497,\"MetadataUnits\":76,\"ReservePages\":32}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "B12056A8A9C0F5F9C55ED8CF8BA2CC5A3D91C607071F02269E86B91F4049DCC0",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "legacyAndGeometryFocusedHost": 117,
+        "additionalBlobAndNamespaceHost": 172,
+        "focusedDirectFilesystem": 10,
+        "compiledFilesystemIncludingLongStrings": 8,
+        "fullSolution": "running",
+        "fullRom": "separate gate not run",
         "physicalMedia": "not run"
       }
     }
@@ -1214,6 +1301,129 @@
       "reserveOffset": 232,
       "reserveCapacity": 32,
       "reservePayloadBytes": 264
+    }
+  },
+  "compilerAlternatives": {
+    "A11Speed": {
+      "acceptance": false,
+      "profile": "68000, code size optimizations disabled",
+      "nativeStackQualification": "not run",
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1110,
+          "CompletedFrames": 1110,
+          "HostSeconds": 4.8779363,
+          "PhaseCycles": {
+            "mutationCycles": 3444230,
+            "flushCycles": 1429220,
+            "remountCycles": 1191840,
+            "verifyCycles": 1705890
+          },
+          "ReadCommands": 37,
+          "WriteCommands": 20,
+          "ReadRequests": 94,
+          "WriteRequests": 48,
+          "ReadBytes": 48128,
+          "WriteBytes": 24576,
+          "Flushes": 4,
+          "InitialMediaSha256": "6F29119DEB2C10ABD8C6BC4851B9EDCD952F87E0E818A292A57A1C302468B16E",
+          "ResultMediaSha256": "5405E9BEA00869A3986105736A6B0756710470E4AAF525ADD5B5E1C104B05779",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28524,\"MetadataUnits\":132,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3765,
+          "CompletedFrames": 3765,
+          "HostSeconds": 19.4409362,
+          "PhaseCycles": {
+            "mutationCycles": 5405450,
+            "flushCycles": 1539840,
+            "remountCycles": 1367070,
+            "verifyCycles": 368019570
+          },
+          "ReadCommands": 69,
+          "WriteCommands": 52,
+          "ReadRequests": 4182,
+          "WriteRequests": 4130,
+          "ReadBytes": 2141184,
+          "WriteBytes": 2114560,
+          "Flushes": 4,
+          "InitialMediaSha256": "6F29119DEB2C10ABD8C6BC4851B9EDCD952F87E0E818A292A57A1C302468B16E",
+          "ResultMediaSha256": "77BE151B008F8FDD142E85BE0578FD52A8CF8CE1E20FF1635161FDAD0F686004",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24420,\"MetadataUnits\":152,\"ReservePages\":32}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      }
+    },
+    "A1168020": {
+      "acceptance": false,
+      "excluded": "Both guest workloads failed with DOS error 115; no performance result accepted",
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": false,
+          "Stage": 17,
+          "IoErr": 115,
+          "LoopFrames": 1061,
+          "CompletedFrames": 1061,
+          "HostSeconds": 6.516787,
+          "PhaseCycles": {
+            "mutationCycles": -1,
+            "flushCycles": -1,
+            "remountCycles": -1,
+            "verifyCycles": -1
+          },
+          "ReadCommands": 19,
+          "WriteCommands": 7,
+          "ReadRequests": 50,
+          "WriteRequests": 22,
+          "ReadBytes": 25600,
+          "WriteBytes": 11264,
+          "Flushes": 0,
+          "InitialMediaSha256": "6F29119DEB2C10ABD8C6BC4851B9EDCD952F87E0E818A292A57A1C302468B16E",
+          "ResultMediaSha256": "899C243C8CB94CAFE5261E7BF976FB21E6A80513CACD9FDA453D5E51267C2FE8",
+          "IndependentCheck": null,
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": false,
+          "Stage": 22,
+          "IoErr": 115,
+          "LoopFrames": 1133,
+          "CompletedFrames": 1133,
+          "HostSeconds": 6.9520543,
+          "PhaseCycles": {
+            "mutationCycles": -1,
+            "flushCycles": -1,
+            "remountCycles": -1,
+            "verifyCycles": -1
+          },
+          "ReadCommands": 20,
+          "WriteCommands": 38,
+          "ReadRequests": 52,
+          "WriteRequests": 4102,
+          "ReadBytes": 26624,
+          "WriteBytes": 2100224,
+          "Flushes": 0,
+          "InitialMediaSha256": "6F29119DEB2C10ABD8C6BC4851B9EDCD952F87E0E818A292A57A1C302468B16E",
+          "ResultMediaSha256": "DD4D64FF03BBA664F38D66E986D693BB8F1A73D8E109149E3A9D2185C2494BE9",
+          "IndependentCheck": null,
+          "Detail": 0
+        }
+      }
     }
   }
 }

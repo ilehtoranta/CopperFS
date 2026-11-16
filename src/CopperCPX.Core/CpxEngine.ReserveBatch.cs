@@ -63,7 +63,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 
     private bool ReserveBitsAllocated(uint bitmap, ulong address)
     {
-        uint bit = (uint)address & 4095, width = MetadataSpan;
+        uint bit = (uint)address & BitmapWindowMask, width = MetadataSpan;
         for (uint n = 0; n < width; n++)
             if ((memory.Read8(bitmap + 64 + ((bit + n) >> 3)) & (0x80 >> ((int)(bit + n) & 7))) == 0)
                 return false;

@@ -3,17 +3,23 @@ using System.Buffers.Binary;
 namespace CopperFS.Cpx4.Reference;
 
 // CPX4 is an unregistered, incompatible research format. Addresses are allocation units.
-internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Units, ulong VolumeId, ushort DiskVersion = 4, bool RootControl = false, bool DirectInodes = false)
+internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Units, ulong VolumeId, ushort DiskVersion = 4, bool RootControl = false, bool DirectInodes = false, bool SmallMetadata = false)
 {
     internal const uint Magic = 0x43505834;
     internal const ushort Version = 4;
     internal bool Shadow => DiskVersion == 5;
     internal uint DiskMagic => Shadow ? 0x43505835u : Magic;
-    internal ulong Features => DirectInodes ? 3UL : RootControl ? 2UL : 1UL;
+    internal ulong Features => SmallMetadata ? 4UL : DirectInodes ? 3UL : RootControl ? 2UL : 1UL;
     internal const int HeaderBytes = 64, JournalImages = 64, OperationImages = 42;
     internal const int MaxHeight = 8, ReserveCapacity = 64, ReserveTarget = 32, ReserveMargin = 12;
     internal const int NameBytes = 768, InlineBytes = 160, GroupUnits = 65536, BitmapUnits = 4096;
-    internal int PageBytes => Math.Max(1024, UnitBytes);
+    internal int PageBytes => Math.Max(SmallMetadata ? 512 : 1024, UnitBytes);
+    internal int BitmapWindowUnits => PageBytes == 512 ? 2048 : BitmapUnits;
+    internal int BitmapWindowShift => AddressMath.PowerShift((uint)BitmapWindowUnits);
+    internal int BitmapPayloadBytes => BitmapWindowUnits / 8;
+    internal int GroupMapCount => GroupUnits / BitmapWindowUnits;
+    internal int GroupMetadataPages => GroupMapCount + 1;
+    internal int GroupPayloadBytes => 16 + GroupMapCount * 4;
     internal int UnitShift => AddressMath.PowerShift((uint)UnitBytes);
     internal int DeviceShift => UnitShift - AddressMath.PowerShift((uint)SectorBytes);
     internal ulong UnitOffset(ulong bytes) => AddressMath.Right(bytes, UnitShift);
@@ -33,7 +39,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     internal ulong Backup => (Units & ~(Q - 1)) - Q;
     internal ulong DataStart => !Shadow || ShadowMapEnd <= (2097152UL >> UnitShift)
         ? (2097152UL >> UnitShift) : DivideUp(ShadowMapEnd, GroupUnits) * GroupUnits;
-    internal ulong FirstMetadata => DataStart + (GroupBase(DataStart) == 0 ? 0 : 17 * MetadataSpan);
+    internal ulong FirstMetadata => DataStart + (GroupBase(DataStart) == 0 ? 0 : (ulong)GroupMetadataPages * MetadataSpan);
     internal ulong Journal(ulong transaction) => AddressMath.Right((transaction & 1) == 1 ? 1048576UL : 1572864UL, UnitShift);
     internal ulong Descriptor(ulong transaction, int index) => Journal(transaction) + (ulong)(1 + index) * Q;
     internal ulong Image(ulong transaction, int index) => Journal(transaction) + (ulong)(5 + index) * Q;
@@ -45,9 +51,9 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     internal ulong Bitmap(ulong group, int index) => GroupDescriptor(group) + (ulong)(index + 1) * MetadataSpan;
     internal uint ValidUnits(ulong group) => (uint)Math.Min((ulong)GroupUnits, Units - group);
     internal bool HasGroup(ulong group) => group < Units &&
-        (group == 0 || (!Shadow || group >= DataStart) && (ulong)ValidUnits(group) >= 17 * MetadataSpan + (Units - group < GroupUnits ? Q : 0));
+        (group == 0 || (!Shadow || group >= DataStart) && (ulong)ValidUnits(group) >= (ulong)GroupMetadataPages * MetadataSpan + (Units - group < GroupUnits ? Q : 0));
     internal bool Permanent(ulong unit) => unit < DataStart || unit >= Backup ||
-        !HasGroup(GroupBase(unit)) || (GroupBase(unit) != 0 && (unit & 65535) < 17 * MetadataSpan);
+        !HasGroup(GroupBase(unit)) || (GroupBase(unit) != 0 && (unit & 65535) < (ulong)GroupMetadataPages * MetadataSpan);
     internal bool PageAddress(ulong unit) => unit < Units && (unit & (Q - 1)) == 0 && Q <= Units - unit;
     internal bool AllocatablePage(ulong unit) => PageAddress(unit) && (!Shadow || (unit & (MetadataSpan - 1)) == 0) &&
         MetadataSpan <= Units - unit && !Permanent(unit) && !Permanent(unit + MetadataSpan - 1);
@@ -56,7 +62,7 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     {
         if (SectorBytes is < 512 or > 4096 || (SectorBytes & (SectorBytes - 1)) != 0 ||
             UnitBytes < SectorBytes || UnitBytes > 4096 || (UnitBytes & (UnitBytes - 1)) != 0 ||
-            DiskVersion is not (4 or 5) || RootControl && !Shadow || DirectInodes && !RootControl || VolumeId == 0 || Units < (4194304UL >> UnitShift) || Units > AddressMath.Right(ulong.MaxValue, UnitShift) ||
+            DiskVersion is not (4 or 5) || RootControl && !Shadow || DirectInodes && !RootControl || SmallMetadata && !DirectInodes || VolumeId == 0 || Units < (4194304UL >> UnitShift) || Units > AddressMath.Right(ulong.MaxValue, UnitShift) ||
             Shadow && (ShadowHeight > MaxHeight || FirstMetadata + 33 * MetadataSpan >= Backup))
             throw new ArgumentException("Unsupported CPX4 geometry.");
     }
@@ -79,13 +85,14 @@ internal readonly record struct Layout(int UnitBytes, int SectorBytes, ulong Uni
     internal static int PayloadBytes(ReadOnlySpan<byte> p) => (PageType)U16(p, 4) switch
     {
         PageType.Anchor => 64, PageType.Checkpoint => U16(p,6) == 5 ? U16(p,52) == 432 ? 432 : 32 : 24, PageType.State => U16(p,52) is 128 or 136?U16(p,52):48,
-        PageType.Reserve => 520, PageType.Charset => 4, PageType.Group => 80, PageType.Bitmap => 512,
+        PageType.Reserve => p.Length == 512 ? 264 : 520, PageType.Charset => 4, PageType.Group => p.Length == 512 ? 144 : 80, PageType.Bitmap => p.Length == 512 ? 256 : 512,
         PageType.JournalHeader or PageType.Commit => 40, PageType.Descriptor => U16(p, 48) * 32,
         PageType.Inode => 256, PageType.Tombstone => 0,
         PageType.ObjectLeaf => U16(p, 48) * 256, PageType.DirectoryLeaf => U16(p, 48) * 128,
         PageType.ExtentLeaf => U16(p, 48) * 24, PageType.DirectoryBranch => U16(p, 48) * 24,
         PageType.ObjectBranch or PageType.ExtentBranch => U16(p, 48) * 16,
-        PageType.Name or PageType.Symlink => 4 + U16(p, 64), PageType.Attribute => AttributeData(p)-64+AttributeLength(p), _ => 0
+        PageType.Name or PageType.Symlink => 4 + Math.Min(p.Length - 68, U16(p, 64)),
+        PageType.BlobTail => 4 + U16(p, 64), PageType.Attribute => AttributeData(p)-64+AttributeLength(p), _ => 0
     };
     internal static void Seal(Span<byte> p) { Put16(p, 52, checked((ushort)PayloadBytes(p))); Put32(p, 8, Crc(p, true)); }
     internal static bool ValidCrc(ReadOnlySpan<byte> p, ushort version = Version) => U32(p, 0) == (version == 5 ? 0x43505835u : Magic) && U16(p, 6) == version && U32(p, 8) == Crc(p, true);

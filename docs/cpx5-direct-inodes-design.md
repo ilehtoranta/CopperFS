@@ -1,13 +1,15 @@
 # Proposed direct-inode CPX5 experiment
 
 Feature 3 now has an experimental formatter, independent read-only decoder,
-production core integration and focused host tests. Native qualification and
-benchmark screening are pending. Feature 1 is the paired-control prototype;
+production core integration, focused host and compiled native tests, and passing
+workload checks. It still loses the performance comparison. Feature 1 is the paired-control prototype;
 feature 2 embeds volume controls in checkpoints. Neither beats the references.
 Both existing paths remain available without reinterpreting their sectors.
 
-The first integrated candidate retains metadata pages of at least 1 KiB. The
-512-byte metadata and string continuation design below is still proposed.
+Feature 3 retains metadata pages of at least 1 KiB. A12 adds explicit feature 4
+for 512-byte metadata, including full-length string continuations, without
+reinterpreting existing feature-3 pages. Its host and compiled native checks pass,
+but its timings still lose to both references.
 
 ## Addressed inodes with unique identities
 
@@ -67,7 +69,8 @@ directory records and extent records fit. Keep logical namespace strings up to
 768 bytes: a name/symlink head stores at most P-68 bytes and an authenticated
 type-22 continuation stores the rest. Its physical logical address can occupy
 the head's reserved header field at 56. Validate owner, address, total/tail length,
-generation and CRC for both pages. Do not read or copy a 768-byte blob past a
+generation and CRC for both pages. The tail binds the complete head address in
+its header at 56 and records the head length at 66. Do not read or copy a 768-byte blob past a
 512-byte scratch page.
 
 The checkpoint's 496-byte control record already fits. A materialized reserve

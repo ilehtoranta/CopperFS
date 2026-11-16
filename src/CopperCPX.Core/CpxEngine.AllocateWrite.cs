@@ -75,7 +75,7 @@ public partial struct CpxEngine<TMemory>
                     return WrapAllocationSearch();
                 ulong group = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & 0xffff0000)));
                 Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), group, out var remaining);
-                if (!(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 18 * MetadataSpan)
+                if (!(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < (GroupMetadataPages + 1) * MetadataSpan)
                     return WrapAllocationSearch();
                 return ReadStaged(Bitmap(at), p, 153);
             case 153:
@@ -84,8 +84,8 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (Phase), 154);
                 return StepResult.Pending;
             case 154:
-                ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~4095u)));
-                for (uint bit = ((uint)((ulong)(at))) & 4095; bit < 4096; bit++)
+                ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~BitmapWindowMask)));
+                for (uint bit = ((uint)((ulong)(at))) & BitmapWindowMask; bit < BitmapWindowUnits; bit++)
                 {
                     if ((memory.Read8(p + 64 + (bit >> 3)) & (0x80 >> (int)(bit & 7))) != 0 || !DataUnit(window + bit))
                         continue;
@@ -106,8 +106,8 @@ public partial struct CpxEngine<TMemory>
                                 limit = ((uint)((ulong)(gap)));
                         }
 
-                        if (limit > 4096 - bit)
-                            limit = 4096 - bit;
+                        if (limit > BitmapWindowUnits - bit)
+                            limit = BitmapWindowUnits - bit;
                         // A bitmap window contains no reserved range after a
                         // valid first unit; only the final backup can bound it.
                         Scalar64.Subtract((((((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)) + 4))))))), physical, out var beforeBackup);
@@ -148,7 +148,7 @@ public partial struct CpxEngine<TMemory>
 
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(AllocationScan);
-                ulong cpxWideValue = window + 4096;
+                ulong cpxWideValue = window + BitmapWindowUnits;
                 memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }

@@ -198,7 +198,7 @@ public partial struct CpxEngine<TMemory>
                 return ReadStaged(Anchor + 8 * Q, Page(3), 27);
             case 27:
                 uint reserve = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4)));
-                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read16(reserve + 64) > ReserveCapacity || memory.Read16(reserve + 52) != 520)
+                if (!Control(reserve, 4, (((ulong)(memory.Read32(cpxArenaBase + (GeometryAnchor))))) + 8 * (memory.Read32(cpxArenaBase + (GeometryQ)))) || memory.Read16(reserve + 64) > ReserveCapacity || memory.Read16(reserve + 52) != ReservePayloadBytes)
                     return Fail(CpxError.Corrupt);
                 // Journal replay no longer needs its descriptor index. Reuse
                 // those 2 KiB as 128 address buckets for at most 64 reserve
@@ -232,10 +232,10 @@ public partial struct CpxEngine<TMemory>
     {
         uint cpxArenaBase = Arena;
         ulong group = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & 0xffff0000)));
-        return ((((ulong)(group)) == 0) ? ((ulong)(131072u >> (int)memory.Read32(cpxArenaBase + (UnitShift)))) : group) + (1 + ((((uint)((ulong)(at))) & 65535) >> 12)) * MetadataSpan;
+        return ((((ulong)(group)) == 0) ? ((ulong)(131072u >> (int)memory.Read32(cpxArenaBase + (UnitShift)))) : group) + (1 + ((((uint)((ulong)(at))) & 65535) >> (int)BitmapWindowShift)) * MetadataSpan;
     }
 
-    private bool ControlBitmap(uint p, ulong at, ulong owner) => ValidPage(p, Bitmap(at)) && memory.Read16(p + 4) == 7 && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 24)) + 4))))))) == ((ulong)(owner))) && memory.Read32(p + 12) == ((((uint)((ulong)(at))) & 65535) >> 12) && memory.Read16(p + 52) == 512;
+    private bool ControlBitmap(uint p, ulong at, ulong owner) => ValidPage(p, Bitmap(at)) && memory.Read16(p + 4) == 7 && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 24)) + 4))))))) == ((ulong)(owner))) && memory.Read32(p + 12) == ((((uint)((ulong)(at))) & 65535) >> (int)BitmapWindowShift) && memory.Read16(p + 52) == BitmapPayloadBytes;
     private bool CheckpointValid(uint p, ulong at) => Control(p, 2, at) && IdentityMatches(p) && (((ulong)(((((ulong)(memory.Read32(((uint)(p + 32))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 32)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(((uint)(p + 80))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 80)) + 4)))))))) && memory.Read16(p + 52) == 24;
     private void MakeCheckpoint(uint p, ulong at)
     {
@@ -299,13 +299,13 @@ public partial struct CpxEngine<TMemory>
             case 3:
                 return ValidStateLabel(p);
             case 4:
-                payload = 520;
+                payload = ReservePayloadBytes;
                 break;
             case 6:
-                payload = 80;
+                payload = GroupPayloadBytes;
                 break;
             case 7:
-                payload = 512;
+                payload = BitmapPayloadBytes;
                 break;
             case 23:
                 if (!DirectInodes || count != 1 || memory.Read16(p + 50) != 0 || GetWide(p + 24) != GetWide(p + 64)) return false;
@@ -329,10 +329,9 @@ public partial struct CpxEngine<TMemory>
                 break;
             case 17:
             case 19:
-                if (memory.Read16(p + 64) == 0 || memory.Read16(p + 64) > 768 || memory.Read16(p + 66) != 0)
-                    return false;
-                payload = 4 + memory.Read16(p + 64);
-                break;
+                return BlobHeadShape(p);
+            case 22:
+                return BlobTailShape(p);
             case 18:
                 return AttributePayloadValid(p);
             default:
@@ -356,17 +355,18 @@ public partial struct CpxEngine<TMemory>
             if ((((uint)((ulong)(owner))) & 65535) != 0 || (owner) >= (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4))))))))
                 return false;
             Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), owner, out var remaining);
-            if (!(((ulong)(owner)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 65536 && ((uint)((ulong)(remaining))) < 18 * MetadataSpan)
+            if (!(((ulong)(owner)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 65536 && ((uint)((ulong)(remaining))) < (GroupMetadataPages + 1) * MetadataSpan)
                 return false;
             ulong descriptor = (((ulong)(owner)) == 0) ? ((ulong)(131072u >> (int)memory.Read32(cpxArenaBase + (UnitShift)))) : owner;
             if (type == 6)
                 return (((ulong)(address)) == ((ulong)(descriptor)));
-            for (uint n = 1; n <= 16; n++)
-                if ((((ulong)(address)) == ((ulong)(descriptor + n * (memory.Read32(cpxArenaBase + (GeometryQ)))))))
+            for (uint n = 1; n <= GroupMapCount; n++)
+                if ((((ulong)(address)) == ((ulong)(descriptor + n * MetadataSpan))))
                     return true;
             return false;
         }
 
+        if (SmallMetadata && type == 22) return owner != 0 && Allocatable(address);
         if (DirectInodes && type is 23 or 24) return owner != 0 && InodeAddress(owner, out var inode) && inode == address;
         return type >= 11 && type <= 19 && ((type is 11 or 12) ? (((ulong)(owner)) == 0) : !(((ulong)(owner)) == 0)) && Allocatable(address);
     }

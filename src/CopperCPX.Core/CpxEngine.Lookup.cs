@@ -245,12 +245,10 @@ public partial struct CpxEngine<TMemory>
 
                 if (!Allocatable(external))
                     return Fail(CpxError.Corrupt);
-                return ReadStaged(external, (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(4)) * 4))), 103);
+                return BeginBlob(external, 17, GetWide(Arena + CpxArena.MountBytes + 512 + 8), length, NsEncoded, 1, 103);
             case 103:
-                uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(4)) * 4))), len = memory.Read16(((cpxArenaBase + CpxArena.MountBytes) + 512) + 32);
-                if (!ValidPage(p, ((((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512) + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512) + 24)) + 4)))))) || !ReadableGeneration(p) || memory.Read16(p + 4) != 17 || !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 24)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512) + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(((cpxArenaBase + CpxArena.MountBytes) + 512) + 8)) + 4)))))))) || memory.Read16(p + 64) != len || memory.Read16(p + 66) != 0 || memory.Read16(p + 52) != len + 4)
-                    return Fail(CpxError.Corrupt);
-                if (SameLegacy(p + 68, len))
+                uint len = memory.Read16(Arena + CpxArena.MountBytes + 512 + 32);
+                if (SameLegacy(NsEncoded, len))
                 {
                     {
                         uint cpxWideAddress = cpxArenaBase + (uint)(LookupTarget);

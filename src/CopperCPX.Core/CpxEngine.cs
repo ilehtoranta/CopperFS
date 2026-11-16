@@ -103,7 +103,7 @@ public partial struct CpxEngine<TMemory>
         return error == CpxError.None ? BeginOperation(CpxOperation.Mount) : error;
     }
 
-    public CpxError Initialize(uint sectorBytes, uint allocationBytes, Wide capacitySectors, uint epoch, bool readOnly = false)
+    public CpxError Initialize(uint sectorBytes, uint allocationBytes, Wide capacitySectors, uint epoch, bool readOnly = false, uint metadataPageBytes = 0)
     {
         uint cpxArenaBase = Arena;
         uint previousToken = 0, previousPage = (memory.Read32(cpxArenaBase + (PageBytes)));
@@ -114,10 +114,12 @@ public partial struct CpxEngine<TMemory>
                 return CpxError.Busy;
             previousToken = memory.Read32(cpxArenaBase + (NextToken));
         }
-        if (previous && ShadowVolume && (allocationBytes != (1u << (int)R(UnitShift)) ||
+        uint pageBytes = metadataPageBytes != 0 ? metadataPageBytes : previous && ShadowVolume ? previousPage : allocationBytes < 1024 ? 1024u : allocationBytes;
+        if (previous && ShadowVolume && (pageBytes != previousPage || allocationBytes != (1u << (int)R(UnitShift)) ||
             sectorBytes != (1u << (int)R(SectorShift)) || (ulong)capacitySectors != RW(Capacity))) return CpxError.InvalidArgument;
 
-        if (!CpxArena.ValidUnit(sectorBytes) || !CpxArena.ValidUnit(allocationBytes) || sectorBytes > allocationBytes || epoch == 0)
+        if (!CpxArena.ValidUnit(sectorBytes) || !CpxArena.ValidUnit(allocationBytes) || !CpxArena.ValidUnit(pageBytes) ||
+            pageBytes < allocationBytes || sectorBytes > allocationBytes || epoch == 0)
             return CpxError.InvalidArgument;
         int ds = CpxArena.Shift(allocationBytes) - CpxArena.Shift(sectorBytes);
         ulong units = Scalar64.Right(capacitySectors, ds);
@@ -129,7 +131,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (Signature), CpxArena.Magic);
         memory.Write32(cpxArenaBase + (SectorShift), (uint)CpxArena.Shift(sectorBytes));
         memory.Write32(cpxArenaBase + (UnitShift), (uint)CpxArena.Shift(allocationBytes));
-        memory.Write32(cpxArenaBase + (PageBytes), allocationBytes < 1024 ? 1024 : allocationBytes);
+        memory.Write32(cpxArenaBase + (PageBytes), pageBytes);
         {
             uint cpxWideAddress = cpxArenaBase + (uint)(Units);
             ulong cpxWideValue = units;
@@ -172,6 +174,7 @@ public partial struct CpxEngine<TMemory>
         uint cpxArenaBase = Arena;
         if (memory.Read32(cpxArenaBase + (Signature)) != CpxArena.Magic)
             return CpxError.InvalidArgument;
+        if (operation == CpxOperation.Format && SmallMetadata) return CpxError.Unsupported;
         if (memory.Read32(cpxArenaBase + (Waiting)) != 0 || memory.Read32(cpxArenaBase + (Finished)) == 0)
             return CpxError.Busy;
         if (operation != CpxOperation.WriteMapped)
@@ -549,6 +552,8 @@ public partial struct CpxEngine<TMemory>
                 return HardLinkStep();
             case CpxOperation.ReadSymlink:
                 return ReadSymlinkStep();
+            case BlobOperation:
+                return BlobStep();
             case CpxOperation.EncodeSymlink:
                 return EncodeSymlinkStep();
             case CpxOperation.SetLabel:
@@ -601,6 +606,10 @@ public partial struct CpxEngine<TMemory>
     private StepResult BeginTx(uint credits, uint nextPhase)
     {
         uint cpxArenaBase = Arena;
+        // A direct inode removes the global object-tree split from namespace
+        // admission. Account for both string fragments and an eight-level
+        // directory path before selecting rollback/retry storage.
+        if (SmallMetadata) credits = credits == 39 ? 25u : credits == 22 ? 23u : credits == 30 ? 34u : credits == 7 ? 18u : credits;
         if (!Scalar64.Add(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Generation)) + 4)))))), ((ulong)(1)), out _))
             return Reject(CpxError.ResourceExhausted);
         if ((memory.Read32(cpxArenaBase + (BufferEnabled)) == 1))
@@ -846,7 +855,7 @@ public partial struct CpxEngine<TMemory>
             uint features = (uint)GetWide(p + 96), previous = memory.Read32(ShadowStorage + 56);
             if (previous != 0 && previous != features) return false;
             memory.Write32(ShadowStorage + 56, features);
-            if (previous == 0 && features == 3)
+            if (previous == 0 && features >= 3)
             {
                 if (CpxShadowMapGeometry.TryCreate(1u << (int)R(SectorShift), P, RW(Capacity),
                     524288UL >> (int)R(SectorShift), out var geometry, true) != CpxError.None) return false;
@@ -867,7 +876,7 @@ public partial struct CpxEngine<TMemory>
         bool shadow = memory.Read16(p + 6) == 5;
         ulong features = GetWide(p + 96);
         return memory.Read32(p + 80) == unit && memory.Read32(p + 84) == page && GetWide(p + 88) == units &&
-            (features == 1 || shadow && features is 2 or 3) && memory.Read32(p + 104) == sector && memory.Read32(p + 108) == 1 &&
+            (features == 1 || shadow && features is 2 or 3 or 4) && (page >= 1024 || shadow && features == 4) && memory.Read32(p + 104) == sector && memory.Read32(p + 108) == 1 &&
             GetWide(p + 64) == 0 && GetWide(p + 72) != 0 && GetWide(p + 112) == anchor + 8 * q &&
             GetWide(p + 120) == anchor + (shadow ? 4u : 3u) * q;
     }
@@ -882,7 +891,7 @@ public partial struct CpxEngine<TMemory>
         unit = 0;
         identity = default;
         version = memory.Read32(buffer) == 0x43505835u ? 5u : 4u;
-        if (!CpxArena.ValidUnit(page) || page < 1024 || !CpxArena.ValidUnit(sector) || sector > page)
+        if (!CpxArena.ValidUnit(page) || !CpxArena.ValidUnit(sector) || sector > page)
             return CpxError.InvalidArgument;
         if (memory.Read32(buffer) != CpxArena.Magic && memory.Read32(buffer) != 0x43505835u)
             return CpxError.NotFound;
@@ -896,7 +905,8 @@ public partial struct CpxEngine<TMemory>
         }
         if (memory.Read32(buffer + 8) != checksum) return CpxError.NotFound;
         uint candidate = memory.Read32(buffer + 80);
-        if (!CpxArena.ValidUnit(candidate) || candidate < sector || (candidate < 1024 ? 1024 : candidate) != page || memory.Read16(buffer + 4) != 1 || memory.Read16(buffer + 6) != version || memory.Read16(buffer + 52) != 64 || !(((ulong)(((((ulong)(memory.Read32(((uint)(buffer + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(buffer + 24)) + 4))))))) == 0))
+        uint minimumPage = version == 5 && GetWide(buffer + 96) == 4 ? 512u : 1024u;
+        if (!CpxArena.ValidUnit(candidate) || candidate < sector || (candidate < minimumPage ? minimumPage : candidate) != page || memory.Read16(buffer + 4) != 1 || memory.Read16(buffer + 6) != version || memory.Read16(buffer + 52) != 64 || !(((ulong)(((((ulong)(memory.Read32(((uint)(buffer + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(buffer + 24)) + 4))))))) == 0))
             return CpxError.Corrupt;
         int shift = CpxArena.Shift(candidate) - CpxArena.Shift(sector);
         if ((((uint)((ulong)(capacity))) & ((1u << shift) - 1)) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(buffer + 16))))) << 32 | ((ulong)(memory.Read32(((uint)(buffer + 16)) + 4))))))) == ((ulong)(Scalar64.Right(location, shift)))) || !AnchorFieldsValid(buffer, candidate, page, Scalar64.Right(capacity, shift), sector))

@@ -3,7 +3,7 @@ namespace CopperCPX;
 public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
 {
     private const uint NsInode = 10704;
-    private bool DirectInodes => ShadowVolume && memory.Read32(ShadowStorage + 56) == 3;
+    private bool DirectInodes => ShadowVolume && memory.Read32(ShadowStorage + 56) >= 3;
 
     private bool InodeCodec(out CpxInodeIdentity codec)
     {

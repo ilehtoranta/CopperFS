@@ -218,13 +218,9 @@ public partial struct CpxEngine<TMemory>
 
                 if (memory.Read8((cpxArenaBase + CpxArena.MountBytes) + 85) != 3 || !Allocatable(((((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes) + 96))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes) + 96)) + 4)))))))
                     return Fail(CpxError.Corrupt);
-                return ReadStaged(((((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes) + 96))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes) + 96)) + 4))))), p, 2);
+                return BeginBlob(GetWide(ObjectRecord + 96), 19, GetWide(ObjectRecord), R(LinkLength), R(LinkBuffer), 1, 2);
             case 2:
-                if (!ValidPage(p, ((((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes) + 96))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes) + 96)) + 4)))))) || !ReadableGeneration(p) || memory.Read16(p + 4) != 19 || !(((ulong)(((((ulong)(memory.Read32(((uint)(p + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(p + 24)) + 4))))))) == ((ulong)(((((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes)))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + CpxArena.MountBytes))) + 4)))))))) || !PayloadValid(p) || memory.Read16(p + 64) != memory.Read32(cpxArenaBase + (LinkLength)))
-                    return Fail(CpxError.Corrupt);
-                memory.Write32(cpxArenaBase + (LinkOutput), p + 68);
-                memory.Write32(cpxArenaBase + (Phase), 3);
-                return StepResult.Pending;
+                W(FileValue, R(LinkLength)); return Done();
             case 3:
                 uint count = memory.Read32(cpxArenaBase + (LinkLength)) - memory.Read32(cpxArenaBase + (LinkScan));
                 if (count > 64)

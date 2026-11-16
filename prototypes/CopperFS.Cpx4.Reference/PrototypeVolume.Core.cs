@@ -45,7 +45,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
 
     public static int RequiredScratchBytes(int pageBytes, bool shadow = false)
     {
-        if (pageBytes is < 1024 or > 4096 || (pageBytes & (pageBytes - 1)) != 0) throw new ArgumentOutOfRangeException(nameof(pageBytes));
+        if (pageBytes is < 512 or > 4096 || (pageBytes & (pageBytes - 1)) != 0) throw new ArgumentOutOfRangeException(nameof(pageBytes));
         return (shadow ? 8 : 6) * pageBytes + 12 * 1024;
     }
     private void Ready() { if (poisoned || active || inCooperate) throw new InvalidOperationException("Mount needs recovery or is already owned by an operation."); }
@@ -87,7 +87,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             AddressMath.Left(device.SectorCount, AddressMath.PowerShift((uint)device.SectorSize)) < 4194304) throw new ArgumentException("Invalid device/scratch.");
         ulong bytes = AddressMath.Left(device.SectorCount, AddressMath.PowerShift((uint)device.SectorSize));
         bool found = false;
-        for (int pageBytes = 1024; pageBytes <= 4096; pageBytes *= 2)
+        for (int pageBytes = 512; pageBytes <= 4096; pageBytes *= 2)
         {
             if (pageBytes < device.SectorSize) continue;
             for (int copy = 0; copy < 2; copy++)
@@ -98,9 +98,9 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
                 if (magic != Magic && magic != 0x43505835u || U32(p, 8) != Crc(p, true)) continue;
                 ushort version = magic == Magic ? (ushort)4 : (ushort)5;
                 if (U16(p, 6) != version || U16(p, 4) != (ushort)PageType.Anchor ||
-                    U64(p, 96) != 1 && (version != 5 || U64(p, 96) is not (2 or 3)))
+                    U64(p, 96) != 1 && (version != 5 || U64(p, 96) is not (2 or 3 or 4)))
                     throw new InvalidDataException("Unsupported CPX format/features; old prototypes require reformatting.");
-                var candidate = new Layout((int)U32(p, 80), device.SectorSize, U64(p, 88), U64(p, 72), version, U64(p, 96) >= 2, U64(p, 96) == 3);
+                var candidate = new Layout((int)U32(p, 80), device.SectorSize, U64(p, 88), U64(p, 72), version, U64(p, 96) >= 2, U64(p, 96) >= 3, U64(p, 96) == 4);
                 try { candidate.Validate(); } catch (ArgumentException e) { throw new InvalidDataException("Invalid anchor geometry.", e); }
                 if (candidate.PageBytes != pageBytes || candidate.ByteOffset(candidate.Units) != bytes ||
                     U32(p, 84) != pageBytes || U32(p, 104) != device.SectorSize || U32(p, 108) != 1 ||
@@ -135,16 +135,16 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     public static void FormatShadow(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, bool compactControl = true)
         => FormatCore(device, allocationUnitBytes, scratch, volumeId, 5, compactControl);
 
-    public static void FormatDirectInodes(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId)
-        => FormatCore(device, allocationUnitBytes, scratch, volumeId, 5, true, true);
+    public static void FormatDirectInodes(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, bool smallMetadata = false)
+        => FormatCore(device, allocationUnitBytes, scratch, volumeId, 5, true, true, smallMetadata);
 
-    private static void FormatCore(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, ushort version, bool compactControl = false, bool directInodes = false)
+    private static void FormatCore(TDevice device, int allocationUnitBytes, Span<byte> scratch, ulong volumeId, ushort version, bool compactControl = false, bool directInodes = false, bool smallMetadata = false)
     {
         if (device.SectorSize <= 0 || device.SectorCount > AddressMath.Right(ulong.MaxValue, AddressMath.PowerShift((uint)device.SectorSize)) || allocationUnitBytes <= 0)
             throw new ArgumentException("Invalid geometry.");
         ulong bytes = AddressMath.Left(device.SectorCount, AddressMath.PowerShift((uint)device.SectorSize));
         if ((bytes & ((uint)allocationUnitBytes - 1)) != 0) throw new ArgumentException("Partial allocation unit.");
-        var l = new Layout(allocationUnitBytes, device.SectorSize, AddressMath.Right(bytes, AddressMath.PowerShift((uint)allocationUnitBytes)), volumeId, version, compactControl, directInodes); l.Validate();
+        var l = new Layout(allocationUnitBytes, device.SectorSize, AddressMath.Right(bytes, AddressMath.PowerShift((uint)allocationUnitBytes)), volumeId, version, compactControl, directInodes, smallMetadata); l.Validate();
         if (scratch.Length < RequiredScratchBytes(l.PageBytes)) throw new ArgumentException("Insufficient scratch.");
         Span<byte> p = scratch[..l.PageBytes], descriptor = scratch.Slice(l.PageBytes, l.PageBytes), control = scratch.Slice(2 * l.PageBytes, l.PageBytes);
         control.Clear();
@@ -160,13 +160,13 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             if (!l.HasGroup(group)) continue;
             l.MediaHeader(descriptor, PageType.Group, l.GroupDescriptor(group), group, 0);
             Put32(descriptor, 64, l.ValidUnits(group)); uint groupFree = 0;
-            for (int map = 0; map < 16; map++)
+            for (int map = 0; map < l.GroupMapCount; map++)
             {
                 l.MediaHeader(p, PageType.Bitmap, l.Bitmap(group, map), group, 0); Put32(p, 12, (uint)map);
                 uint count = 0;
-                for (int bit = 0; bit < BitmapUnits; bit++)
+                for (int bit = 0; bit < l.BitmapWindowUnits; bit++)
                 {
-                    ulong unit = group + (uint)(map * BitmapUnits + bit);
+                    ulong unit = group + (uint)(map * l.BitmapWindowUnits + bit);
                     bool used = unit >= l.Units || l.Permanent(unit) || (unit >= root && unit < reservedEnd);
                     SetBit(p, bit, used); if (!used) count++;
                 }

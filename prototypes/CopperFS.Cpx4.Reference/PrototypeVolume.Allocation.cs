@@ -21,10 +21,10 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     private bool Allocated(ulong unit)
     {
-        ulong group = layout.GroupBase(unit); int map = (int)((unit & 65535) >> 12);
+        ulong group = layout.GroupBase(unit); int map = (int)((unit & 65535) >> layout.BitmapWindowShift);
         Load(layout.Bitmap(group, map), B(0));
         ValidateBitmap(B(0), group, map);
-        return Bit(B(0), (int)(unit & 4095));
+        return Bit(B(0), (int)(unit & ((uint)layout.BitmapWindowUnits - 1)));
     }
     private void ValidateBitmap(scoped ReadOnlySpan<byte> p, ulong group, int map)
     {
@@ -45,14 +45,14 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     private void ChangeBits(ulong address, uint count, bool used)
     {
-        if (count == 0 || address >= layout.Units || count > layout.Units - address || count > BitmapUnits - (address & 4095))
+        if (count == 0 || address >= layout.Units || count > layout.Units - address || count > ((uint)layout.BitmapWindowUnits) - (address & ((uint)layout.BitmapWindowUnits - 1)))
             throw new InvalidDataException("Allocation change crosses a bitmap window.");
-        ulong group = layout.GroupBase(address); int map = (int)((address & 65535) >> 12);
+        ulong group = layout.GroupBase(address); int map = (int)((address & 65535) >> layout.BitmapWindowShift);
         ulong bitmap = layout.Bitmap(group, map);
         Load(bitmap, B(1)); ValidateBitmap(B(1), group, map);
         for (uint n = 0; n < count; n++)
         {
-            int bit = (int)((address + n) & 4095);
+            int bit = (int)((address + n) & ((uint)layout.BitmapWindowUnits - 1));
             if (layout.Permanent(address + n) || Bit(B(1), bit) == used) throw new InvalidDataException("Double allocation/free or reserved region.");
             SetBit(B(1), bit, used);
         }
@@ -71,7 +71,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             Load(layout.Reserve, B(3)); int count = U16(B(3), 64);
             if (count >= ReserveTarget) break;
             if (!FindFree((uint)layout.Q, true, out ulong address, out _)) break;
-            ulong map = layout.Bitmap(layout.GroupBase(address), (int)((address & 65535) >> 12));
+            ulong map = layout.Bitmap(layout.GroupBase(address), (int)((address & 65535) >> layout.BitmapWindowShift));
             if (firstMap == ulong.MaxValue) firstMap = map;
             else if (map != firstMap && secondMap == ulong.MaxValue) secondMap = map;
             else if (map != firstMap && map != secondMap) break;

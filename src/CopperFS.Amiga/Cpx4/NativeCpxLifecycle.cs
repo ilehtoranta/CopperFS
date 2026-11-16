@@ -34,7 +34,7 @@ internal static class NativeCpxLifecycle
     {
         APTR state=State(arena); Own(state,message,packet,Phase.ProbeWide);
         uint sector=1u<<NativeCpxTransport.SectorShift(arena);
-        APTR.WriteUInt32(state,ProbePage,sector<1024?1024:sector);
+        APTR.WriteUInt32(state,ProbePage,sector);
         for(int n=BackupCopy;n<=ReadFault;n+=4) APTR.WriteUInt32(state,n,0);
         // Discovery owns the unused sixth maximum-size scratch page. Reuse a
         // prepared checksum table across anchors before final geometry exists.
@@ -178,7 +178,7 @@ internal static class NativeCpxLifecycle
         if(failure!=0) return Refuse(state,port,failure,true);
         if(result==StepResult.Failed)
         {
-            if(phase==Phase.ProbeWide&&backup==0&&page==(sector<1024?1024:sector)&&NativeCpxTransport.TryNarrowProbe(arena))
+            if(phase==Phase.ProbeWide&&backup==0&&page==(sector)&&NativeCpxTransport.TryNarrowProbe(arena))
                 return Next(state,Phase.ProbeNarrow);
             if(!NativeCpxTransport.UnreadableSector(arena)) return Refuse(state,port,NativeCpxTransport.DiskChanged(arena)?226u:213u,true);
             APTR.WriteUInt32(state,ReadFault,1);
@@ -189,7 +189,7 @@ internal static class NativeCpxLifecycle
             if(check!=CpxError.None&&check!=CpxError.NotFound) return Refuse(state,port,213,true);
             if(check==CpxError.None)
             {
-                if(version==5) { unit|=0x80000000; uint features=APTR.ReadUInt32(APTR.FromPointer(io.Buffer),100); if(features>=2) unit|=0x40000000; if(features==3) unit|=0x20000000; }
+                if(version==5) { unit|=0x80000000; uint features=APTR.ReadUInt32(APTR.FromPointer(io.Buffer),100); if(features>=2) unit|=0x40000000; if(features>=3) unit|=0x20000000; if(features==4) unit|=0x10000000; }
                 uint previous=APTR.ReadUInt32(state,FoundUnit);
                 if(previous!=0&&(previous!=unit||APTR.ReadUInt32(state,FoundHigh)!=identity.High||
                     APTR.ReadUInt32(state,FoundLow)!=identity.Low)) return Refuse(state,port,213,true);
@@ -199,9 +199,9 @@ internal static class NativeCpxLifecycle
         if(backup==0) { APTR.WriteUInt32(state,BackupCopy,1); return StepResult.Pending; }
         if(page<4096) { APTR.WriteUInt32(state,ProbePage,page*2); APTR.WriteUInt32(state,BackupCopy,0); return StepResult.Pending; }
         uint chosen=APTR.ReadUInt32(state,FoundUnit);
-        bool shadow=(chosen&0x80000000)!=0,compactControl=(chosen&0x40000000)!=0,directInodes=(chosen&0x20000000)!=0; chosen&=0x1fffffff;
+        bool shadow=(chosen&0x80000000)!=0,compactControl=(chosen&0x40000000)!=0,directInodes=(chosen&0x20000000)!=0,smallMetadata=(chosen&0x10000000)!=0; chosen&=0x0fffffff;
         if(chosen==0&&APTR.ReadUInt32(state,ReadFault)!=0) return Refuse(state,port,213,true);
-        if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1)!=CpxError.None) return Refuse(state,port,213,true);
+        if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1,metadataPageBytes:smallMetadata?chosen:0)!=CpxError.None) return Refuse(state,port,213,true);
         if(engine.DisableShadowVolume()!=CpxError.None) return Refuse(state,port,213,true);
         PrepareBufferedStorage(ref engine,shadow);
         if(shadow)
@@ -209,7 +209,7 @@ internal static class NativeCpxLifecycle
             uint extra=CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes);
             if(engine.BufferedStorageAddress==0||engine.BufferedStorageCapacity<extra) return Refuse(state,port,103,true);
             uint storage=engine.BufferedStorageAddress+engine.BufferedStorageCapacity-extra;
-            if(engine.EnableShadowVolume(storage,extra,directInodes?3u:compactControl?2u:1u)!=CpxError.None) return Refuse(state,port,103,true);
+            if(engine.EnableShadowVolume(storage,extra,smallMetadata?4u:directInodes?3u:compactControl?2u:1u)!=CpxError.None) return Refuse(state,port,103,true);
         }
         if(chosen==0) return Next(state,Phase.Timers); // readable unformatted medium, explicit DOS Format remains available
         if(engine.BeginMountFromDiscoveredAnchor(new(APTR.ReadUInt32(state,FoundHigh),APTR.ReadUInt32(state,FoundLow)))!=CpxError.None)

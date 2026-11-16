@@ -9,8 +9,9 @@ public static class ShadowFilesystemProbe
     public static uint Entry()
     {
         var memory = new GuestMemory(); uint unit = memory.Read32(0x8304); bool controlOnly = memory.Read32(0x8308) != 0;
+        bool smallMetadata = memory.Read32(0x830c) != 0, longStrings = memory.Read32(0x8310) != 0;
         var engine = new CpxEngine<GuestMemory>(memory, 0x60000);
-        if (engine.Initialize(512, unit, Wide.From(8192), 1) != CpxError.None) return 1;
+        if (engine.Initialize(512, unit, Wide.From(8192), 1, metadataPageBytes: smallMetadata ? unit : 0) != CpxError.None) return 1;
         if (engine.EnableBufferedWrites(0x70000, CpxEngine<GuestMemory>.BufferedStorageBytes(unit < 1024 ? 1024 : unit)) != CpxError.None) return 2;
         if (engine.EnableShadowVolume(0xe0000, 32768) != CpxError.None) return 3;
         if (engine.BeginOperation(CpxOperation.Mount) != CpxError.None) return 4;
@@ -22,6 +23,32 @@ public static class ShadowFilesystemProbe
             if (result == StepResult.Complete)
             {
                 CpxError error;
+                if (longStrings)
+                {
+                    if (phase == 0)
+                    {
+                        for (uint n = 0; n < 255; n++) memory.Write8(0x9000 + n, 0xe4);
+                        for (uint n = 0; n < 768; n++) memory.Write8(0x9200 + n, (byte)(97 + n % 26));
+                        error = engine.BeginSymlink(Wide.From(1), 0x9000, 255, 0x9200, 768);
+                    }
+                    else if (phase == 1) { id = engine.MutatedObject; error = engine.BeginReadSymlink(id, 0x9400, 768); }
+                    else if (phase == 2)
+                    {
+                        for (uint n = 0; n < 768; n++) if (memory.Read8(0x9400 + n) != (byte)(97 + n % 26)) return 10;
+                        error = engine.BeginPersistenceBarrier();
+                    }
+                    else if (phase == 3) error = engine.BeginRemount();
+                    else if (phase == 4) error = engine.BeginLookup(Wide.From(1), 0x9000, 255);
+                    else if (phase == 5)
+                    {
+                        if (!engine.LookupFound || !Wide.Equal(id, engine.LookupId)) return 11;
+                        error = engine.BeginDelete(Wide.From(1), 0x9000, 255);
+                    }
+                    else if (phase == 6) error = engine.BeginPersistenceBarrier();
+                    else return 0;
+                    if (error != CpxError.None) return 200 + (uint)error;
+                    phase++; continue;
+                }
                 if (controlOnly)
                 {
                     if (phase == 0) { memory.Write32(0x9000, 0x4e657700); error = engine.BeginLabel(0x9000, 3); }
@@ -71,21 +98,23 @@ public static class ShadowFilesystemProbe
 
 public class ShadowFilesystemInstructions
 {
-    [Theory][InlineData(512, false, false)][InlineData(4096, false, false)][InlineData(512, true, false)][InlineData(4096, true, false)]
-    [InlineData(512, false, true)][InlineData(4096, false, true)]
-    public void CompiledFilesystemWritesFlushesRemountsAndReadsWithinFourKiBStack(int unit, bool controlOnly, bool directInodes)
+    [Theory][InlineData(512, false, false, false, false)][InlineData(4096, false, false, false, false)][InlineData(512, true, false, false, false)][InlineData(4096, true, false, false, false)]
+    [InlineData(512, false, true, false, false)][InlineData(4096, false, true, false, false)]
+    [InlineData(512, false, true, true, false)][InlineData(512, false, true, true, true)]
+    public void CompiledFilesystemWritesFlushesRemountsAndReadsWithinFourKiBStack(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings)
     {
         var compiled = Compilation.Value;
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
         Assert.True(compiled.Code.Length < 0x50000);
         var bus = new EngineInstructions.Bus();
-        if (directInodes) Cpx4Volume<EngineInstructions.Bus>.FormatDirectInodes(bus, unit, new byte[49152], 12345);
+        if (directInodes) Cpx4Volume<EngineInstructions.Bus>.FormatDirectInodes(bus, unit, new byte[49152], 12345, smallMetadata);
         else Cpx4Volume<EngineInstructions.Bus>.FormatShadow(bus, unit, new byte[49152], 12345);
         compiled.Code.CopyTo(bus.Memory, 0x10000);
         foreach (var relocation in compiled.Relocations)
         { uint at = 0x10000u + (uint)relocation.Offset; bus.Put(at, bus.Get(at) + 0x10000); }
         bus.Put(0x8304, (uint)unit);
         bus.Put(0x8308, controlOnly ? 1u : 0u);
+        bus.Put(0x830c, smallMetadata ? 1u : 0u); bus.Put(0x8310, longStrings ? 1u : 0u);
         bus.Memory.AsSpan(0xee000, 8192).Fill(0xa5); bus.Put(0xf0000, 0xf1000);
         using var cpu = M68kCoreFactory.Default.Create(M68kCpuModel.M68000, bus);
         cpu.Reset(0x10000 + compiled.EntryPoint, 0xf0000);
@@ -97,7 +126,8 @@ public class ShadowFilesystemInstructions
         Assert.Equal(0xf1000u, cpu.State.ProgramCounter); Assert.Equal(0u, cpu.State.D[0]);
         Assert.All(bus.Memory.AsSpan(0xee000, 4096).ToArray(), b => Assert.Equal(0xa5, b));
         var check = new Cpx4Volume<EngineInstructions.Bus>(bus, new byte[49152]); check.Check();
-        if (!controlOnly)
+        if (longStrings) Assert.Equal(0UL, check.FileCount);
+        else if (!controlOnly)
         {
             byte[] expected = Enumerable.Range(0, 8192).Select(n => (byte)(n * 17 + 3)).ToArray(), actual = new byte[8192];
             Assert.Equal(8192, check.Read("file"u8, 0, actual)); Assert.Equal(expected, actual);

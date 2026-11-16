@@ -93,7 +93,7 @@ public partial struct CpxEngine<TMemory>
                     return StepResult.Pending;
                 }
 
-                uint take = (((uint)((ulong)(last))) & 4095) + 1;
+                uint take = (((uint)((ulong)(last))) & BitmapWindowMask) + 1;
                 if (take > length)
                     take = length;
                 if ((logical) < (((((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(CleanupKeep)) + 4))))))))
@@ -176,7 +176,7 @@ public partial struct CpxEngine<TMemory>
                 return StepResult.Pending;
             case 32:
                 if (memory.Read32(cpxArenaBase + (CleanupUnlink)) != 0 && memory.Read8(obj + 84) == 3 && memory.Read8(obj + 85) == 3)
-                    return ReleaseMetadata(((((ulong)(memory.Read32(((uint)(obj + 96))))) << 32 | ((ulong)(memory.Read32(((uint)(obj + 96)) + 4))))), 33);
+                    return BeginBlob(GetWide(obj + 96), 19, GetWide(obj), 0, 0, 2, 33);
                 memory.Write32(cpxArenaBase + (Phase), 33);
                 return StepResult.Pending;
             case 33:

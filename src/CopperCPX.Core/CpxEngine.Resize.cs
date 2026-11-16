@@ -198,7 +198,7 @@ public partial struct CpxEngine<TMemory>
             case 41:
                 ulong at = ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4)))))), group = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & 0xffff0000)));
                 Scalar64.Subtract(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(Units)) + 4)))))), group, out var remaining);
-                if ((at) >= ((((((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)) + 4)))))))) || !(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < 18 * (memory.Read32(cpxArenaBase + (GeometryQ))))
+                if ((at) >= ((((((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)) + 4)))))))) || !(((ulong)(group)) == 0) && ((uint)(((ulong)(remaining)) >> 32)) == 0 && ((uint)((ulong)(remaining))) < (GroupMetadataPages + 1) * MetadataSpan)
                     return Reject(CpxError.DiskFull);
                 return ReadStaged(Bitmap(at), p, 42);
             case 42:
@@ -207,8 +207,8 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (Phase), 43);
                 return StepResult.Pending;
             case 43:
-                ulong window = (((ulong)(((uint)(((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4)))))))) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4))))))))) & ~4095u)));
-                for (uint bit = ((uint)((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4))))))))) & 4095; bit < 4096; bit++)
+                ulong window = (((ulong)(((uint)(((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4)))))))) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4))))))))) & ~BitmapWindowMask)));
+                for (uint bit = ((uint)((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(ResizeScan)) + 4))))))))) & BitmapWindowMask; bit < BitmapWindowUnits; bit++)
                 {
                     if ((memory.Read8(p + 64 + (bit >> 3)) & (0x80 >> (int)(bit & 7))) != 0 || !DataUnit(window + bit))
                         continue;
@@ -240,7 +240,7 @@ public partial struct CpxEngine<TMemory>
 
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(ResizeScan);
-                ulong cpxWideValue = window + 4096;
+                ulong cpxWideValue = window + BitmapWindowUnits;
                 memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
