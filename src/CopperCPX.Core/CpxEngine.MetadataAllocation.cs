@@ -127,20 +127,11 @@ public partial struct CpxEngine<TMemory>
                 // checking both endpoints covers the whole reserved prefix.
                 if (!DataUnit(at) || !DataUnit(at + (count - 1)))
                     return Fail(CpxError.Corrupt);
-                NoteBufferedAllocation(at, count, memory.Read32(cpxArenaBase + (AllocationUsed)) != 0);
-                uint firstBit = ((uint)((ulong)(at))) & BitmapWindowMask, left = count;
-                while (left != 0)
-                {
-                    uint offset = firstBit & 7, take = 8 - offset;
-                    if (take > left)
-                        take = left;
-                    uint byteAt = p + 64 + (firstBit >> 3), mask = ((1u << (int)take) - 1) << (int)(8 - offset - take), value = memory.Read8(byteAt);
-                    if ((value & mask) != (memory.Read32(cpxArenaBase + (AllocationUsed)) != 0 ? 0u : mask))
-                        return Fail(CpxError.Corrupt);
-                    memory.Write8(byteAt, (byte)(memory.Read32(cpxArenaBase + (AllocationUsed)) != 0 ? value | mask : value & ~mask));
-                    firstBit += take;
-                    left -= take;
-                }
+                uint firstBit = ((uint)((ulong)(at))) & BitmapWindowMask;
+                bool used = memory.Read32(cpxArenaBase + (AllocationUsed)) != 0;
+                if (!BitmapRangeMatches(p, firstBit, count, !used)) return Fail(CpxError.Corrupt);
+                NoteBufferedAllocation(at, count, used);
+                SetBitmapRange(p, firstBit, count, used);
 
                 memory.Write32(cpxArenaBase + (Phase), 3);
                 return StepResult.Pending;

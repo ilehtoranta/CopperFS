@@ -48,12 +48,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (memory.Read32(counts + 68) > 65536 - count ||
             memory.Read32(counts + window) > BitmapWindowUnits - count)
             return false;
-        for (uint n = 0; n < count; n++)
-        {
-            uint bit = (first + n) & BitmapWindowMask;
-            if ((memory.Read8(bitmap + 64 + (bit >> 3)) & (0x80u >> (int)(bit & 7))) == 0)
-                return false;
-        }
+        if (!BitmapRangeMatches(bitmap, first & BitmapWindowMask, count, true)) return false;
 
         // CachedMetadata returns only authenticated clean images or images
         // owned by this buffered group. Dirty images deliberately have CRC=0.
@@ -64,11 +59,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         counts = OwnMetadata(counts, descriptor, 6, group);
         // Old data stays unavailable for new allocation until publication.
         NoteBufferedAllocation(first, count, false);
-        for (uint n = 0; n < count; n++)
-        {
-            uint bit = (first + n) & BitmapWindowMask, at = bitmap + 64 + (bit >> 3);
-            memory.Write8(at, (byte)(memory.Read8(at) & ~(0x80u >> (int)(bit & 7))));
-        }
+        SetBitmapRange(bitmap, first & BitmapWindowMask, count, false);
         memory.Write32(counts + 68, memory.Read32(counts + 68) + count);
         memory.Write32(counts + window, memory.Read32(counts + window) + count);
         PutWide(state + 96, free);

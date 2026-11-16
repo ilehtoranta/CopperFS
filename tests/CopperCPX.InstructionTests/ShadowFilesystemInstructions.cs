@@ -25,6 +25,33 @@ public static class ShadowFilesystemProbe
             if (result == StepResult.Complete)
             {
                 CpxError error;
+                if (memory.Read32(0x8320) != 0)
+                {
+                    if (phase == 0) { memory.Write32(0x9000, 0x66696c65); error = engine.BeginCreate(Wide.From(1), 0x9000, 4); }
+                    else if (phase <= 32)
+                    {
+                        if (phase == 1)
+                        {
+                            id = engine.MutatedObject;
+                            for (uint n = 0; n < 32768; n++) memory.Write8(0x90000 + n, (byte)(n * 17 + 3));
+                        }
+                        error = engine.BeginMappedWrite(id, Wide.From((phase - 1) * 32768), 0x90000, 32768);
+                    }
+                    else if (phase == 33) error = engine.BeginPersistenceBarrier();
+                    else if (phase == 34) error = engine.BeginRemount();
+                    else
+                    {
+                        if (phase > 35)
+                        {
+                            if (engine.TransferredBytes != 32768) return 17;
+                            for (uint n = 0; n < 32768; n++) if (memory.Read8(0x90000 + n) != (byte)(n * 17 + 3)) return 18;
+                        }
+                        if (phase == 67) return 0;
+                        error = engine.BeginFileRead(id, Wide.From((phase - 35) * 32768), 0x90000, 32768);
+                    }
+                    if (error != CpxError.None) return 200 + (uint)error;
+                    phase++; continue;
+                }
                 if (promotion)
                 {
                     if (phase < 140)
@@ -163,7 +190,11 @@ public class ShadowFilesystemInstructions
     public void CompiledBufferedShrinkPublishesWithinFourKiBStack(bool catalogue)
         => Run(512, false, true, true, false, catalogue, false, true);
 
-    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false)
+    [Theory][InlineData(false)][InlineData(true)]
+    public void CompiledAppendsCrossBitmapWindowsAndVerifyEveryByteWithinFourKiBStack(bool catalogue)
+        => Run(512, false, true, true, false, catalogue, false, false, true);
+
+    private static void Run(int unit, bool controlOnly, bool directInodes, bool smallMetadata, bool longStrings, bool inlineCatalogue, bool promotion, bool fastShrink = false, bool append = false)
     {
         var compiled = Compilation.Value;
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
@@ -180,6 +211,7 @@ public class ShadowFilesystemInstructions
         bus.Put(0x8314, promotion ? 1u : 0u);
         bus.Put(0x8318, directInodes ? 1u : 0u);
         bus.Put(0x831c, fastShrink ? 1u : 0u);
+        bus.Put(0x8320, append ? 1u : 0u);
         bus.Memory.AsSpan(0xee000, 8192).Fill(0xa5); bus.Put(0xf0000, 0xf1000);
         using var cpu = M68kCoreFactory.Default.Create(M68kCpuModel.M68000, bus);
         cpu.Reset(0x10000 + compiled.EntryPoint, 0xf0000);
@@ -206,7 +238,7 @@ public class ShadowFilesystemInstructions
         else if (longStrings) Assert.Equal(0UL, check.FileCount);
         else if (!controlOnly)
         {
-            int length = directInodes ? 6003 : 8192;
+            int length = append ? 1048576 : directInodes ? 6003 : 8192;
             byte[] expected = Enumerable.Range(0, length).Select(n => (byte)(n * 17 + 3)).ToArray(), actual = new byte[length];
             Assert.Equal(length, check.Read("file"u8, 0, actual)); Assert.Equal(expected, actual);
         }

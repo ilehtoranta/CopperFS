@@ -90,18 +90,8 @@ public partial struct CpxEngine<TMemory>
             first = 0;
         }
 
-        uint bitmap = memory.Read32(h + 20), bit = ((uint)((ulong)(next))) & BitmapWindowMask, left = first;
-        while (left != 0)
-        {
-            uint offset = bit & 7, take = 8 - offset;
-            if (take > left)
-                take = left;
-            uint mask = ((1u << (int)take) - 1) << (int)(8 - offset - take);
-            if ((memory.Read8(bitmap + 64 + (bit >> 3)) & mask) != 0)
-                return false;
-            bit += take;
-            left -= take;
-        }
+        uint bitmap = memory.Read32(h + 20), bit = ((uint)((ulong)(next))) & BitmapWindowMask;
+        if (!BitmapRangeMatches(bitmap, bit, first, false)) return false;
 
         uint group = memory.Read32(h + 32), state = memory.Read32(h + 36), window = 80 + ((((uint)((ulong)(next))) & 65535) >> (int)BitmapWindowShift) * 4;
         uint secondWindow = window + (first == 0 ? 0u : 4u);
@@ -132,13 +122,12 @@ public partial struct CpxEngine<TMemory>
             return ReadStaged(Bitmap(next), p, 503);
         if (!ControlBitmap(p, next, (((ulong)(((uint)(((ulong)(next)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(next))) & 0xffff0000)))) || !ReadableGeneration(p))
             return Fail(CpxError.Corrupt);
-        for (uint bit = 0; bit < left; bit++)
-            if ((memory.Read8(p + 64 + (bit >> 3)) & (0x80 >> (int)(bit & 7))) != 0)
-            {
-                InvalidateFastWrite();
-                memory.Write32(cpxArenaBase + (Phase), 0);
-                return StepResult.Pending;
-            }
+        if (!BitmapRangeMatches(p, 0, left, false))
+        {
+            InvalidateFastWrite();
+            memory.Write32(cpxArenaBase + (Phase), 0);
+            return StepResult.Pending;
+        }
 
         memory.Write32(h + 44, OwnMetadata(p, Bitmap(next), 7, (((ulong)(((uint)(((ulong)(next)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(next))) & 0xffff0000)))));
         memory.Write32(cpxArenaBase + (Phase), 500);
@@ -148,26 +137,11 @@ public partial struct CpxEngine<TMemory>
     private StepResult FinishFastAppend()
     {
         uint cpxArenaBase = Arena;
-        uint h = memory.Read32(cpxArenaBase + (FastPointer)), bitmap = memory.Read32(h + 20), count = memory.Read32(cpxArenaBase + (WriteRunUnits)), bit = memory.Read32(cpxArenaBase + (NewPhysical + 4)) & BitmapWindowMask, left = count;
-        while (left != 0)
-        {
-            if (left == count - memory.Read32(h + 48) && memory.Read32(h + 44) != 0)
-            {
-                bitmap = memory.Read32(h + 44);
-                bit = 0;
-            }
-
-            uint offset = bit & 7, take = 8 - offset;
-            if (take > left)
-                take = left;
-            uint at = bitmap + 64 + (bit >> 3), mask = ((1u << (int)take) - 1) << (int)(8 - offset - take);
-            memory.Write8(at, (byte)(memory.Read8(at) | mask));
-            bit += take;
-            left -= take;
-        }
-
-        uint group = memory.Read32(h + 32), state = memory.Read32(h + 36), window = 80 + ((memory.Read32(cpxArenaBase + (NewPhysical + 4)) & 65535) >> (int)BitmapWindowShift) * 4;
+        uint h = memory.Read32(cpxArenaBase + (FastPointer)), bitmap = memory.Read32(h + 20), count = memory.Read32(cpxArenaBase + (WriteRunUnits)), bit = memory.Read32(cpxArenaBase + (NewPhysical + 4)) & BitmapWindowMask;
         uint firstCount = memory.Read32(h + 44) == 0 ? count : memory.Read32(h + 48);
+        SetBitmapRange(bitmap, bit, firstCount, true);
+        if (firstCount < count) SetBitmapRange(memory.Read32(h + 44), 0, count - firstCount, true);
+        uint group = memory.Read32(h + 32), state = memory.Read32(h + 36), window = 80 + ((memory.Read32(cpxArenaBase + (NewPhysical + 4)) & 65535) >> (int)BitmapWindowShift) * 4;
         memory.Write32(group + 68, memory.Read32(group + 68) - count);
         memory.Write32(group + window, memory.Read32(group + window) - firstCount);
         if (firstCount < count)

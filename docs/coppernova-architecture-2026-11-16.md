@@ -360,7 +360,16 @@ DOS paths. Computed arguments with calls, indexing or mutations retain their
 original evaluation. The default 68000 build passes at **5,466,380 mixed** and
 **370,327,190 streaming** cycles with unchanged persisted image hashes. Focused
 coverage passes 36 host and 27 compiled filesystem/engine/event-loop cases.
-The full CPX host snapshot is running; no complete solution rerun is claimed.
+The full CPX host snapshot passes 585 cases; no complete solution rerun is claimed.
 A separate 68020 build passes both workloads at 5,840,740 and 370,941,180 cycles,
 but is slower and lacks separate native stack qualification. It is not retained
 as the default. The original performance objective remains unmet.
+
+A22 replaces per-byte bitmap range work with aligned words and masks on the
+edges. Allocation changes validate the complete range before editing it. Four
+randomized host theories compare against a bit-by-bit oracle and verify every
+outside byte; all 22 focused host and 16 compiled filesystem cases pass. Two
+compiled cases append 1 MiB through a bitmap-window boundary, flush, remount and
+verify every byte with the 4 KiB stack guard. Workloads pass at **5,465,230 mixed**
+and **370,292,030 streaming** cycles, retaining the same media hashes. The full
+CPX host run is pending. The performance objective remains unmet.
