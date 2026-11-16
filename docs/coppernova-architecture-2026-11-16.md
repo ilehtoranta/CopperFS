@@ -241,3 +241,24 @@ still need work. Separate full-ROM and physical-media gates remain unrun.
 An A11 68000 compiler-size-profile alternative passed workload checks but was
 slower. A 68020-targeted alternative failed both workloads with DOS error 115;
 those failed runs are excluded from performance comparisons.
+
+The A12 full snapshot passed 559 CPX host cases, but 13 native startup cases
+failed against obsolete fixture assumptions: discovery now starts at the device
+sector size, and startup owns an unmounted engine. Corrected fixtures also retain
+an unsupported-command injection in a genuinely split request. All 28 startup
+geometry and lifecycle cases pass on the separate recheck; the original failed
+snapshot remains recorded and is not reported as a full pass.
+
+A13 retains a mount-owned advisory next-fit position, validates bitmap ownership
+at every use, wraps before declaring exhaustion, and skips occupied bitmap words
+without per-bit geometry helper calls. The hint can be lost or moved by rollback
+without implying that a unit is free. Its fixed eight bytes are supplied by the
+caller with the shadow context. Focused host checks pass 73 cases plus two
+allocated-suffix/out-of-range hint cases; eight compiled filesystem cases and
+141 rebuilt CopperStart replay cases also pass. Its full Release snapshot is
+running with the corrected startup fixtures.
+
+A13 single unprofiled results are **7,345,120 mixed** and **373,975,370 streaming**
+cycles. Both checks pass. The streaming allocator no longer scans thousands of
+occupied bits for the next file. The target remains unmet; A3 CPX4 is still
+slightly faster overall in streaming, and both references still win.

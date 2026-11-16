@@ -13,7 +13,9 @@ public static class NativeStorageLoopProbe
         var memory=new NativeCpxMemory(); var engine=new CpxEngine<NativeCpxMemory>(memory,arena);
         uint mode=memory.Read32(0x7ff0);
         if(engine.Initialize(512,512,Wide.From(8192),1,mode!=10)!=CpxError.None) return 1;
-        memory.Write32(arena+40,1); // Already mounted read-only fixture: Inhibit requires only a barrier.
+        // Startup owns a quiescent unmounted engine; the other cases begin
+        // mounted, where Inhibit requires only a barrier.
+        memory.Write32(arena+40,mode is >=6 and <=8?0u:1u);
         var dispatcher=new CpxDosDispatcher<NativeCpxMemory>(memory,arena); dispatcher.Initialize(0x8000,0x8500);
         NativeCpxTransport.Initialize(arena,APTR.FromPointer(0x8200),default,Wide.From(8192),512,uint.MaxValue,true);
         if(mode==10)

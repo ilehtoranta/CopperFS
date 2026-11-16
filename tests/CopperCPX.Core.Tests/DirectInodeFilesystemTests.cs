@@ -5,6 +5,31 @@ namespace CopperCPX.Tests;
 
 public class DirectInodeFilesystemTests
 {
+    [Theory][InlineData(false)][InlineData(true)]
+    public void AdvisoryAllocationHintWrapsPastAnOccupiedSuffixAndRejectsOutOfRangeHints(bool smallMetadata)
+    {
+        var disk = new MemoryDevice(megabytes: 16); Cpx4Volume<MemoryDevice>.FormatDirectInodes(disk, 512, new byte[49152], 12345, smallMetadata);
+        var ram = new Ram(new byte[1000000]); var engine = Mount(disk, ram, smallMetadata: smallMetadata);
+        uint hint = 900000 + CpxEngine<Ram>.ShadowStorageBytes(engine.MetadataPageBytes) - 8;
+        ulong last = disk.SectorCount - engine.MetadataPageBytes / 512 - 1;
+        void SetHint(ulong value) { ram.Write32(hint, (uint)(value >> 32)); ram.Write32(hint + 4, (uint)value); }
+        for (int file = 0; file < 3; file++)
+        {
+            byte[] name = System.Text.Encoding.ASCII.GetBytes($"hint{file}"); name.CopyTo(ram.Bytes, 100000);
+            Assert.Equal(CpxError.None, engine.BeginCreate(Wide.From(1), 100000, (uint)name.Length)); EngineTests.Drive(ref engine, ram, disk);
+            Wide id = engine.MutatedObject; SetHint(file == 2 ? ulong.MaxValue : last);
+            ram.Bytes.AsSpan(100000, 512).Fill((byte)(file + 1));
+            Assert.Equal(CpxError.None, engine.BeginMappedWrite(id, default, 100000, 512)); EngineTests.Drive(ref engine, ram, disk);
+        }
+        Assert.Equal(CpxError.None, engine.BeginPersistenceBarrier()); EngineTests.Drive(ref engine, ram, disk);
+        var check = new Cpx4Volume<MemoryDevice>(disk, new byte[49152]); check.Check(); Assert.Equal(3UL, check.FileCount);
+        for (int file = 0; file < 3; file++)
+        {
+            Assert.True(check.TryGetInfo(System.Text.Encoding.ASCII.GetBytes($"hint{file}"), out var info));
+            byte[] actual = new byte[512]; Assert.Equal(512, check.Read(info.Id, 0, actual)); Assert.All(actual, b => Assert.Equal((byte)(file + 1), b));
+        }
+    }
+
     [Fact]
     public void SmallMetadataStreamsAcrossAllocationWindowsThenTruncatesWithoutLeaking()
     {

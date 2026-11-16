@@ -12,7 +12,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (R(Waiting) != 0 || R(Finished) == 0 || R(Active) != 0 || R(Mounted) != 0) return CpxError.Busy;
         W(CheckpointPolicy, R(CheckpointPolicy) & 3); return CpxError.None;
     }
-    public static uint ShadowStorageBytes(uint pageBytes) => 288 + 4 * pageBytes;
+    public static uint ShadowStorageBytes(uint pageBytes) => 296 + 4 * pageBytes;
     private bool ShadowRootControl => ShadowVolume && memory.Read32(ShadowStorage + 56) >= 2;
     private uint ShadowControl => ShadowStorage + 288 + 3 * P;
     private uint ReserveCapacity => ShadowRootControl ? 32u : 64u;
@@ -259,6 +259,7 @@ public partial struct CpxEngine<TMemory> where TMemory : struct, ICpxMemory
         if (phase >= 24) return RecoveryStep();
         if (phase == 0)
         {
+            RememberAllocationEnd(0);
             ClearShadowCache();
             W(Cursor, 0); W(ValidOne, 0); WW(Generation, 0); PutWide(storage + 24, 0);
             return Issue(IoKind.Read, Anchor + Q, p, P, 1);

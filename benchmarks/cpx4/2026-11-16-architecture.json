@@ -1234,6 +1234,92 @@
         "additionalBlobAndNamespaceHost": 172,
         "focusedDirectFilesystem": 10,
         "compiledFilesystemIncludingLongStrings": 8,
+        "fullSolution": {
+          "passed": 2479,
+          "failed": 13,
+          "skipped": 9,
+          "hostCpx": 559,
+          "nativePassed": 89,
+          "reason": "Discovery trace expected a 1 KiB first probe; startup cancellation fixtures incorrectly marked the engine mounted before preparing discovery"
+        },
+        "fullRom": "separate gate not run",
+        "physicalMedia": "not run",
+        "correctedStartupAndLifecycleFixtureRecheck": 28
+      }
+    },
+    "A13": {
+      "format": 5,
+      "features": 4,
+      "metadataPageBytes": 512,
+      "description": "A12 plus an advisory mount-owned next-fit cursor, bounded wraparound, and full-word bitmap scan skips",
+      "acceptance": false,
+      "trials": {
+        "mixed": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 1078,
+          "CompletedFrames": 1078,
+          "HostSeconds": 4.406648,
+          "PhaseCycles": {
+            "mutationCycles": 3233060,
+            "flushCycles": 1362470,
+            "remountCycles": 1099580,
+            "verifyCycles": 1650010
+          },
+          "ReadCommands": 41,
+          "WriteCommands": 21,
+          "ReadRequests": 73,
+          "WriteRequests": 37,
+          "ReadBytes": 37376,
+          "WriteBytes": 18944,
+          "Flushes": 4,
+          "InitialMediaSha256": "D8982BB1D509F49B00BA10F506867FD501A6B0010964B53231552FE2701BD8C1",
+          "ResultMediaSha256": "FB4A2B338851801F7B18145579DDB6E95676CC99098D85366D564F4DC1D7CC24",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":7027,\"DataUnits\":14,\"FreeUnits\":28591,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515",
+          "Detail": 0
+        },
+        "stream": {
+          "Name": "CPX4",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3719,
+          "CompletedFrames": 3719,
+          "HostSeconds": 28.4074445,
+          "PhaseCycles": {
+            "mutationCycles": 3468000,
+            "flushCycles": 1549600,
+            "remountCycles": 1117500,
+            "verifyCycles": 367840270
+          },
+          "ReadCommands": 73,
+          "WriteCommands": 54,
+          "ReadRequests": 4159,
+          "WriteRequests": 4119,
+          "ReadBytes": 2129408,
+          "WriteBytes": 2108928,
+          "Flushes": 4,
+          "InitialMediaSha256": "D8982BB1D509F49B00BA10F506867FD501A6B0010964B53231552FE2701BD8C1",
+          "ResultMediaSha256": "17D34B87403C8C4C800D9949D54A84C48D824DC6E8F62C7318DE368A9BDA6B6F",
+          "IndependentCheck": "{\"Files\":2,\"FileBytes\":2098176,\"DataUnits\":4098,\"FreeUnits\":24507,\"MetadataUnits\":66,\"ReservePages\":27}; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733",
+          "Detail": 0
+        }
+      },
+      "native": {
+        "cpu": "68000",
+        "hunkSha256": "A984828E2A7C90341DC8BA104F973775BC230C9CD63CAE8B292CD5BD0A97DF7F",
+        "compilerSha256": "5C3B634BEDD348C582B597264A616380389D1D0B01B0AB6891DA6F623F3BC1A5",
+        "managedAllocationSiteCount": 0
+      },
+      "coverage": {
+        "focusedHost": 73,
+        "additionalHintWrapAndOutOfRangeChecks": 2,
+        "compiledFilesystemIncludingLongStrings": 8,
+        "copperStartRebuiltReplay": 141,
         "fullSolution": "running",
         "fullRom": "separate gate not run",
         "physicalMedia": "not run"

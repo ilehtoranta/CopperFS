@@ -218,6 +218,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(leaf + 20, length);
         memory.Write32(leaf + 112, length);
         NoteBufferedAllocation(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NewPhysical)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NewPhysical)) + 4)))))), count, true);
+        RememberAllocationEnd(RW(NewPhysical) + count);
         memory.Write32(cpxArenaBase + (FileValue), memory.Read32(cpxArenaBase + (FileBytes)));
         return Done();
     }
@@ -231,6 +232,8 @@ public partial struct CpxEngine<TMemory>
         if (record == 0 || memory.Read8(record + 84) != 1 || memory.Read8(record + 85) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 8))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 8)) + 4))))))) == 0) || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 16))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 16)) + 4))))))) == 0) || memory.Read16(record + 88) != 0 || !(((ulong)(((((ulong)(memory.Read32(((uint)(record + 24))))) << 32 | ((ulong)(memory.Read32(((uint)(record + 24)) + 4))))))) == 0) || (memory.Read32(record + 72) & 4) != 0)
             return false;
         uint entry = record - 12, slot = memory.Read32(entry + 8);
+        ulong search = AllocationSearchStart();
+        if (search >= 65536) return false; // The compact initial-write plan owns group zero only.
         int leaf = FindStaged(((((ulong)(memory.Read32(((uint)(entry))))) << 32 | ((ulong)(memory.Read32(((uint)(entry)) + 4)))))), state = FindStaged(StateAddress);
         if (leaf < 0 || state < 0 || slot == 0)
             return false;
@@ -251,6 +254,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(h + 40, 0);
         memory.Write32(h + 44, 0);
         memory.Write32(h + 48, bytes >> (int)memory.Read32(cpxArenaBase + (UnitShift)));
+        memory.Write32(h + 56, (uint)search);
         memory.Write32(cpxArenaBase + (Phase), 510);
         return true;
     }
@@ -258,7 +262,8 @@ public partial struct CpxEngine<TMemory>
     private StepResult PrepareFastInitialWrite()
     {
         uint cpxArenaBase = Arena;
-        uint first = memory.Read32(cpxArenaBase + (GeometryFirst)), p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(2)) * 4))), descriptor = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), h = memory.Read32(cpxArenaBase + (FastPointer)), shift = memory.Read32(cpxArenaBase + (UnitShift)), count = memory.Read32(cpxArenaBase + (FileBytes)) >> (int)shift;
+        uint p = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(2)) * 4))), descriptor = (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(3)) * 4))), h = memory.Read32(cpxArenaBase + (FastPointer)), shift = memory.Read32(cpxArenaBase + (UnitShift)), count = memory.Read32(cpxArenaBase + (FileBytes)) >> (int)shift;
+        uint first = memory.Read32(h + 56);
         if (memory.Read32(cpxArenaBase + (Phase)) == 510)
             return ReadStaged(Bitmap(((ulong)(first))), p, 511);
         if (memory.Read32(cpxArenaBase + (Phase)) == 511)
@@ -270,9 +275,12 @@ public partial struct CpxEngine<TMemory>
 
         if (!Control(descriptor, 6, ((ulong)(131072u >> (int)shift))) || !ReadableGeneration(descriptor) || memory.Read16(descriptor + 52) != GroupPayloadBytes)
             return Fail(CpxError.Corrupt);
-        uint bit = first & BitmapWindowMask, start = first & ~BitmapWindowMask;
-        while (bit + count <= BitmapWindowUnits)
+        uint windowMask = BitmapWindowMask, windowUnits = BitmapWindowUnits;
+        uint bit = first & windowMask, start = first & ~windowMask;
+        while (bit + count <= windowUnits)
         {
+            if ((bit & 31) == 0 && memory.Read32(p + 64 + (bit >> 3)) == uint.MaxValue)
+            { bit += 32; continue; }
             if (memory.Read8(p + 64 + (bit >> 3)) == 255)
             {
                 bit = (bit | 7) + 1;
@@ -289,7 +297,7 @@ public partial struct CpxEngine<TMemory>
         }
 
         uint state = memory.Read32(h + 36), window = 80 + ((first & 65535) >> (int)BitmapWindowShift) * 4;
-        if (bit + count > BitmapWindowUnits || !DataUnit(((ulong)(start + bit + count - 1))) || memory.Read32(descriptor + 68) < count || memory.Read32(descriptor + window) < count || memory.Read32(state + 96) == 0 && memory.Read32(state + 100) < count)
+        if (bit + count > windowUnits || !DataUnit(((ulong)(start + bit + count - 1))) || memory.Read32(descriptor + 68) < count || memory.Read32(descriptor + window) < count || memory.Read32(state + 96) == 0 && memory.Read32(state + 100) < count)
         {
             InvalidateFastWrite();
             memory.Write32(cpxArenaBase + (Phase), 0);

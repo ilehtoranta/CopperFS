@@ -97,7 +97,7 @@ public class NativeStartupGeometryInstructions
         // Expected command trace up to the first recovery read or a refused startup.
         var expected=new List<(int Command,int Offset,int Length,int Error)>();
         int command=24,expectedDosError=0;
-        for(int size=Math.Max(1024,sector);size<=4096&&expectedDosError==0;size*=2)
+        for(int size=sector;size<=4096&&expectedDosError==0;size*=2)
         {
             int backup=(bytes/size-1)*size;
             foreach(int location in new[]{65536,backup})
@@ -108,7 +108,8 @@ public class NativeStartupGeometryInstructions
                     int error=scenario switch
                     {
                         "narrow ends at 4 GiB" or "narrow crosses 4 GiB" or "narrow above 4 GiB" when number==0 => 253,
-                        "split unsupported" or "late unsupported" when number==1 => 253,
+                        "split unsupported" when size>maximum&&done!=0 => 253,
+                        "late unsupported" when number==1 => 253,
                         "short read" when number==0 => -1,
                         "media changed" when number==0 => 29,
                         "unreadable primary" or "unreadable blank" when location==65536 => 25,

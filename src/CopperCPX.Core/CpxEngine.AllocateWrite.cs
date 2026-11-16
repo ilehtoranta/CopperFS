@@ -56,18 +56,18 @@ public partial struct CpxEngine<TMemory>
                     return StepResult.Pending;
                 }
 
-                ulong first = ((ulong)(2097152u >> (int)memory.Read32(cpxArenaBase + (UnitShift))));
+                ulong first = AllocationFloor, startHint = AllocationSearchStart();
                 uint oldCount = memory.Read32((cpxArenaBase + 14700) + 16);
                 ulong hint = ((((ulong)(memory.Read32(((uint)((cpxArenaBase + 14700) + 8))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 14700) + 8)) + 4))))) + oldCount;
                 bool append = mode == 1 && oldCount != 0 && memory.Read32((cpxArenaBase + 14700) + 20) == 0 && (((ulong)(((((ulong)(memory.Read32(((uint)((cpxArenaBase + 14700)))))) << 32 | ((ulong)(memory.Read32(((uint)((cpxArenaBase + 14700))) + 4))))) + oldCount)) == ((ulong)(((((ulong)(memory.Read32(cpxArenaBase + (((uint)(DataLogical)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(DataLogical)) + 4))))))))) && DataUnit(hint);
             {
                 uint cpxWideAddress = cpxArenaBase + (uint)(AllocationScan);
-                ulong cpxWideValue = append ? hint : first;
+                ulong cpxWideValue = append ? hint : startHint;
                 memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
                 memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
             }
 
-                memory.Write32(cpxArenaBase + (WriteAllocationWrapped), append ? 0u : 1u);
+                memory.Write32(cpxArenaBase + (WriteAllocationWrapped), (append ? hint : startHint) == first ? 1u : 0u);
                 memory.Write32(cpxArenaBase + (Phase), 152);
                 return StepResult.Pending;
             case 152:
@@ -84,9 +84,14 @@ public partial struct CpxEngine<TMemory>
                 memory.Write32(cpxArenaBase + (Phase), 154);
                 return StepResult.Pending;
             case 154:
-                ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~BitmapWindowMask)));
-                for (uint bit = ((uint)((ulong)(at))) & BitmapWindowMask; bit < BitmapWindowUnits; bit++)
+                uint windowMask = BitmapWindowMask, windowUnits = BitmapWindowUnits;
+                ulong window = (((ulong)(((uint)(((ulong)(at)) >> 32)))) << 32 | ((ulong)(((uint)((ulong)(at))) & ~windowMask)));
+                for (uint bit = ((uint)((ulong)(at))) & windowMask; bit < windowUnits; bit++)
                 {
+                    if ((bit & 31) == 0 && memory.Read32(p + 64 + (bit >> 3)) == uint.MaxValue)
+                    { bit += 31; continue; }
+                    if (memory.Read8(p + 64 + (bit >> 3)) == 255)
+                    { bit |= 7; continue; }
                     if ((memory.Read8(p + 64 + (bit >> 3)) & (0x80 >> (int)(bit & 7))) != 0 || !DataUnit(window + bit))
                         continue;
                     ulong physical = window + bit;
@@ -106,8 +111,8 @@ public partial struct CpxEngine<TMemory>
                                 limit = ((uint)((ulong)(gap)));
                         }
 
-                        if (limit > BitmapWindowUnits - bit)
-                            limit = BitmapWindowUnits - bit;
+                        if (limit > windowUnits - bit)
+                            limit = windowUnits - bit;
                         // A bitmap window contains no reserved range after a
                         // valid first unit; only the final backup can bound it.
                         Scalar64.Subtract((((((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(GeometryBackup)) + 4))))))), physical, out var beforeBackup);
@@ -201,6 +206,7 @@ public partial struct CpxEngine<TMemory>
             case 167:
                 return SaveObject(record, 168);
             case 168:
+                if (mode is 1 or 2) RememberAllocationEnd(RW(NewPhysical) + R(WriteRunUnits));
                 return Issue(IoKind.Write, ((((ulong)(memory.Read32(cpxArenaBase + (((uint)(NewPhysical)))))) << 32 | ((ulong)(memory.Read32(cpxArenaBase + (((uint)(NewPhysical)) + 4)))))), memory.Read32(cpxArenaBase + (WriteDirect)) != 0 ? memory.Read32(cpxArenaBase + (FileBuffer)) + memory.Read32(cpxArenaBase + (FileValue)) : (memory.Read32(cpxArenaBase + (GeometryPages + ((uint)(4)) * 4))), memory.Read32(cpxArenaBase + (WriteRunUnits)) * unit, 300);
             case 170:
                 if (mode == 0)
@@ -303,7 +309,7 @@ public partial struct CpxEngine<TMemory>
         memory.Write32(cpxArenaBase + (WriteAllocationWrapped), 1);
         {
             uint cpxWideAddress = cpxArenaBase + (uint)(AllocationScan);
-            ulong cpxWideValue = ((ulong)(2097152u >> (int)memory.Read32(cpxArenaBase + (UnitShift))));
+            ulong cpxWideValue = AllocationFloor;
             memory.Write32(cpxWideAddress, (uint)(cpxWideValue >> 32));
             memory.Write32(cpxWideAddress + 4, (uint)cpxWideValue);
         }
