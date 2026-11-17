@@ -87,6 +87,48 @@ public sealed class Sfs2OriginalDataWriteTests
         }
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(64)]
+    public void FailedFirstBulkWritePreservesPendingCreateAndCanRetry(int failedSector)
+    {
+        var image = Empty();
+        var disk = Mount(image, true);
+        var work = WorkFor(disk);
+        System.Text.Encoding.ASCII.GetBytes("Growth").CopyTo(disk.Ram, (int)disk.NameBuffer.Raw);
+        var create = new Request { Directory = 1, Name = disk.NameBuffer, Length = 6 };
+        Assert.True(ExecuteTrstGroup(ref disk, ref work, ref create, TrstOperation.CreateFile, disk.BatchBuffer, out _));
+        var active = disk.RedoOverlay;
+        var generation = disk.ReadUInt32(disk.Sfs2Context, 12);
+        var acceptedBytes = disk.ReadUInt32(active, 20) + disk.ReadUInt32(active) * (512 + Sfs2MetadataStore.SlotBytes);
+        var accepted = disk.Ram.AsSpan((int)active.Raw, (int)acceptedBytes).ToArray();
+        Assert.True(Sfs2MetadataStore.Find(ref disk, active, work.ExtentRoot).IsNull);
+
+        var payload = StudyFixture.Pattern(65536, 93);
+        payload.CopyTo(disk.Ram, (int)disk.Payload.Raw);
+        var write = new Request { Node = create.Node, Buffer = disk.Payload, Length = (uint)payload.Length };
+        disk.FailAtEvent = disk.Events + failedSector;
+        Assert.False(ExecuteTrstGroup(ref disk, ref work, ref write, TrstOperation.Write, disk.BatchBuffer, out var actual));
+        Assert.Equal(0u, actual);
+        Assert.Equal(active, disk.RedoOverlay);
+        Assert.Equal(generation, disk.ReadUInt32(disk.Sfs2Context, 12));
+        Assert.Equal(accepted, disk.Ram.AsSpan((int)active.Raw, (int)acceptedBytes).ToArray());
+        Assert.True(Sfs2MetadataStore.Unpinned(ref disk, active));
+        Assert.True(AmigaSmartFileSystemReadOnlyCore.Describe(ref disk, create.Node, work.Meta, out var empty));
+        Assert.Equal(0ul, empty.Size);
+
+        disk.FailAtEvent = 0;
+        Assert.True(ExecuteTrstGroup(ref disk, ref work, ref write, TrstOperation.Write, disk.BatchBuffer, out actual));
+        Assert.Equal((uint)payload.Length, actual);
+        Assert.Equal(active, disk.RedoOverlay); // The reserved first extent was accepted in place.
+        Assert.True(FlushTrstGroup(ref disk, ref work, disk.BatchBuffer));
+
+        var reference = new StudyDisk(image, 512);
+        var referenceNode = CreateFile(ref reference, "Growth");
+        PutFile(ref reference, referenceNode, 0, payload, true);
+        Assert.Equal(Manifest(reference.Snapshot()), Manifest(disk.Snapshot()));
+    }
+
     [Fact]
     public void ReservedAppendChecksAcceptanceWrapBeforePayloadIo()
     {

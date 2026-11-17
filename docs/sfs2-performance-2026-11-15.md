@@ -1,5 +1,10 @@
 # SFS2 performance and CILica inlining — 2026-11-15
 
+The [November 17 checkpoint remeasurement](../benchmarks/sfs2/2026-11-17/README.md)
+covers both Fast and Chip RAM and finds that the newer first-write path meets
+the 64 KiB growth target in both. The November 15 results below refer to an
+earlier HUNK.
+
 ## Latest completed acceptance measurement
 
 The latest completed paired run is `append-codec-on-fast.log` under

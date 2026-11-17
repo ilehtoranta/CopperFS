@@ -146,19 +146,36 @@ public static partial class AmigaSmartFileSystem2WriteCore
         // Prepare roots from the accepted view before detaching it. No mutation
         // can enter during this single-owner commit.
         w.Error = DOS.Error.None;
-        if (p.Sfs2Context.IsNotNull)
+        var context = p.Sfs2Context;
+        var count = p.ReadUInt32(active);
+        var dataOnly = context.IsNotNull && count == 0 && p.UsesOriginalSfs2DataWrites;
+        if (context.IsNotNull)
         {
             if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
-            if (!Sfs2MountContext.Load(ref p, ref w) || !Sfs2MetadataStore.Unpinned(ref p, active)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            var ready = dataOnly ? Sfs2MountContext.Ready(ref p, context) : Sfs2MountContext.Load(ref p, ref w);
+            if (!ready || !Sfs2MetadataStore.Unpinned(ref p, active)) return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         else if (!Prepare(ref p, ref w)) return false;
         SetTrstOverlay(ref p, APTR.Null); p.WriteUInt32(group, 4, 2);
-        Sfs2MountContext.CommitState(ref p, p.Sfs2Context, 2);
-        var staged = new RedoPlatform<T> { Inner = p, Buffer = APTR.FromPointer(active.Raw + 16),
-            Capacity = (span - 16) / (p.BlockBytes + 4), Count = p.ReadUInt32(active) };
-        if (Sfs2MetadataStore.IsStore(ref p, active)) staged.OwnedArena = active;
-        if (!CommitTrst(ref p, ref w, ref staged)) { Sfs2MountContext.Suspend(ref p, p.Sfs2Context); return false; }
-        p.WriteUInt32(group, 4, 0); Sfs2MountContext.CommitState(ref p, p.Sfs2Context, 0); return true;
+        Sfs2MountContext.CommitState(ref p, context, 2);
+        if (dataOnly)
+        {
+            // An accepted payload overwrite has no metadata images to encode.
+            // Keep the device barrier and the same recovery state on failure.
+            if (!p.Flush())
+            {
+                Sfs2MountContext.Suspend(ref p, context);
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            }
+        }
+        else
+        {
+            var staged = new RedoPlatform<T> { Inner = p, Buffer = APTR.FromPointer(active.Raw + 16),
+                Capacity = (span - 16) / (p.BlockBytes + 4), Count = count };
+            if (Sfs2MetadataStore.IsStore(ref p, active)) staged.OwnedArena = active;
+            if (!CommitTrst(ref p, ref w, ref staged)) { Sfs2MountContext.Suspend(ref p, context); return false; }
+        }
+        p.WriteUInt32(group, 4, 0); Sfs2MountContext.CommitState(ref p, context, 0); return true;
     }
 
     public static bool RecoverTrstGroup<T>(ref T p, ref Work w, APTR group)
