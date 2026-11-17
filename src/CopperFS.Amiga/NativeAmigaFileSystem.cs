@@ -1851,9 +1851,11 @@ public static partial class NativeAmigaFileSystem
             return (int)length;
         }
         if (write.Position >= size) return WriteFfsFileSlow(state, file, ref p, ref write, out error);
-        var handled = AmigaFfsWriteCore.TryWriteGroupRun(ref p, index, ref write, true, out error);
+        if (p.ReadUInt32(index, AmigaFfsMountIndex.Header) != write.Header)
+            return WriteFfsFileSlow(state, file, ref p, ref write, out error);
+        var handled = AmigaFfsWriteCore.TryWriteGroupRun(ref p, index, ref write, bytes, size, true, out error);
         if (!handled && AmigaFfsWriteCore.FitsGroupSlice(ref p, index, ref write, size, bytes) &&
-            p.ReadUInt32(index, AmigaFfsMountIndex.Header) == write.Header && p.ReadUInt32(index, AmigaFfsMountIndex.PendingAppend) == 0)
+            p.ReadUInt32(index, AmigaFfsMountIndex.PendingAppend) == 0)
         {
             if (!p.IsMapped(source, length)) error = DOS.Error.BadNumber;
             else if (!p.TryPatchFfsSector(index, ref write, bytes, out error))
@@ -1926,10 +1928,13 @@ public static partial class NativeAmigaFileSystem
 #if COPPERFS_FFS_HANDLER
         var owner = APTR.ReadUInt32(state, FfsWriteGroupHandle);
 #if !COPPERSTART_PACKED_EXTENSION
+        // FindOutput can consume the staged attributes during truncation.
+        // Opens and lookups that read attributes publish them first.
         if (owner == MetadataGroupOwner && action is DosPacketAction.CreateDirectory or DosPacketAction.DeleteObject or
             DosPacketAction.RenameObject or DosPacketAction.SetComment or DosPacketAction.SetDate or
-            DosPacketAction.SetProtection or DosPacketAction.FreeLock or DosPacketAction.Seek or DosPacketAction.Write) owner = 0;
-        if (owner == MetadataGroupOwner && action is DosPacketAction.FindOutput or DosPacketAction.FindUpdate or
+            DosPacketAction.SetProtection or DosPacketAction.FreeLock or DosPacketAction.Seek or DosPacketAction.Write or
+            DosPacketAction.FindOutput) owner = 0;
+        if (owner == MetadataGroupOwner && action is DosPacketAction.FindUpdate or
             DosPacketAction.LocateObject or DosPacketAction.ExamineObject or
             DosPacketAction.ExamineObject64 or DosPacketAction.ExamineNext or DosPacketAction.ExamineNext64 or
             DosPacketAction.CopyDirectory or DosPacketAction.Parent or DosPacketAction.SameLock)
@@ -2347,18 +2352,31 @@ public static partial class NativeAmigaFileSystem
 #endif
             var target = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
             var length = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+            var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
             if ((SpecializeFormat ? FormatIsSmart : Smart(state)))
                 result = NativeSfsExtension.Read(state, file, APTR.ReadUInt32(file, 4), position, target, length, out error);
 #if !COPPERFS_NATIVE_FFS_READAHEAD
             else if (length > 512 && length <= 4096 && NativeFileSystemPlatform.TryReadFfsCached(state, file, (uint)position, target, length))
             { result = (int)length; error = DOS.Error.None; }
 #endif
+#if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+            else if ((dosType & 1) == 0 &&
+                (target.Raw <= file.Raw ? file.Raw - target.Raw >= length : target.Raw - file.Raw >= ObjectBytes))
+            {
+                // OFS only clears the FFS cursor's identity. The native mount
+                // owns separate scratch and file records, so the reader can
+                // leave the unused FFS fields in place.
+                result = AmigaDiskFileSystemCore.ReadSingleBlocks(ref p, APTR.ReadUInt32(file, 4), dosType,
+                    position, target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
+                if (APTR.ReadUInt32(file, 56) != 0) APTR.WriteUInt32(file, 56, 0);
+            }
+#endif
             else if (length != 0 && (length < 512 || (length & 511) == 0))
                 result = NativeFileSystemReadCore.ReadFfsAligned(ref p, file, APTR.ReadUInt32(file, 4),
-                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
+                    dosType, (uint)position,
                     target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
             else result = NativeFileSystemReadCore.ReadFfs(ref p, file, APTR.ReadUInt32(file, 4),
-                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), (uint)position,
+                    dosType, (uint)position,
                     target, length, Metadata(state), Data(state), out error, p.FfsMountIndex);
             if (result > 0)
             {
@@ -4056,6 +4074,20 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 #endif
         return count != 0 && TransferData(true, block, count, source) == count;
     }
+
+#if COPPERFS_FFS_HANDLER
+    public bool WriteDataBlocksRetainingLast(uint block, uint count, APTR source)
+    {
+        if (!WriteDataBlocks(block, count, source)) return false;
+        if (count != 0)
+        {
+            var bytes = BlockBytes;
+            var last = count - 1;
+            CacheBlock(block + last, 0, APTR.FromPointer(source.Raw + last * bytes), bytes);
+        }
+        return true;
+    }
+#endif
 
     // Unreachable data can be sent directly even for a short run. It is not
     // useful to copy/sort it into the metadata queue merely to flush that queue

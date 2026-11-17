@@ -393,7 +393,7 @@ public static partial class AmigaFfsWriteCore
                     }
                     if (stagedBytes != 0)
                     {
-                        if (!p.WriteDataBlocks(key, blocks, stage)) return Fail(ref w, DOS.Error.DiskNotValidated);
+                        if (!p.WriteDataBlocksRetainingLast(key, blocks, stage)) return Fail(ref w, DOS.Error.DiskNotValidated);
                         actual += stagedBytes;
                     }
                     if (previousData != 0 && !SetOfsForwardLink(ref p, ref w, previousData, key)) return false;

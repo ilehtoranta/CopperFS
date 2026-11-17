@@ -132,6 +132,9 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     /// above; never use for metadata or privately staged replacement images.
     /// Flush still orders payload completion before metadata publication.</summary>
     bool WriteExistingFileDataBlocks(uint block, uint count, APTR source) => false;
+    // A following OFS run may need to update the previous run's forward
+    // link. Retain the last sector only after a complete successful write.
+    bool WriteDataBlocksRetainingLast(uint block, uint count, APTR source) => WriteDataBlocks(block, count, source);
     /// <summary>Whether this platform implements direct unpublished-data writes.</summary>
     bool SupportsUnpublishedDataWrites => false;
     /// <summary>On a TRST encoding cache miss, optionally read the current

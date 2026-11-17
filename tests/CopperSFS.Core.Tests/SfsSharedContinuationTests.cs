@@ -4,6 +4,42 @@ namespace CopperSFS.Tests;
 public sealed partial class AmigaSmartFileSystemTests
 {
     [Theory]
+    [InlineData(false, 1000)] [InlineData(true, 2000)]
+    public void WholeExtentContinuationRepairsSuccessorBeforeStartingItsNewProof(bool deferred, int first)
+    {
+        const int packet = 1024;
+        var seed = ContinuationSeed(first, nextExtent: true, length: 42);
+        var expected = seed.Bytes.ToArray();
+        var disk = StageTrstProof(seed.Image, expected, packet, shared: true);
+        var arena = disk.RedoOverlay;
+        var payload = Enumerable.Repeat((byte)0xDB, packet).ToArray();
+        for (var at = 3 * packet; at < expected.Length; at += packet)
+        {
+            if (at < 5 * packet)
+            {
+                var request = new AmigaSmartFileSystemWriteCore.Request { Node = 3, Position = (uint)at,
+                    Buffer = APTR.FromPointer(4000), Length = packet };
+                payload.CopyTo(disk.Ram, 4000);
+                Assert.True(AmigaSmartFileSystemWriteCore.TryContinueTrstGroup(ref disk, GroupAddress,
+                    TrstWork().Meta, APTR.Null, ref request, out var handled, out _, deferred));
+                Assert.True(handled);
+                Assert.Equal(arena, disk.RedoOverlay);
+            }
+            else Assert.True(GroupWrite(ref disk, 3, (uint)at, payload));
+            payload.CopyTo(expected, at);
+        }
+        var durable = new Disk(disk.Snapshot());
+        Assert.Equal(seed.Bytes, GroupRead(ref durable, 3));
+        var work = TrstWork();
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        var remount = new Disk(disk.Snapshot());
+        Assert.Equal(expected, GroupRead(ref remount, 3));
+        Assert.Equal("hello"u8.ToArray(), GroupRead(ref remount, 4));
+        Assert.True(AmigaSmartFileSystemCore.CountUsed(ref remount, work.Meta, out var used));
+        Assert.Equal((uint)seed.Used.Count - 2, used);
+    }
+
+    [Theory]
     [InlineData(false, false, 2000)] [InlineData(true, false, 2000)]
     [InlineData(false, true, 2000)] [InlineData(true, true, 2000)]
     [InlineData(false, false, 1000)] [InlineData(true, true, 1000)]

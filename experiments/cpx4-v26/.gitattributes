@@ -1,0 +1,2 @@
+# Preserve patch syntax on Windows; blank context lines contain a required space.
+changes.patch text eol=lf -whitespace

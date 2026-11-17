@@ -24,9 +24,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         return ScanFreeRun(ref p, ref w, w.ReservedBlocks, length, length, true, false, out first, out count, true);
     }
 
-    private static APTR TrstFreeSearchMap<T>(ref T p, ref Work w, uint mapIndex)
+    private static APTR TrstFreeSearchMap<T>(ref T p, ref Work w, uint mapIndex, uint bit, uint length, out bool exact)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        exact = false;
         // FreeSearchMap supplies mutable scratch, including marker and live
         // reservations. It does not return a borrowed platform view.
         if (!FreeSearchMap(ref p, ref w, mapIndex)) return APTR.Null;
@@ -35,13 +36,6 @@ public static partial class AmigaSmartFileSystemWriteCore
             map, BitmapId, false, out var found);
         if (found && checkpoint.IsNull) { FailUnlessSet(ref w); return APTR.Null; }
         var overlay = p.RedoOverlay;
-        p.RedoOverlay = APTR.Null;
-        var original = View(ref p, ref w, map, BitmapId, w.Journal);
-        if (original.IsNull) { p.RedoOverlay = overlay; return APTR.Null; }
-        // The original view is consumed before another block access. The
-        // checkpoint is an owned arena image and survives that original read.
-        IntersectTrstBitmapWords(ref p, w.Bitmap, original, checkpoint, w.BlockBytes);
-        p.RedoOverlay = overlay;
         // A future home write must not replace any newly unpublished data.
         // The current candidate arena contains every accepted checkpoint slot.
         var bits = (w.BlockBytes - 12) * 8;
@@ -51,6 +45,19 @@ public static partial class AmigaSmartFileSystemWriteCore
             var slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, overlay, i);
             ClearSearchBit(ref p, w.Bitmap, mapIndex, bits, p.ReadUInt32(slot));
         }
+        p.RedoOverlay = APTR.Null;
+        var original = View(ref p, ref w, map, BitmapId, w.Journal);
+        if (original.IsNull) { p.RedoOverlay = overlay; return APTR.Null; }
+        // The original view is consumed before another block access. The
+        // checkpoint is an owned arena image and survives that original read.
+        // The scanner can accept its first candidate immediately when the
+        // complete requested span passes all three independent allocation views.
+        var offset = 12 + (int)(bit >> 5) * 4;
+        exact = length != 0 && TrstBitmapRange(ref p, w.Bitmap, offset, bit & 31, length, true) &&
+            TrstBitmapRange(ref p, original, offset, bit & 31, length, true) &&
+            (checkpoint.IsNull || TrstBitmapRange(ref p, checkpoint, offset, bit & 31, length, true));
+        if (!exact) IntersectTrstBitmapWords(ref p, w.Bitmap, original, checkpoint, w.BlockBytes);
+        p.RedoOverlay = overlay;
         return w.Bitmap;
     }
 }

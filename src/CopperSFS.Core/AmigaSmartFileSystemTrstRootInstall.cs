@@ -60,7 +60,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         leaf = Edit(ref p, ref w, sourceLeaf, TreeId, w.Meta);
         if (leaf.IsNull) return false;
         if (previous == 0) previous = node | 0x80000000;
-        InsertBnode(ref p, leaf, (int)records, (int)stride, replacement, 0, previous, true);
+        InsertBnodeAt(ref p, leaf, (int)records, (int)stride, insertAt, replacement, 1, previous, true);
         if (sourceAt >= insertAt) sourceAt += (int)stride;
         if (beforeAt >= insertAt) beforeAt += (int)stride;
         if (afterAt >= insertAt) afterAt += (int)stride;

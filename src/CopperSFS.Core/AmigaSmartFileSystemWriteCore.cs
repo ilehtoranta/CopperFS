@@ -1151,8 +1151,14 @@ public static partial class AmigaSmartFileSystemWriteCore
     private static bool FileBlock<T>(ref T p, ref Work w, uint first, uint index, out uint diskBlock,
         out uint lastKey, out uint lastSize, out uint lastStart, out uint lastLeaf, out int lastOffset)
         where T : struct, IAmigaWritableFileSystemPlatform
+        => FileBlockView(ref p, ref w, first, index, out diskBlock, out lastKey, out lastSize,
+            out lastStart, out lastLeaf, out lastOffset, out _);
+
+    private static bool FileBlockView<T>(ref T p, ref Work w, uint first, uint index, out uint diskBlock,
+        out uint lastKey, out uint lastSize, out uint lastStart, out uint lastLeaf, out int lastOffset, out APTR image)
+        where T : struct, IAmigaWritableFileSystemPlatform
     {
-        diskBlock = lastKey = lastSize = lastStart = 0;
+        image = APTR.Null; diskBlock = lastKey = lastSize = lastStart = 0;
         lastLeaf = 0; lastOffset = 0;
         var key = first; var start = 0u;
         for (var guard = 0u; key != 0 && guard < w.BlockCount; guard++)
@@ -1166,7 +1172,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             if (count == 0 || key >= w.BlockCount || count > w.BlockCount - key ||
                 count > w.BlockCount - start) return Fail(ref w, DOS.Error.DiskNotValidated);
             lastKey = key; lastSize = count; lastStart = start;
-            if (index < start + count) { diskBlock = key + index - start; return true; }
+            if (index < start + count) { image = view; diskBlock = key + index - start; return true; }
             start += count; key = next;
         }
         if (key != 0) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -1210,7 +1216,12 @@ public static partial class AmigaSmartFileSystemWriteCore
     {
         var index = 0;
         while (index < count && p.ReadUInt32(buffer, 16 + index * stride) < key) index++;
-        var offset = 16 + index * stride;
+        InsertBnodeAt(ref p, buffer, count, stride, 16 + index * stride, key, value, previous, isLeaf);
+    }
+
+    private static void InsertBnodeAt<T>(ref T p, APTR buffer, int count, int stride, int offset, uint key,
+        uint value, uint previous, bool isLeaf) where T : struct, IAmigaWritableFileSystemPlatform
+    {
         var at = 16 + count * stride;
         if ((stride & 1) == 0 && (buffer.Raw & 1) == 0)
         {
@@ -1226,7 +1237,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (isLeaf)
         {
             p.WriteUInt32(buffer, offset + 8, previous);
-            p.WriteUInt16(buffer, offset + 12, 1);
+            // Internal records carry a child block in value; leaf records carry the run length.
+            p.WriteUInt16(buffer, offset + 12, (ushort)value);
         }
         else p.WriteUInt32(buffer, offset + 4, value);
         p.WriteUInt16(buffer, 12, (ushort)(count + 1));
@@ -1302,12 +1314,12 @@ public static partial class AmigaSmartFileSystemWriteCore
         return Put(ref p, ref w, block, w.Meta);
     }
 
-    private static bool InsertExtent<T>(ref T p, ref Work w, uint key, uint previous, uint owner)
+    private static bool InsertExtent<T>(ref T p, ref Work w, uint key, uint previous, uint owner, uint blocks = 1)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         // Native SFS stores the owning object node as the first extent backlink.
         if (previous == 0) previous = owner | 0x80000000u;
-        if (!InsertBnode(ref p, ref w, w.ExtentRoot, key, 0, previous, 0, out _, out _)) return false;
+        if (!InsertBnode(ref p, ref w, w.ExtentRoot, key, blocks, previous, 0, out _, out _)) return false;
         if ((previous & 0x80000000) != 0) return true;
         if (!ExtentLeaf(ref p, ref w, previous, out var leaf)) return false;
         var count = p.ReadUInt16(w.Meta, 12); var stride = p.ReadUInt8(w.Meta, 15);
@@ -1368,8 +1380,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         {
             if (!GrowExtent(ref p, ref w, lastKey, start, count)) return false;
         }
-        else if (!InsertExtent(ref p, ref w, start, lastKey, r.Node) ||
-            !GrowExtent(ref p, ref w, start, start + 1, count - 1)) return false;
+        else if (!InsertExtent(ref p, ref w, start, lastKey, r.Node, w.RedoStaging ? count : 1) ||
+            (!w.RedoStaging && !GrowExtent(ref p, ref w, start, start + 1, count - 1))) return false;
         if ((r.Buffer.Raw & 3) == 0)
         {
             if (!deferPayload && !WriteNewDataRun(ref p, ref w, start, count, r.Buffer)) return false;
@@ -1446,21 +1458,13 @@ public static partial class AmigaSmartFileSystemWriteCore
             p.Copy(bitmap, w.Bitmap, blockBytes); bitmap = w.Bitmap;
         }
         if (bitmap.IsNull) return false;
-        remainingBits = blocks;
-        while (remainingBits != 0)
-        {
-            var bits = 32u - withinWord;
-            if (bits > remainingBits) bits = remainingBits;
-            var runMask = (uint.MaxValue >> (int)withinWord) & (uint.MaxValue << (int)(32 - withinWord - bits));
-            ReplaceWord(ref p, bitmap, offset, p.ReadUInt32(bitmap, offset) & ~runMask);
-            remainingBits -= bits; offset += 4; withinWord = 0;
-        }
+        UpdateTrstBitmapRange(ref p, bitmap, offset, withinWord, blocks, false);
         if (!PutSealed(ref p, ref w, map, bitmap)) return false;
         w.FreeDelta -= (int)blocks;
         if (lastKey == 0)
         {
-            if (!InsertExtent(ref p, ref w, start, 0, r.Node) ||
-                (blocks > 1 && !GrowExtent(ref p, ref w, start, start + 1, blocks - 1))) return false;
+            if (!InsertExtent(ref p, ref w, start, 0, r.Node, w.RedoStaging ? blocks : 1) ||
+                (!w.RedoStaging && blocks > 1 && !GrowExtent(ref p, ref w, start, start + 1, blocks - 1))) return false;
         }
         else if (!GrowExtentAt(ref p, ref w, lastLeaf, lastOffset, lastSize + blocks)) return false;
         if ((r.Buffer.Raw & 3) == 0)
@@ -2087,10 +2091,10 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (w.RedoStaging && r.Length <= 65536 && r.Length % blockBytes == 0 &&
             r.Position % blockBytes == 0 && (r.Buffer.Raw & 3) == 0 && end <= size)
         {
-            if (!FileBlock(ref p, ref w, first, r.Position / blockBytes, out var current,
-                out var key, out _, out _, out var sourceLeaf, out var sourceAt) || current == 0) return FailUnlessSet(ref w);
+            if (!FileBlockView(ref p, ref w, first, r.Position / blockBytes, out var current,
+                out var key, out _, out _, out var sourceLeaf, out var sourceAt, out var sourceImage) || current == 0) return FailUnlessSet(ref w);
             if (!RelocateOverwrite(ref p, ref w, ref first, r.Node, key, current - key,
-                r.Length / blockBytes, r.Buffer, APTR.Null, 0, out var moved, sourceLeaf, sourceAt)) return false;
+                r.Length / blockBytes, r.Buffer, APTR.Null, 0, out var moved, sourceLeaf, sourceAt, sourceImage)) return false;
             if (moved)
             {
                 actual = r.Length;

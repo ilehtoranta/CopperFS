@@ -21,15 +21,7 @@ public static class NativeFileSystemReadCore
         if (file.IsNull) return AmigaDiskFileSystemCore.Read(ref p, header, dosType, position,
             destination, length, metadata, data, out error, mountIndex);
         if (length != 0 && length < 512)
-        {
-            if ((dosType & 1) == 0 && Disjoint(destination, length, file, 216))
-            {
-                p.WriteUInt32(file, 56, 0);
-                return AmigaDiskFileSystemCore.ReadSingleBlocks(ref p, header, dosType, position,
-                    destination, length, metadata, data, out error, mountIndex);
-            }
             return ReadFfsPartial(ref p,file,header,dosType,position,destination,length,metadata,data,out error,mountIndex);
-        }
         // The native record already owns a validated run. Whole 512-byte
         // reads within it need no temporary cursor, table frame or division.
         // Keep the general reader for scratch/private-record aliases and tails.
@@ -119,14 +111,6 @@ public static class NativeFileSystemReadCore
     {
         if (file.IsNull) return AmigaDiskFileSystemCore.Read(ref p, header, dosType, position,
             destination, length, metadata, data, out error, mountIndex);
-        if ((dosType & 1) == 0 && Disjoint(destination, length, file, 216))
-        {
-            // OFS uses sector headers and the mount payload cache. The FFS
-            // pointer-table cursor has no state to restore on this path.
-            p.WriteUInt32(file, 56, 0);
-            return AmigaDiskFileSystemCore.ReadSingleBlocks(ref p, header, dosType, position,
-                destination, length, metadata, data, out error, mountIndex);
-        }
         var cursor = new AmigaDiskFileSystemCore.ReadCursor
         {
             Header = p.ReadUInt32(file, 56), Size = p.ReadUInt32(file, 60), Table = p.ReadUInt32(file, 64),

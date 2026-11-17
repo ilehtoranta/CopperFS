@@ -6,6 +6,76 @@ namespace CopperStart.FileSystem.Tests;
 
 public sealed partial class VolumeGeometryTests
 {
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void TruncateReusesTheHeaderPublishedAtClose(bool ofs)
+    {
+        var (s, p, g, file) = AllocationFixture(ofs);
+        var w = Work();
+        w.Index = APTR.FromPointer(0x100000);
+        w.GroupFileWrites = w.ReadsGroupedRoot = true;
+        AmigaFfsMountIndex.Initialize(ref p, w.Index, 65536);
+        file.Buffer = Payload;
+        file.Length = 1024;
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref file, out _, true), w.Error.ToString());
+        Assert.True(AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w));
+
+        var headerOffset = g.StartByte + file.Header * (ulong)g.BlockBytes;
+        s.Transfers.Clear();
+        Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, file.Header, true), w.Error.ToString());
+        Assert.True(AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w));
+        Assert.DoesNotContain(s.Transfers, t => (t.Command is 2 or 24) && t.Offset == headerOffset);
+        Assert.True(p.ReadBlock(file.Header, Meta));
+        Assert.Equal(0u, p.ReadUInt32(Meta, g.Tail + 324));
+        Assert.Equal(0u, p.ReadUInt32(Meta, g.Tail + 504));
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void TruncateConsumesStagedAttributesAtOnePublication(bool ofs)
+    {
+        var (s, p, g, file) = AllocationFixture(ofs);
+        var w = Work();
+        w.Index = APTR.FromPointer(0x100000);
+        w.ReadsGroupedRoot = w.ReadsGroupedDirectories = w.GroupMetadata = w.GroupFileWrites = true;
+        AmigaFfsMountIndex.Initialize(ref p, w.Index, 65536);
+        file.Buffer = Payload;
+        file.Length = 33;
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref file, out _, true), w.Error.ToString());
+        Assert.True(AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w));
+        var headerOffset = g.StartByte + file.Header * (ulong)g.BlockBytes;
+        var attributes = file;
+        attributes.Position = 4;
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref attributes, DosPacketAction.SetProtection));
+        s.Transfers.Clear();
+        Assert.False(AmigaFfsWriteCore.Remove(ref p, ref w, file.Header, true));
+        Assert.Equal(DOS.Error.WriteProtected, w.Error);
+        Assert.DoesNotContain(s.Transfers, t => t.Command is 3 or 25);
+
+        attributes.Position = 32;
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref attributes, DosPacketAction.SetProtection));
+        attributes.Buffer = Name;
+        attributes.Length = 1;
+        p.WriteUInt8(Name, 0, (byte)'X');
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref attributes, DosPacketAction.SetComment));
+        p.WriteUInt32(Name, 0, 123);
+        p.WriteUInt32(Name, 4, 45);
+        p.WriteUInt32(Name, 8, 6);
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref attributes, DosPacketAction.SetDate));
+        var sealedHeader = AmigaFfsMountIndex.PublishedMetadataImage(ref p, w.Index, file.Header);
+        Assert.True(sealedHeader.IsNotNull);
+        Assert.True(AmigaDiskFileSystemCore.Checksum(ref p, sealedHeader));
+        Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, file.Header, true), w.Error.ToString());
+        Assert.True(AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w), w.Error.ToString());
+        Assert.Single(s.Transfers, t => (t.Command is 3 or 25) && t.Offset == headerOffset);
+        Assert.True(p.ReadBlock(file.Header, Meta));
+        Assert.Equal(32u, p.ReadUInt32(Meta, g.Tail + 320));
+        Assert.Equal(0u, p.ReadUInt32(Meta, g.Tail + 324));
+        Assert.Equal((byte)1, p.ReadUInt8(Meta, g.Tail + 328));
+        Assert.Equal((byte)'X', p.ReadUInt8(Meta, g.Tail + 329));
+        Assert.Equal(123u, p.ReadUInt32(Meta, g.Tail + 420));
+    }
+
     [Fact]
     public void DifferentlySizedRootHashCollisionAvoidsAReadAndExpiresOnRename()
     {
@@ -959,8 +1029,13 @@ public sealed partial class VolumeGeometryTests
         sibling.Buffer = Payload; sibling.Length = (uint)bytes.Length;
         Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref sibling, out _, true));
         Assert.True(AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w));
+        var donorHeader = AmigaFfsMountIndex.PublishedMetadataImage(ref p, w.Index, donor.Header);
+        Assert.True(donorHeader.IsNotNull);
+        Assert.Equal(donor.Header, p.ReadUInt32(donorHeader, 4));
+        Assert.Equal((uint)bytes.Length, p.ReadUInt32(donorHeader, g.Tail + 324));
         s.Transfers.Clear();
         Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, donor.Header, false));
+        Assert.True(AmigaFfsMountIndex.PublishedMetadataImage(ref p, w.Index, donor.Header).IsNull);
         Assert.DoesNotContain(s.Transfers, t => t.Command is 2 or 24 &&
             (t.Offset == g.StartByte + (ulong)extension * g.BlockBytes ||
              t.Offset == g.StartByte + (ulong)data[10] * g.BlockBytes));

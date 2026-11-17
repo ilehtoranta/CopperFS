@@ -102,6 +102,12 @@ compatibility and zero managed allocation sites. One external compiler nullable
 warning occurred during the Release solution build. Skips and unavailable gates
 are not passes; V26 does not inherit V7's full-ROM coverage.
 
+Before committing, a separate checkout of the staged CPX-only tree also passes
+`dotnet build CopperFS.slnx -c Release` with zero warnings/errors. Its unchanged
+baseline FFS host suite passes 278 cases. The long solution/native/ROM campaigns
+above were not repeated for this reporting and Git operation; CPX source identity
+was checked against the qualified manifest.
+
 ## Reproduction and retained evidence
 
 The [machine-readable record](../benchmarks/cpx4/2026-11-15.json) preserves all

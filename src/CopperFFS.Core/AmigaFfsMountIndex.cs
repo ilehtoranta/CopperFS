@@ -31,7 +31,8 @@ public static class AmigaFfsMountIndex
     internal const uint PrefixCapacity = 32;
     internal const int FirstExtension = PrefixName + (int)PrefixCapacity, FirstExtensionImage = FirstExtension + 4;
     internal const int PublishedParent = FirstExtensionImage + 4;
-    private const int RootChildren = PublishedParent + 4, Directory = RootChildren + 4;
+    internal const int SealedAttributeHeader = PublishedParent + 4;
+    private const int RootChildren = SealedAttributeHeader + 4, Directory = RootChildren + 4;
     private const uint RootChildBytes = 64 * 8;
     internal const int AppendAdmitted = 168, BitmapPages = 172, PendingBitmapImage = 176;
     internal const int RunHeader = 180, RunLogical = 184, RunPhysical = 188, RunLength = 192;
@@ -56,10 +57,17 @@ public static class AmigaFfsMountIndex
     // Borrow a sealed sector until the next mutation on this mount.
     public static APTR PublishedMetadataImage<T>(ref T p, APTR index, uint key) where T : struct, IAmigaFileSystemPlatform
     {
-        if (index.IsNull || key == 0 || p.ReadUInt32(index, Status) is not (Clean or MetadataOpen)) return APTR.Null;
+        if (index.IsNull || key == 0) return APTR.Null;
+        var status = p.ReadUInt32(index, Status);
+        if (status == MetadataOpen && p.ReadUInt32(index, SealedAttributeHeader) == key &&
+            p.ReadUInt32(index, PendingHeader) == key)
+            return APTR.FromPointer(p.ReadUInt32(index, HeaderImage));
+        if (status is not (Clean or MetadataOpen)) return APTR.Null;
         if (p.ReadUInt32(index, PublishedHeader) == key) return APTR.FromPointer(p.ReadUInt32(index, HeaderImage));
         if (p.ReadUInt32(index, PublishedTable) == key) return APTR.FromPointer(p.ReadUInt32(index, TableImage));
         if (p.ReadUInt32(index, PublishedParent) == key) return APTR.FromPointer(p.ReadUInt32(index, ParentImage));
+        if (p.ReadUInt32(index, ParkedHeader) == key && p.ReadUInt32(index, PublishedPreviousHeader) == key)
+            return APTR.FromPointer(p.ReadUInt32(index, PreviousHeaderImage));
         return APTR.Null;
     }
 
@@ -167,6 +175,17 @@ public static class AmigaFfsMountIndex
         var blocks = p.ReadUInt32(index, FileBlocks);
         var tables = p.ReadUInt32(index, Tables);
         if (header == 0 || blocks == 0) return 0;
+        if (p.ReadUInt32(index, Status) == Clean && p.ReadUInt32(index, PublishedHeader) == header)
+        {
+            var previous = APTR.FromPointer(p.ReadUInt32(index, PreviousHeaderImage));
+            if (previous.IsNotNull)
+            {
+                // The new sibling owns HeaderImage. Preserve the old file's
+                // sealed sector with its map so later lookup can use both.
+                p.Copy(APTR.FromPointer(p.ReadUInt32(index, HeaderImage)), previous, p.BlockBytes);
+                p.WriteUInt32(index, PublishedPreviousHeader, header);
+            }
+        }
         // Creating the empty sibling writes its first table key. Keep these
         // few table identities and switch the large data array after success.
         p.Copy(TableKeys(ref p, index), APTR.FromPointer(p.ReadUInt32(index, SpareTables)), tables * 4);
@@ -500,6 +519,7 @@ public static class AmigaFfsMountIndex
         p.WriteUInt32(memory, ReadHeader, 0);
         p.WriteUInt32(memory, HeaderImage, headerImage.Raw);
         p.WriteUInt32(memory, PendingHeader, 0);
+        p.WriteUInt32(memory, SealedAttributeHeader, 0);
         var tableImage = APTR.Null;
         if (available >= g.BlockBytes)
         {

@@ -166,7 +166,9 @@ public static class SfsSharedImagePool
     private static APTR Probe<T>(ref T p, APTR view, uint block) where T : struct, IAmigaGuestMemory
     {
         var mask = p.ReadUInt32(view, 16);
-        var index = (block ^ (block >> 9) ^ (block >> 18)) & mask;
+        // Fold the two 16-bit halves. Both adjacent blocks and large-volume
+        // block numbers contribute, with a single word swap on 68k.
+        var index = (block ^ (block >> 16)) & mask;
         for (var attempts = 0u; attempts <= mask; attempts++, index = (index + 1) & mask)
         {
             var bucket = APTR.FromPointer(view.Raw + ViewBytes + index * 4);

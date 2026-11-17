@@ -64,7 +64,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         var before = p.ReadUInt32(hint, 16); var beforeLength = p.ReadUInt32(hint, 20);
         var count = w.BlockBytes == 512 ? r.Length >> 9 : r.Length / w.BlockBytes;
         if (count > tailLength || beforeLength > ushort.MaxValue - count ||
-            (count == tailLength && (p.ReadUInt32(hint, 24) != 0 || !SfsSharedImagePool.IsPool(ref p, active)))) return true;
+            (count == tailLength && !SfsSharedImagePool.IsPool(ref p, active))) return true;
         if (tail < w.ReservedBlocks || tail >= w.BlockCount - 1 || tailLength > w.BlockCount - 1 - tail ||
             before < w.ReservedBlocks || before >= w.BlockCount - 1 || beforeLength > w.BlockCount - 1 - before ||
             count > w.BlockCount - 1 - before - beforeLength) return FailContinuation(ref w, DOS.Error.DiskNotValidated);
@@ -140,22 +140,45 @@ public static partial class AmigaSmartFileSystemWriteCore
             // Both records are in this owned leaf and its predecessor remains.
             // No parent update, new slot, or fallible access follows data I/O.
             var beforeAt = (int)p.ReadUInt32(hint, 36);
-            p.WriteUInt32(leaf, beforeAt + 4, 0);
+            var after = p.ReadUInt32(hint, 24);
+            var afterAt = (int)p.ReadUInt32(hint, 40);
+            var removedAt = (int)p.ReadUInt32(hint, 32);
+            var stride = p.ReadUInt8(leaf, 15);
+            p.WriteUInt32(leaf, beforeAt + 4, after);
+            if (after != 0) p.WriteUInt32(leaf, afterAt + 8, p.ReadUInt32(hint, 16));
             p.WriteUInt16(leaf, beforeAt + 12, (ushort)(beforeLength + count));
             RemoveLeafRecord(ref p, leaf, (int)p.ReadUInt32(hint, 32), p.ReadUInt16(leaf, 12), p.ReadUInt8(leaf, 15));
             // Moving 14-byte records can rotate words relative to the checksum.
             p.WriteUInt32(leaf, 4, unchecked(p.ReadUInt32(leaf, 4) - AmigaSmartFileSystemCore.BlockSum(ref p, leaf, blockBytes) - 1));
-            p.WriteUInt32(hint, 0, 0);
+            if (afterAt > removedAt) afterAt -= stride;
+            if (beforeAt > removedAt) beforeAt -= stride;
+            // Proof construction checked the routing window of a terminal successor.
+            // Its new window must obtain a fresh durable-allocation proof.
+            if (after != 0 && p.ReadUInt32(leaf, afterAt + 4) == 0)
+            {
+                p.WriteUInt32(hint, 8, after);
+                p.WriteUInt32(hint, 12, p.ReadUInt16(leaf, afterAt + 12));
+                p.WriteUInt32(hint, 24, 0);
+                p.WriteUInt32(hint, 32, (uint)afterAt);
+                p.WriteUInt32(hint, 36, (uint)beforeAt);
+                p.WriteUInt32(hint, 40, 0);
+            }
+            else p.WriteUInt32(hint, 0, 0);
             p.WriteUInt32(hint, TrstGroupProof - TrstGroupContinuation, 0);
         }
-        else ApplyTrstContinuationLeaf(ref p, hint, leaf, count);
+        else
+        {
+            ApplyTrstContinuationLeaf(ref p, hint, leaf, count);
+            p.WriteUInt32(hint, 8, tail + count);
+            p.WriteUInt32(hint, 12, tailLength - count);
+        }
         UpdateTrstBitmapRange(ref p, newBitmap, newAt, destination & 31, count, false);
         UpdateTrstBitmapRange(ref p, oldBitmap, oldAt, tail & 31, count, true);
         AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, leaf, TreeId);
         AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, oldBitmap, BitmapId);
         if (newBitmap != oldBitmap) AmigaSmartFileSystemRedoArena.SetOwnedVerification(ref p, newBitmap, BitmapId);
-        p.WriteUInt32(hint, 4, p.ReadUInt32(hint, 4) + byteLength); p.WriteUInt32(hint, 8, tail + count);
-        p.WriteUInt32(hint, 12, tailLength - count); p.WriteUInt32(hint, 20, beforeLength + count);
+        p.WriteUInt32(hint, 4, p.ReadUInt32(hint, 4) + byteLength);
+        p.WriteUInt32(hint, 20, beforeLength + count);
     }
 
     private static void ApplyTrstContinuationLeaf<T>(ref T p, APTR hint, APTR leaf, uint count)
