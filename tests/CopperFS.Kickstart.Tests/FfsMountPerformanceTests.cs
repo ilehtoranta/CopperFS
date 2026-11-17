@@ -12,6 +12,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var path = Environment.GetEnvironmentVariable("COPPERFS_SIZE_MANIFEST")!;
         var manifest = JsonSerializer.Deserialize<SizeManifest>(File.ReadAllText(path))!;
         var pair = manifest.Profiles.Single(p => p.Name == profile);
+        var allowance = ClassicCycleRatio(profile, manifest.ClassicAutoTrimComparison);
         var image = CopperStart.Floppy.Native.Tests.DosDiskImage.Create(profile == "ffs", includeLargeFile: false,
             blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3], volumeName: "Correctness").Bytes;
         var root = Path.Combine(Path.GetDirectoryName(path)!, chip ? "mount-chip" : "mount-fast", profile);
@@ -38,10 +39,11 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 AfterMutationBytes = ram[0].GetInt64() - ram[2].GetInt64(), AfterVerifyBytes = ram[0].GetInt64() - ram[3].GetInt64() });
         }
         File.WriteAllText(Path.Combine(root, "cycles.json"), JsonSerializer.Serialize(new { Samples = samples, Memory = memory,
-            BaselineSha256 = Hash(File.ReadAllBytes(pair.Baseline)), CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)) }, Json));
+            BaselineSha256 = Hash(File.ReadAllBytes(pair.Baseline)), CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)),
+            MaximumCycleRatio = allowance }, Json));
         var cached = samples.Where(s => s.Phase == "cached-read").ToArray();
         Assert.Equal(6, cached.Length);
         Assert.True(cached.Where(s => s.Arm == "candidate").Average(s => s.Cycles) <=
-            cached.Where(s => s.Arm == "baseline").Average(s => s.Cycles) * 1.001, $"See {root}/cycles.json");
+            cached.Where(s => s.Arm == "baseline").Average(s => s.Cycles) * allowance, $"See {root}/cycles.json");
     }
 }

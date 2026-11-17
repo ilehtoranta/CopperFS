@@ -29,7 +29,7 @@ public sealed class CorrectnessTheoryAttribute : TheoryAttribute
 public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper output)
 {
     public sealed record Profile(string Name, string Original, string Candidate, string OriginalSha256);
-    public sealed record Manifest(Profile[] Profiles, string ClassicBase, string ClassicBaseSha256);
+    public sealed record Manifest(Profile[] Profiles, string ClassicBase, string ClassicBaseSha256, bool ClassicAutoTrimComparison = false);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> Probes = new();
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -127,7 +127,10 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         if (profile.EndsWith("-dd")) kind += "Dd";
         if (profile.EndsWith("-hd")) kind += "Hd";
         var entry = guestEntry ?? ("CorrectnessProbe::" + (write ? "Write" : "Read") + kind);
-        var probe = Probes.GetOrAdd(entry, _ =>
+        var profileCachedReads = Environment.GetEnvironmentVariable("COPPERFS_CACHED_READ_PROFILE") == "1" &&
+            entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal);
+        var archivedProbe = profileCachedReads ? Environment.GetEnvironmentVariable("COPPERFS_CACHED_READ_PROBE") : null;
+        var probe = !string.IsNullOrEmpty(archivedProbe) ? File.ReadAllBytes(archivedProbe) : Probes.GetOrAdd(entry, _ =>
         {
             var compiled = AmigaM68kCompiler.Compile(new M68kCompilationRequest
             {
@@ -180,8 +183,11 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             var benchmarkProfile = Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1" &&
                 (entry.StartsWith("CorrectnessProbe::Benchmark", StringComparison.Ordinal) ||
                  entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal));
-            var ffsLargeProfile = (entry is "LargeWriteProbe::Ffs" or "LargeWriteProbe::Ofs") &&
-                Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
+            var cachedReadProfile = profileCachedReads && label.StartsWith("0-", StringComparison.Ordinal);
+            var ffsLargeProfile = (entry is "LargeWriteProbe::Ffs" or "LargeWriteProbe::Ofs" or
+                "LargeWriteProbe::FfsChip" or "LargeWriteProbe::OfsChip") &&
+                Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1" &&
+                (label == "candidate" || label.StartsWith("0-", StringComparison.Ordinal));
             var appendProfile = (entry is "FfsAppendProbe::Ffs" or "FfsAppendProbe::Ofs") && label == "0-candidate" &&
                 Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
             var sfs2ThroughputProfile = entry.StartsWith("Sfs2ThroughputProbe::", StringComparison.Ordinal) &&
@@ -189,8 +195,10 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             var overwriteProfile = entry == "LargeWriteProbe::Sfs" && Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
             var deletionProfile = label == "candidate" && (entry is "CorrectnessProbe::TraceCommitFfs" or "CorrectnessProbe::TraceCommitOfs") &&
                 Environment.GetEnvironmentVariable("COPPERFS_TRIM_DELETE_PROFILE") == "1";
-            var writeProfiler = trimProfile || benchmarkProfile || overwriteProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile || deletionProfile || Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
-                (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend")
+            var writeProfile = Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
+                (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend");
+            var mutationProfile = benchmarkProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile || writeProfile;
+            var writeProfiler = trimProfile || mutationProfile || overwriteProfile || deletionProfile || cachedReadProfile
                 ? new ReadCpuProfile(machine, handler, rom) : null;
             if (writeProfiler != null)
             {
@@ -264,10 +272,12 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                     if (value == 167) writeProfiler!.Begin("truncate-write", busCycle);
                     if (value == 168) writeProfiler!.Begin("publish-truncate", busCycle);
                 }
-                if (!trimProfile && !overwriteProfile && !deletionProfile && value == 220) writeProfiler?.Begin(benchmarkProfile ? "mutate" : ffsLargeProfile ? "grow" : appendProfile ? "append" : "write", busCycle);
-                if (!trimProfile && !overwriteProfile && !deletionProfile && value == 221) writeProfiler?.End(directory, busCycle);
+                if (mutationProfile && !trimProfile && !overwriteProfile && !deletionProfile && value == 220) writeProfiler!.Begin(benchmarkProfile ? "mutate" : ffsLargeProfile ? "grow" : appendProfile ? "append" : "write", busCycle);
+                if (mutationProfile && !trimProfile && !overwriteProfile && !deletionProfile && value == 221) writeProfiler!.End(directory, busCycle);
                 if (benchmarkProfile && value == 222) writeProfiler?.Begin("verify", busCycle);
                 if (benchmarkProfile && value == 223) writeProfiler?.End(directory, busCycle);
+                if (cachedReadProfile && value == 228) writeProfiler!.Begin("cached-read", busCycle);
+                if (cachedReadProfile && value == 229) writeProfiler!.End(directory, busCycle);
                 if (sfs2ThroughputProfile && value == 224) writeProfiler!.Begin("read", busCycle);
                 if (sfs2ThroughputProfile && value == 225) writeProfiler!.End(directory, busCycle);
                 if (value == 221 && profile == "sfs2-trst") OwnedMountMemory.Capture(machine, directory);

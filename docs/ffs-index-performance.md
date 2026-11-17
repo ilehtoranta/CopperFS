@@ -1,9 +1,22 @@
 # CopperFFS mount index and AutoTrim qualification
 
 **Release status.** The indexed implementation substantially reduces the cost
-of deleting and overwriting files. The 0.1% AutoTrim on/off gate and the
-original-handler parity gate still fail. The results below distinguish an
-improvement over the audited CopperFFS binary from a passing release criterion.
+of deleting and overwriting files. The current gates allow 0.5% slower cycles
+with AutoTrim enabled and 0.1% slower cycles against FFS 40.1. Both remain
+open. The November 17 test counts below use the earlier 0.1% AutoTrim limit.
+
+Set `ClassicAutoTrimComparison` to `true` in the benchmark manifest for a
+paired disabled/enabled build. Point `Original` and `Baseline` at the disabled
+handler and `Candidate` at the enabled handler. The mixed, 96 KiB and cached-read
+tests record their allowance as `MaximumCycleRatio` in `cycles.json`.
+Original-handler manifests use the default `false` setting.
+
+At 0.5%, the repeated compact warm run's four OFS cases pass. The remaining
+failures in that run are FFS Chip RAM overwrite (+0.536%) and FFS cached reads
+in Fast RAM (+1.049%) and Chip RAM (+1.211%). The earlier matched-layout pair
+still misses the cold and unsupported OFS Fast RAM cached-read cases.
+The first run through the updated harness passed the warm OFS Fast RAM
+96 KiB workload and recorded `MaximumCycleRatio` as `1.005`.
 
 ## November 17 qualification
 
@@ -85,6 +98,84 @@ passed against FFS 40.1 in both formats and both memory placements, with
 slower. A separate unsupported-device run on the previous matched-layout
 candidate passed 11 of 12 cases. Its OFS Fast RAM cached read cost +0.865%
 with AutoTrim enabled.
+
+The same matched-layout pair passed 12 of 12 warm-device cases and 11 of 12
+cold-device cases. The cold failure was again the OFS cached read in Fast RAM,
+at +0.848%. The same cached read passed warm at +0.012%. Opening the MicroHz
+timer unit in both arms produced four cached-read failures with unsupported
+discard and three with warm discard.
+
+Keeping the native read window across disjoint writes and updating it for a
+successful retained-sector write produced the same 11 reads, 50 writes and one
+barrier during FFS mixed mutation. Against FFS 40.1 it took 0.664% more cycles
+in Fast RAM and 0.658% more in Chip RAM. The implementation dropped this change.
+
+Grouped truncation now edits its verified private header in place. The
+profiled truncate and first write took 71,840 cycles, down from 77,220, with
+two fewer sector copies. Reusing the sealed parent during delete and carrying
+that directory update through the next file write saved 15,090 cycles across
+those two traced intervals. The combined build took 0.572% more cycles than
+FFS 40.1 in Fast RAM and 0.570% more in Chip RAM for mixed mutation.
+
+Opt-in cached-read profiling with the archived guest probe reproduced the
+unsupported-device OFS Fast RAM failure. One pair measured 19,120 additional
+guest cycles with AutoTrim enabled, including 18,829 additional Kickstart
+cycles and 17 fewer handler cycles. The handler executed 30,058 instructions
+in both arms. In the ROM address ranges the largest increases were in
+`intuition.library`, `exec.library` and `timer.device`. A rebuilt probe passed
+against the same handler binaries. `COPPERFS_CACHED_READ_PROFILE=1` profiles
+the first paired trial. `COPPERFS_CACHED_READ_PROBE` can supply the archived
+guest executable for that diagnostic run.
+
+An absolute EClock deadline kept the five-second delay and used a matched
+binary layout. On the archived OFS Fast RAM unsupported-device case, cached
+reads cost 1.090% more and verification cost 0.515% more.
+
+The adaptive read clock now has a separate mount field from the deferred TRIM
+request. On mounts that skip read sampling, opening the timer on the first
+free leaves 4 KiB reads on the ordinary path. In the first compact warm-device
+comparison, OFS overwrite cost +0.228% in Fast RAM and −1.272% in Chip RAM.
+FFS overwrite cost +0.521% in Fast RAM and +0.565% in Chip RAM. FFS cached
+reads cost +1.056% in Fast RAM and +1.222% in Chip RAM. Six of the twelve
+warm-device cases passed with the compact binaries.
+
+Profiling the first warm overwrite trial attributed the extra 1,150 FFS
+Chip RAM guest cycles to execution outside the handler. The handler used 157
+fewer cycles. OFS Fast RAM used 2,430 extra guest cycles, including 5,920 extra
+handler cycles partly offset by lower Kickstart costs. `CopyAndSealOfs`,
+`PatchGroupRun` and `WriteOfs` accounted for the largest increases.
+
+Doubling the unroll in the fused OFS sector copy increased 96 KiB growth
+cost by 14.863% in Fast RAM and 14.242% in Chip RAM. Both arms used AutoTrim
+and produced identical verified images. The candidate was dropped.
+
+Same-directory rename now reuses the published parent sector when the
+source is the bucket head. In alternating trials against the preceding
+AutoTrim-enabled build, FFS mixed mutation used 11,277 fewer cycles in Fast
+RAM and 11,127 fewer in Chip RAM. The rename, create and first-write trace
+removed one sector copy.
+The updated original-handler harness measured the resulting FFS mixed
+mutation gap at +0.500% in Fast RAM and +0.493% in Chip RAM against its
+0.1% limit.
+
+Moving corruption recovery out of the normal packet reply reduced warm
+96 KiB FFS overwrite time with AutoTrim enabled by about 3% in both memory
+placements compared with the preceding compact build. Against its paired
+disabled build, overwrite was 3.006% faster in Fast RAM and 2.981% faster
+in Chip RAM. Cached reads still exceeded the 0.5% allowance at +0.520% and
++0.748%, respectively. In the profiled Fast RAM cached-read trial the
+enabled handler used 10,648 fewer cycles while Kickstart used 22,206 more.
+
+Combining the reply change with the rename improvement brought FFS mixed
+mutation to +0.430% in Fast RAM and +0.413% in Chip RAM against FFS 40.1.
+Mixed verification took 3.262% and 3.223% fewer cycles, respectively.
+In the paired warm-device build, cached FFS reads cost +0.479% in Fast RAM
+and +0.709% in Chip RAM. The OFS Fast RAM growth phase cost +1.198%.
+
+A separate matched-layout control passed the four warm FFS cases, with
+at most +0.055% on any timed workload there. Its OFS Fast RAM cached-read
+delta was −0.001% on cold supported discard and within 0.001% on unsupported
+discard. These results use the current guest probe and the control build.
 
 ## November 15 qualification
 

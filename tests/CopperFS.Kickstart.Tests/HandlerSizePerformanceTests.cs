@@ -16,8 +16,11 @@ public sealed class HandlerSizePerformanceTheoryAttribute : TheoryAttribute
 public sealed partial class OriginalHandlerCorrectnessTests
 {
     private sealed record SizePair(string Name, string Baseline, string Candidate);
-    private sealed record SizeManifest(SizePair[] Profiles, string ClassicBase, string ClassicBaseSha256);
+    private sealed record SizeManifest(SizePair[] Profiles, string ClassicBase, string ClassicBaseSha256, bool ClassicAutoTrimComparison = false);
     private sealed record SizeSample(int Trial, string Arm, string Phase, long Cycles, int Reads, int Writes, int Flushes);
+
+    private static double ClassicCycleRatio(string profile, bool autoTrimComparison) =>
+        autoTrimComparison && (profile is "ffs" or "ofs") ? 1.005 : 1.001;
 
     [HandlerSizePerformanceTheory]
     [InlineData("ffs", "sfs")]

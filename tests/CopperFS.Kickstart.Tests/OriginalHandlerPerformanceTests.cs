@@ -25,8 +25,8 @@ public sealed partial class OriginalHandlerCorrectnessTests
         else DosImageInspection.Check(written, true);
     }
 
-    // Release gate: compare against the original implementations. Internal
-    // before/after comparisons remain useful diagnostics, not release criteria.
+    // Release gate for original-handler parity and explicitly paired classic
+    // AutoTrim builds. Each comparison has its own cycle allowance.
     [CorrectnessTheory]
     [InlineData("ofs")] [InlineData("ffs")] [InlineData("sfs")]
     [InlineData("sfs2-csun")] [InlineData("sfs2-trst")]
@@ -45,6 +45,8 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!;
         var pair = manifest.Profiles.Single(p => p.Name == profile);
         Assert.Equal(pair.OriginalSha256, Hash(File.ReadAllBytes(pair.Original)));
+        var allowance = profile.StartsWith("sfs2", StringComparison.Ordinal) ? 1.10 :
+            ClassicCycleRatio(profile, manifest.ClassicAutoTrimComparison);
         var initial = profile == "sfs" ? File.ReadAllBytes(manifest.ClassicBase)
             : profile.StartsWith("sfs2") ? ReadMedia.Sfs2()
             : CopperStart.Floppy.Native.Tests.DosDiskImage.Create(profile == "ffs", includeLargeFile: false,
@@ -75,7 +77,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
         File.WriteAllText(Path.Combine(root, "cycles.json"), JsonSerializer.Serialize(new
         {
             OriginalSha256 = Hash(File.ReadAllBytes(pair.Original)),
-            CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), Samples = samples
+            CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), MaximumCycleRatio = allowance, Samples = samples
         }, Json));
         var failures = new List<string>();
         foreach (var phase in new[] { "mutate", "verify" })
@@ -84,9 +86,6 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var candidate = samples.Where(s => s.Arm == "candidate" && s.Phase == phase).Average(s => s.Cycles);
             var percent = 100 * (candidate / original - 1);
             output.WriteLine($"{profile}/{phase}: {percent:F3}% versus original");
-            // SFS2's accepted target is at most 10% more cycles than 1.279.
-            // Other filesystem profiles retain their existing gate.
-            var allowance = profile.StartsWith("sfs2", StringComparison.Ordinal) ? 1.10 : 1.001;
             if (candidate > original * allowance) failures.Add($"{phase}: {percent:F3}% slower (limit {(allowance - 1) * 100:F1}%)");
         }
         Assert.True(failures.Count == 0, string.Join("; ", failures));

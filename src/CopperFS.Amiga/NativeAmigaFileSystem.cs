@@ -71,6 +71,13 @@ public static partial class NativeAmigaFileSystem
     // FFS and SFS reservation records are mutually exclusive mount state.
     // Leave the reservation count untouched and borrow one unused record.
     internal const int FfsClockRequestOffset = SmartReservationsOffset + 4;
+#if COPPERFS_FFS_HANDLER
+    // Last longword in the inline request's reserved 64-byte slot. TRIM can
+    // open the request on a mount that did not qualify for read sampling.
+    internal const int AdaptiveReadTimerOffset = FfsClockRequestOffset + 60;
+#else
+    internal const int AdaptiveReadTimerOffset = SmartTimerOffset;
+#endif
 #endif
     internal const int SmartRedoOverlayOffset = 2048;
     internal const int SmartRangeBufferOffset = 2044;
@@ -679,6 +686,9 @@ public static partial class NativeAmigaFileSystem
         }
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset, 0);
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartTimerActiveOffset, 0);
+#if COPPERFS_FFS_HANDLER && COPPERFS_NATIVE_FFS_READAHEAD
+        APTR.WriteUInt32(state, AdaptiveReadTimerOffset, 0);
+#endif
 #endif
 #if !COPPERSTART_SFS_STANDALONE || !COPPERSTART_FFS_ONLY
         var writeBuffer = APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartWriteBufferOffset);
@@ -911,7 +921,11 @@ public static partial class NativeAmigaFileSystem
         // stays idle until a discard-capable build actually observes a free.
         if (APTR.ReadUInt32(state, FixedHardDiskOffset) != 0 && APTR.ReadUInt32(state, PayloadCacheBypassOffset) == 0 &&
             (global::Amiga.Exec.TypeOfMem(APTR.FromPointer(APTR.ReadUInt32(state, CacheOffset))) &
-                (uint)global::Amiga.Exec.MemoryFlags.Fast) != 0) OpenClassicTimer(state, port);
+                (uint)global::Amiga.Exec.MemoryFlags.Fast) != 0)
+        {
+            OpenClassicTimer(state, port);
+            APTR.WriteUInt32(state, AdaptiveReadTimerOffset, APTR.ReadUInt32(state, SmartTimerOffset));
+        }
 #elif COPPERFS_AUTOTRIM && !COPPERFS_FFS_HANDLER || !COPPERFS_AUTOTRIM && (COPPERSTART_NATIVE_SFS_WRITES || COPPERFS_NATIVE_FFS_READAHEAD)
         InitializeWriteTimer(state, port);
 #endif
@@ -1067,24 +1081,28 @@ public static partial class NativeAmigaFileSystem
         var replyPort = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.PortOffset));
         Dispatch(state, packet);
         if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated)
-        {
-            // A metadata read can detect corruption outside the writer. Expire
-            // the same allocation and file proofs used by subsequent packets.
-            if (APTR.ReadUInt32(state, FfsWriteGroupHandle) != 0)
-            {
-                APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
-                APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
-            }
-            new NativeFileSystemPlatform(state).ForgetFfsIndex();
-#if COPPERFS_AUTOTRIM
-            NativeAutomaticTrim.Suspend(state);
-#endif
-        }
+            InvalidateClassicMountProofs(state);
         var recordPlatform = new NativeRecordLockPlatform();
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RecordWaitersOffset) != 0 &&
             NativeRecordLockCore.IsPending(ref recordPlatform, state, packet)) return;
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.PortOffset, port.Raw);
         global::Amiga.Exec.PutMsg(replyPort, message);
+    }
+
+    // A metadata read can detect corruption outside the writer. The ordinary
+    // reply path keeps the same live values regardless of TRIM support.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void InvalidateClassicMountProofs(APTR state)
+    {
+        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) != 0)
+        {
+            APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+            APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
+        }
+        new NativeFileSystemPlatform(state).ForgetFfsIndex();
+#if COPPERFS_AUTOTRIM
+        NativeAutomaticTrim.Suspend(state);
+#endif
     }
 
 #if COPPERFS_AUTOTRIM
@@ -2003,7 +2021,7 @@ public static partial class NativeAmigaFileSystem
             var cachedLength = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
             if (cachedLength >= 512 && cachedLength <= 4096 &&
                 NativeFileSystemPlatform.TryDispatchCachedFfsRead(state, packet)) return;
-            if (cachedLength == 4096 && APTR.ReadUInt32(state, SmartTimerOffset) != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state)))
+            if (cachedLength == 4096 && APTR.ReadUInt32(state, AdaptiveReadTimerOffset) != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state)))
             { DispatchAdaptiveReadPacket(state, packet); return; }
             // DispatchPacket repeats the action/type checks before reaching
             // this same reader. FFS/OFS have no SFS recovery gate to traverse.
@@ -3680,7 +3698,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         // No I/O or writes intervene before the mode's last use below. Sample
         // this mount/file decision once, rather than reloading the timer at
         // every guard on an already learned cached stream. Four means no clock.
-        var adaptiveMode = length == 4096 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0
+        var adaptiveMode = length == 4096 && APTR.ReadUInt32(state, NativeAmigaFileSystem.AdaptiveReadTimerOffset) != 0
             ? APTR.ReadUInt32(file, 108) : 4u;
         if (adaptiveMode < 2 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.FixedHardDiskOffset) != 0) return false;
         var destination = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
@@ -3755,7 +3773,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         // disjoint spans above preserve these arguments and the owned file.
         var completedFile = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset));
         var completed = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
-        if (completed == 4096 && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0)
+        if (completed == 4096 && APTR.ReadUInt32(state, NativeAmigaFileSystem.AdaptiveReadTimerOffset) != 0)
         {
             if (APTR.ReadUInt32(completedFile, 108) != 3 &&
                 APTR.ReadUInt32(state, NativeFileSystemStateCodec.FixedHardDiskOffset) != 0)
