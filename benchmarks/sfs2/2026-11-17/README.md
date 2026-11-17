@@ -114,7 +114,9 @@ overwrite cycles fall from 141,430 to 101,010. Reuse applies when a checked
 extent remains in the mount's retained cursor. A fresh mount or a metadata
 change can require the ordinary checked lookup.
 
-The Release solution builds and the focused SFS2 run passes 92 tests.
+The Release solution builds and tests pass on source commit `dc8cf53`, with
+2,511 passed, nine skipped, and zero failed. The build reports one warning
+from CopperSharp `M68kSpillAndCopy.cs`. The focused SFS2 run passes 92 tests.
 CopperStart instruction replay passes 234 cases with five external-fixture
 skips. Both native builds have zero reachable managed allocations. The default
 HUNK is byte-identical to the overwrite-recovery-qualified HUNK above.
