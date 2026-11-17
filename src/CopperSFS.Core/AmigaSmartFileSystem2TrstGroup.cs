@@ -130,7 +130,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (operation == TrstOperation.Write && written != 0 && originalCursor.IsNotNull &&
             p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites)
             RememberOriginalDataCursor(ref p, originalCursor, group, trial, r.Node, info.Size,
-                info.ObjectBlock, info.ObjectOffset, 0, info.First);
+                0, 0, 0, info.First, info.ObjectBlock, info.ObjectOffset);
         actual = written; return true;
     }
 

@@ -13,8 +13,13 @@ namespace CopperStart.Dos;
 public static partial class NativeAmigaFileSystem
 {
 #if COPPERFS_SFS2_OWNED
-    private const uint BaseStateBytes = 2332;
     internal const int Sfs2ContextOffset = 2320, Sfs2ContextStorageOffset = 2324, Sfs2ContextBytesOffset = 2328;
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+    internal const int Sfs2RetainedWriteCursorOffset = 2332, Sfs2FileWriteCursorOffset = 160;
+    private const uint BaseStateBytes = Sfs2RetainedWriteCursorOffset + AmigaSmartFileSystem2WriteCore.OriginalDataCursorBytes;
+#else
+    private const uint BaseStateBytes = 2332;
+#endif
 #elif COPPERFS_CACHE_PAGE_MASK
     private const uint BaseStateBytes = 2452;
     // One bit and reference count for each hashed 64-block cache page. Hash
@@ -2087,10 +2092,9 @@ public static partial class NativeAmigaFileSystem
         {
             var position = FilePosition(file); var node = APTR.ReadUInt32(file, 4);
 #if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
-            // SFS2's read cursor ends at 108; this cleared handle tail owns the
-            // optional 48-byte overwrite certificate without another allocation.
+            // The cleared handle tail owns the cursor without another allocation.
             if (!NativeSfs2Bridge.WriteOriginalCached(state, node, position, buffer, bytes,
-                APTR.FromPointer(file.Raw + 160), out var count, out error)) return -1;
+                APTR.FromPointer(file.Raw + Sfs2FileWriteCursorOffset), out var count, out error)) return -1;
 #else
             if (!NativeSfsExtension.WriteWide(state, node, position, buffer, bytes, out var count, out error)) return -1;
 #endif
@@ -2510,6 +2514,9 @@ public static partial class NativeAmigaFileSystem
                     error = DOS.Error.DiskNotValidated;
                     break;
                 }
+#endif
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+                if (changedKey != 0) NativeSfs2Bridge.RetainOriginalCursor(state, retired, changedKey);
 #endif
                 if (retired.IsNotNull) FreeObject(state, retired);
                 if (changedKey != 0) NativeFileSystemNotifications.Changed(state, changedKey);

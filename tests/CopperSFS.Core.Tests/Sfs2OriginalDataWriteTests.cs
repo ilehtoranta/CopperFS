@@ -496,6 +496,58 @@ public sealed class Sfs2OriginalDataWriteTests
     }
 
     [Fact]
+    public void RetainedExtentStartsAnOverwriteAfterFlushAndExpiresOnMetadataChange()
+    {
+        var seed = new StudyDisk(Empty(), 512);
+        var node = CreateFile(ref seed, "Growth");
+        var image = seed.Snapshot();
+        var disk = Mount(image, true);
+        var work = WorkFor(disk);
+        var cursor = APTR.FromPointer(disk.Payload.Raw + 800000);
+        var retained = APTR.FromPointer(cursor.Raw + OriginalDataCursorBytes);
+        disk.Clear(cursor, OriginalDataCursorBytes);
+        var original = StudyFixture.Pattern(8192, 701);
+        original.CopyTo(disk.Ram, (int)disk.Payload.Raw);
+        for (var at = 0u; at < 8192; at += 4096)
+        {
+            var append = new Request { Node = node, Position = at, Buffer = APTR.FromPointer(disk.Payload.Raw + at), Length = 4096 };
+            Assert.True(ExecuteTrstGroup(ref disk, ref work, ref append, TrstOperation.Write, disk.BatchBuffer, out _, cursor));
+        }
+        disk.Copy(cursor, retained, OriginalDataCursorBytes);
+        Assert.True(FlushTrstGroup(ref disk, ref work, disk.BatchBuffer));
+
+        var payload = StudyFixture.Pattern(8192, 702);
+        payload.CopyTo(disk.Ram, (int)disk.Payload.Raw);
+        var overwrite = new Request { Node = node, Buffer = disk.Payload, Length = 8192 };
+        disk.FailAtEvent = disk.Events + 2;
+        Assert.False(TryContinueOriginalDataWrite(ref disk, disk.BatchBuffer, retained, ref overwrite,
+            out var handled, out var error, reuseAfterFlush: true));
+        Assert.False(handled);
+        Assert.Equal(DOS.Error.DiskNotValidated, error);
+        Assert.False(TrstGroupPending(ref disk, disk.BatchBuffer));
+        Assert.True(disk.RedoOverlay.IsNull);
+
+        disk.FailAtEvent = 0;
+        Assert.True(TryContinueOriginalDataWrite(ref disk, disk.BatchBuffer, retained, ref overwrite,
+            out handled, out error, reuseAfterFlush: true));
+        Assert.True(handled);
+        Assert.Equal(DOS.Error.None, error);
+        Assert.True(TrstGroupPending(ref disk, disk.BatchBuffer));
+        Assert.True(FlushTrstGroup(ref disk, ref work, disk.BatchBuffer));
+        PutFile(ref seed, node, 0, payload, true);
+        Assert.Equal(Manifest(seed.Snapshot()), Manifest(disk.Snapshot()));
+
+        var protection = new Request { Node = node, Position = 4 };
+        Assert.True(ExecuteTrstGroup(ref disk, ref work, ref protection, TrstOperation.SetProtection, disk.BatchBuffer, out _));
+        Assert.True(FlushTrstGroup(ref disk, ref work, disk.BatchBuffer));
+        var writes = disk.Events;
+        Assert.True(TryContinueOriginalDataWrite(ref disk, disk.BatchBuffer, retained, ref overwrite,
+            out handled, out error, reuseAfterFlush: true));
+        Assert.False(handled);
+        Assert.Equal(writes, disk.Events);
+    }
+
+    [Fact]
     public void OriginalContinuationCoversTheCheckedExtentAndExpiresOnMetadataOrFlush()
     {
         var (image, node) = Seed(); var disk = Mount(image, true); var work = WorkFor(disk);

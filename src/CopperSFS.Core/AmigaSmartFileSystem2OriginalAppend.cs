@@ -147,8 +147,15 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (root.Arena.IsNotNull) Sfs2MetadataStore.CompleteReservedScalar(ref p, ref root);
         Sfs2MountContext.AcceptPreparedScalars(ref p, generation, epoch);
         info.Size = size; if (firstExtent) info.First = first;
-        if (cursor.IsNotNull) RememberOriginalDataCursor(ref p, cursor, group, active, r.Node, size,
-            info.ObjectBlock, info.ObjectOffset, 0, info.First);
+        if (cursor.IsNotNull)
+        {
+            // The old extent can contain private redo images. A proof for the
+            // new allocation alone must never allow an in-place overwrite of them.
+            var extentCount = length + count;
+            if (!firstExtent && !OriginalDataRangeAvailable(ref p, active, info.First, length)) extentCount = 0;
+            RememberOriginalDataCursor(ref p, cursor, group, active, r.Node, size,
+                0, info.First, extentCount, info.First, info.ObjectBlock, info.ObjectOffset);
+        }
         actual = r.Length; return true;
 
     Decline:

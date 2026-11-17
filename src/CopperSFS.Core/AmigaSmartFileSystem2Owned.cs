@@ -130,7 +130,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
             p.WriteUInt32(originalCursor, 0, 0);
             if (index <= uint.MaxValue && OriginalDataRangeAvailable(ref p, active, key, size))
                 RememberOriginalDataCursor(ref p, originalCursor, group, active, r.Node, info.Size,
-                    (uint)index - (block - key), key, size, info.First);
+                    (uint)index - (block - key), key, size, info.First, info.ObjectBlock, info.ObjectOffset);
         }
         actual = r.Length; return true;
     }

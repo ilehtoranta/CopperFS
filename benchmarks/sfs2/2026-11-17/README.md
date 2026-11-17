@@ -80,3 +80,41 @@ after a pending create. The SFS2-enabled CopperStart instruction replay passes
 Both native builds have zero reachable managed allocations. The default
 rebuild is byte-identical to the HUNK that passed full-ROM overwrite recovery,
 with SHA256 `BE3922F2299F276B199F065E2E52664049EE81750B808BA803ED18C5DDFD4130`.
+
+## Retained overwrite extent
+
+`retained-extent/` measures the opt-in handler that retains the last file's
+checked extent and reuses it after close and flush while the mount and metadata
+revisions still match. The 249,344-byte HUNK was built through the normal
+pipeline using CopperSharp `f07e8ec99`. Its SHA256 is
+`E94274A0578978BDC21056ADE3D52C823F82A87A169EE98FB88B3A2DF71B36CA`.
+
+| Buffer | 64 KiB operation | 1.279 cycles | Candidate cycles | Cycle change | 1.279 KiB/s | Candidate KiB/s |
+|---|---|---:|---:|---:|---:|---:|
+| Fast | Grow | 401,270 | 436,750 | +8.84% | 2,262.83 | 2,079.00 |
+| Fast | Overwrite | 141,290 | 95,180 | -32.64% | 6,426.53 | 9,539.87 |
+| Fast | Read | 53,537 | 52,180 | -2.53% | 16,960.43 | 17,401.40 |
+| Chip | Grow | 405,153 | 436,890 | +7.83% | 2,241.14 | 2,078.34 |
+| Chip | Overwrite | 93,760 | 95,250 | +1.59% | 9,684.35 | 9,532.86 |
+| Chip | Read | 51,870 | 52,690 | +1.58% | 17,505.40 | 17,232.97 |
+
+All six packet cases pass their paired gates for growth, overwrite and read.
+Both mixed workloads pass. Fast RAM mixed mutation and verification use
+9.74% and 1.07% more cycles. Chip RAM uses 9.71% and 1.08% more. The
+six-boot handoff also passes with equivalent file digests, for nine passes
+in the full ROM acceptance run. Every candidate 64 KiB overwrite uses two
+payload writes and one flush. The original's Fast RAM trials use five writes
+and four flushes twice, and two writes and one flush once. Against that
+faster Fast RAM reference sample of 93,780 cycles (9,682.29 KiB/s), the
+candidate uses 1.49% more cycles and delivers 1.47% less throughput.
+
+In the unaligned instruction profile both overwrite packets use
+`TryContinueOriginalDataWrite` and skip `ExecuteTrstGroup`. Diagnostic
+overwrite cycles fall from 141,430 to 101,010. Reuse applies when a checked
+extent remains in the mount's retained cursor. A fresh mount or a metadata
+change can require the ordinary checked lookup.
+
+The Release solution builds and the focused SFS2 run passes 92 tests.
+CopperStart instruction replay passes 234 cases with five external-fixture
+skips. Both native builds have zero reachable managed allocations. The default
+HUNK is byte-identical to the overwrite-recovery-qualified HUNK above.
