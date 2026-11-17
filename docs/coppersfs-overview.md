@@ -50,7 +50,7 @@ adapters avoid constructing the full device descriptor during traversal.
 
 The engine does not format volumes. It uses classic 32-bit AmigaDOS file sizes
 and seek positions. A partition above 4 GiB additionally needs a block device
-with TD64 or NSD 64-bit I/O; block-device integration is outside this core.
+with TD64 64-bit I/O; NSD is not supported. Block-device integration is outside this core.
 
 The core provides original-format `TRST` and legacy `CSUN` journals. Current
 classic standalone builds default to buffered TRST with whole-Write atomicity.

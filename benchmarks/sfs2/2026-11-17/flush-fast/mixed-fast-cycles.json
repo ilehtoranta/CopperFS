@@ -1,0 +1,114 @@
+{
+  "OriginalSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+  "CandidateSha256": "7066123E5AAC14087997DFCF1A1313BEA74B9CB74F7BEF2B8480A719F0893030",
+  "Samples": [
+    {
+      "Trial": 0,
+      "Arm": "original",
+      "Phase": "mutate",
+      "Cycles": 15602770,
+      "Reads": 6,
+      "Writes": 17,
+      "Flushes": 7
+    },
+    {
+      "Trial": 0,
+      "Arm": "original",
+      "Phase": "verify",
+      "Cycles": 19189850,
+      "Reads": 13,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 0,
+      "Arm": "candidate",
+      "Phase": "mutate",
+      "Cycles": 17077930,
+      "Reads": 9,
+      "Writes": 21,
+      "Flushes": 4
+    },
+    {
+      "Trial": 0,
+      "Arm": "candidate",
+      "Phase": "verify",
+      "Cycles": 19418780,
+      "Reads": 12,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 1,
+      "Arm": "candidate",
+      "Phase": "mutate",
+      "Cycles": 17077980,
+      "Reads": 9,
+      "Writes": 21,
+      "Flushes": 4
+    },
+    {
+      "Trial": 1,
+      "Arm": "candidate",
+      "Phase": "verify",
+      "Cycles": 19418930,
+      "Reads": 12,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 1,
+      "Arm": "original",
+      "Phase": "mutate",
+      "Cycles": 15582900,
+      "Reads": 6,
+      "Writes": 17,
+      "Flushes": 7
+    },
+    {
+      "Trial": 1,
+      "Arm": "original",
+      "Phase": "verify",
+      "Cycles": 19188860,
+      "Reads": 13,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 2,
+      "Arm": "original",
+      "Phase": "mutate",
+      "Cycles": 15591500,
+      "Reads": 6,
+      "Writes": 17,
+      "Flushes": 7
+    },
+    {
+      "Trial": 2,
+      "Arm": "original",
+      "Phase": "verify",
+      "Cycles": 19190530,
+      "Reads": 13,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 2,
+      "Arm": "candidate",
+      "Phase": "mutate",
+      "Cycles": 17077890,
+      "Reads": 9,
+      "Writes": 21,
+      "Flushes": 4
+    },
+    {
+      "Trial": 2,
+      "Arm": "candidate",
+      "Phase": "verify",
+      "Cycles": 19419020,
+      "Reads": 12,
+      "Writes": 0,
+      "Flushes": 0
+    }
+  ]
+}

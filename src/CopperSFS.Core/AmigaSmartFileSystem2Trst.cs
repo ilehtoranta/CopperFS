@@ -55,7 +55,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
         p.RedoOverlay = stagingBuffer;
         if (p.RedoOverlay != stagingBuffer) return Fail(ref w, DOS.Error.ActionNotKnown);
         w.RedoStaging = true;
-        var success = StageTrst(ref p, ref w, ref r, operation, out var written);
+        var info = default(FileInformation);
+        var success = StageTrst(ref p, ref w, ref r, operation, out var written, ref info);
         p.RedoOverlay = APTR.Null;
         staged.Inner = p;
         staged.Count = p.ReadUInt32(stagingBuffer, 0);
@@ -67,13 +68,14 @@ public static partial class AmigaSmartFileSystem2WriteCore
         return true;
     }
 
-    private static bool StageTrst<T>(ref T p, ref Work w, ref Request r, TrstOperation operation, out uint written)
+    private static bool StageTrst<T>(ref T p, ref Work w, ref Request r, TrstOperation operation, out uint written,
+        ref FileInformation info, bool prepared = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         written = 0;
         return operation switch
         {
-            TrstOperation.Write => Write(ref p, ref w, ref r, out written),
+            TrstOperation.Write => WritePacket(ref p, ref w, ref r, out written, prepared, ref info),
             TrstOperation.CreateFile => Create(ref p, ref w, ref r, false),
             TrstOperation.CreateDirectory => Create(ref p, ref w, ref r, true),
             TrstOperation.Remove => Remove(ref p, ref w, r.Node),
@@ -100,8 +102,13 @@ public static partial class AmigaSmartFileSystem2WriteCore
         internal bool Find(uint block, out APTR image)
         {
             if (OwnedArena.IsNotNull) { image = Sfs2MetadataStore.Find(ref Inner, OwnedArena, block); return image.IsNotNull; }
-            for (var i = 0u; i < Count; i++)
-                if ((Inner.ReadUInt32(Slot(i)) & 0x7FFFFFFF) == block) { image = Image(i); return true; }
+            // The checked fallback is a contiguous legacy array. Its stride
+            // is invariant throughout a search, including journal allocation.
+            var slot = Buffer.Raw;
+            var stride = Inner.BlockBytes + 4;
+            for (var i = 0u; i < Count; i++, slot += stride)
+                if ((Inner.ReadUInt32(APTR.FromPointer(slot)) & 0x7FFFFFFF) == block)
+                { image = APTR.FromPointer(slot + 4); return true; }
             image = APTR.Null; return false;
         }
     }
@@ -109,6 +116,18 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private struct RedoStream
     {
         internal uint First, Block, Offset, Search, Bitmap;
+    }
+
+    private static bool TrstWriteImage<T>(ref T p, uint block, APTR image)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        if (!p.UsesOriginalSfs2DataWrites || !p.SupportsRetainedBlockWrites) return p.WriteBlock(block, image);
+        // Commit has detached the logical overlay. Its images and scratch are
+        // retained through this synchronous transfer. Expire the physical
+        // before-image before I/O, including a failed or partial replacement.
+        var cache = Sfs2MountContext.Cache(ref p, p.Sfs2Context);
+        return (cache.IsNull || Sfs2MetadataStore.Invalidate(ref p, cache, block, 1)) &&
+            p.WriteRetainedBlock(block, image);
     }
 
     private static bool TrstSpace<T>(ref T p, ref Work w, ref RedoPlatform<T> staged,
@@ -173,7 +192,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
             }
             if (!TrstSpace(ref p, ref w, ref staged, ref stream, out var next)) return false;
             p.WriteUInt32(w.Journal, 12, next); Seal(ref p, w.Journal);
-            if (!p.WriteBlock(stream.Block, w.Journal)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!TrstWriteImage(ref p, stream.Block, w.Journal)) return Fail(ref w, DOS.Error.DiskNotValidated);
             TrstPage(ref p, ref w, ref stream, next);
         }
         p.WriteUInt8(w.Journal, (int)stream.Offset++, value); return true;
@@ -235,7 +254,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool CommitTrst<T>(ref T p, ref Work w, ref RedoPlatform<T> staged)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (staged.Count == 0) return true;
+        if (staged.Count == 0)
+            return !p.UsesOriginalSfs2DataWrites || p.Flush() || Fail(ref w, DOS.Error.DiskNotValidated);
         var stream = new RedoStream { Search = p.ReservedBlocks, Bitmap = uint.MaxValue };
         for (var i = 0u; i < staged.Count; i++)
         {
@@ -252,7 +272,12 @@ public static partial class AmigaSmartFileSystem2WriteCore
                 if (!p.ReadBlock(target, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
                 original = w.Data;
             }
-            var runs = AmigaSmartFileSystemTrstCodec.Plan(ref p, original, image, p.BlockBytes, w.Bitmap, out var length);
+            var changes = staged.OwnedArena.IsNotNull && p.UsesOriginalSfs2DataWrites && p.BlockBytes == 512
+                ? p.ReadUInt32(staged.Slot(i), 16) : uint.MaxValue;
+            uint length;
+            var runs = changes != uint.MaxValue
+                ? AmigaSmartFileSystemTrstCodec.PlanSparse512(ref p, original, image, changes, w.Bitmap, out length)
+                : AmigaSmartFileSystemTrstCodec.Plan(ref p, original, image, p.BlockBytes, w.Bitmap, out length);
             var unchanged = true;
             for (var run = 0u; run < runs; run++)
                 if ((p.ReadUInt8(w.Bitmap, (int)run) & 0xC0) != 0x40) { unchanged = false; break; }
@@ -295,7 +320,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
             // Native OperationInformation uses 68k word alignment (7-byte header).
             if ((length & 1) == 0 && !TrstByte(ref p, ref w, ref staged, ref stream, 0)) return false;
         }
-        if (stream.First == 0) return true;
+        if (stream.First == 0)
+            return !p.UsesOriginalSfs2DataWrites || p.Flush() || Fail(ref w, DOS.Error.DiskNotValidated);
         // At an exact page boundary, end-of-chain terminates the stream. Otherwise
         // the zero-filled tail supplies the zero length (records are word aligned).
         Seal(ref p, w.Journal);
@@ -306,16 +332,16 @@ public static partial class AmigaSmartFileSystem2WriteCore
             // though the native platform can elide an already-clean flush.
             // Together with the home and clean barriers below all four stages
             // remain ordered. No additional staging or persistent state.
-            if (!p.Flush() || !p.WriteBlock(marker, w.Journal) || !p.Flush())
+            if (!p.Flush() || !TrstWriteImage(ref p, marker, w.Journal) || !p.Flush())
                 return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         else
         {
-            if (!p.WriteBlock(stream.Block, w.Journal) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!TrstWriteImage(ref p, stream.Block, w.Journal) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
             p.Clear(w.Meta, p.BlockBytes);
             p.WriteUInt32(w.Meta, 0, TransactionFailed); p.WriteUInt32(w.Meta, 8, marker);
             p.WriteUInt32(w.Meta, 12, stream.First); Seal(ref p, w.Meta);
-            if (!p.WriteBlock(marker, w.Meta) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!TrstWriteImage(ref p, marker, w.Meta) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         // These owned final images are exactly what the durable journal encodes.
         // Apply them directly on a healthy commit; interrupted mounts still use
@@ -325,12 +351,12 @@ public static partial class AmigaSmartFileSystem2WriteCore
         {
             var target = p.ReadUInt32(staged.Slot(i));
             if ((target & 0x80000000) != 0) continue;
-            if (!p.WriteBlock(target, staged.Image(i))) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (!TrstWriteImage(ref p, target, staged.Image(i))) return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         if (!p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
         p.Clear(w.Meta, p.BlockBytes);
         p.WriteUInt32(w.Meta, 0, TransactionOk); p.WriteUInt32(w.Meta, 8, marker);
         Seal(ref p, w.Meta);
-        return (p.WriteBlock(marker, w.Meta) && p.Flush()) || Fail(ref w, DOS.Error.DiskNotValidated);
+        return (TrstWriteImage(ref p, marker, w.Meta) && p.Flush()) || Fail(ref w, DOS.Error.DiskNotValidated);
     }
 }

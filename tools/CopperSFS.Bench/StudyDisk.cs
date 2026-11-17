@@ -29,6 +29,16 @@ internal partial struct StudyDisk : IAmigaBlockRangeFileSystemPlatform
     internal bool RelocateFragmented = true;
     public APTR RedoOverlay { get; set; }
     public APTR Sfs2Context { get; set; }
+    public bool UsesOriginalSfs2DataWrites { get; set; }
+    public bool SupportsRetainedBlockWrites { get; set; }
+    internal int RetainedWrites;
+    public bool WriteRetainedBlock(uint block, APTR source)
+    {
+        if (!SupportsRetainedBlockWrites || RedoOverlay.IsNotNull) throw new InvalidOperationException("Invalid retained write.");
+        RetainedWrites++;
+        return WriteBlock(block, source);
+    }
+    internal List<(uint Block, uint Count)>? OriginalDataWrites;
     internal bool DiscardSupported = true;
     internal APTR TrimCertificate, FreedQueue;
     public bool TracksFreedRanges => FreedQueue.IsNotNull;

@@ -151,7 +151,15 @@ public static class AmigaSmartFileSystemRedoArena
         if (Sfs2MetadataStore.IsStore(ref p, arena))
         {
             var view = Sfs2MetadataStore.View(ref p, arena, block, id, out found);
-            if (editable && view.IsNotNull) p.WriteUInt32(APTR.FromPointer(view.Raw - Sfs2MetadataStore.SlotBytes), 4, 0);
+            if (editable && view.IsNotNull)
+            {
+                var ownedSlot = APTR.FromPointer(view.Raw - Sfs2MetadataStore.SlotBytes);
+                var revision = p.ReadUInt32(ownedSlot, 8);
+                if (p.ReadUInt32(ownedSlot, 12) != 0 || revision == uint.MaxValue) return APTR.Null;
+                p.WriteUInt32(ownedSlot, 8, revision + 1);
+                p.WriteUInt32(ownedSlot, 4, 0);
+                p.WriteUInt32(ownedSlot, 16, uint.MaxValue);
+            }
             return view;
         }
         if ((format & Deferred) != 0 || ((format & Indexed) != 0 && p.ReadUInt32(arena, 12) > 1))

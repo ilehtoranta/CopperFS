@@ -6,6 +6,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
 {
     // Private mount-owned RAM only. Two linear arenas retain the acknowledged
     // view while a complete packet is attempted in its disposable counterpart.
+    // The guarded original-data scalar append may publish in place only after
+    // all fallible work has succeeded, with exclusive pins and no live readers.
     private const uint GroupMagic = 0x53324752, GroupHeader = 32;
     private static void SetTrstOverlay<T>(ref T p, APTR arena) where T : struct, IAmigaWritableFileSystemPlatform
     { p.RedoOverlay = arena; Sfs2MountContext.SetOverlay(ref p, p.Sfs2Context, arena); }
@@ -44,7 +46,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     /// reads must observe RedoOverlay until FlushTrstGroup completes. Failure
     /// leaves earlier accepted packets intact. Only data free in both durable and acknowledged views can be written early.</summary>
     public static bool ExecuteTrstGroup<T>(ref T p, ref Work w, ref Request r,
-        TrstOperation operation, APTR group, out uint actual)
+        TrstOperation operation, APTR group, out uint actual, APTR originalCursor = default)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0; w.Error = DOS.Error.None;
@@ -63,6 +65,23 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
         if (p.Sfs2Context.IsNotNull && !Sfs2MountContext.Ready(ref p, p.Sfs2Context)) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (state == 0 && p.Sfs2Context.IsNull && !Recover(ref p, ref w)) return false;
+        var prepared = false; var info = default(FileInformation);
+        if (operation == TrstOperation.Write && p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites)
+        {
+            if (originalCursor.IsNotNull && (!p.IsMapped(originalCursor, OriginalDataCursorBytes) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, group, storage) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, r.Buffer, r.Length) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, w.Meta, bytes) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, w.Data, bytes) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, w.Bitmap, bytes) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, w.Journal, bytes) ||
+                Overlap(originalCursor, OriginalDataCursorBytes, p.Sfs2Context, p.ReadUInt32(p.Sfs2Context, 44))))
+                return Fail(ref w, DOS.Error.NoFreeStore);
+            var handled = TryWriteUnchangedOriginalPacket(ref p, ref w, ref r, group, active, span, state, out actual, out prepared, out info, originalCursor);
+            if (handled || w.Error != DOS.Error.None) return handled;
+            if (prepared && TryAppendOriginalPacket(ref p, ref w, ref r, group, active, state, ref info, originalCursor, out actual)) return true;
+            if (w.Error != DOS.Error.None) return false;
+        }
         var trial = APTR.FromPointer(active.Raw == group.Raw + GroupHeader ? active.Raw + span : group.Raw + GroupHeader);
         var capacity = (span - 16) / (bytes + 4);
         if (p.Sfs2Context.IsNotNull)
@@ -98,15 +117,20 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (p.RedoOverlay != trial) return Fail(ref w, DOS.Error.ActionNotKnown);
         w.RedoStaging = true; w.GroupStaging = true;
         w.GroupBase = state == 1 ? active : APTR.Null;
-        var ok = StageTrst(ref p, ref w, ref r, operation, out var written);
+        var ok = StageTrst(ref p, ref w, ref r, operation, out var written, ref info, prepared);
         w.RedoStaging = false; w.GroupStaging = false;
         w.GroupBase = APTR.Null;
         if (p.ReadUInt32(trial, 12) != 0) ok = Fail(ref w, DOS.Error.NoFreeStore);
-        if (ok && p.Sfs2Context.IsNotNull && !Sfs2MetadataStore.Publish(ref p, trial)) ok = Fail(ref w, DOS.Error.DiskNotValidated);
+        if (ok && p.Sfs2Context.IsNotNull && !Sfs2MetadataStore.Publish(ref p, trial, p.UsesOriginalSfs2DataWrites))
+            ok = Fail(ref w, DOS.Error.DiskNotValidated);
         if (ok && !Sfs2MountContext.Accept(ref p, trial)) ok = Fail(ref w, DOS.Error.DiskNotValidated);
         if (!ok) { SetTrstOverlay(ref p, state == 1 ? active : APTR.Null); r = saved; return false; }
         if (p.Sfs2Context.IsNotNull) p.WriteUInt32(group, 28, state);
         p.WriteUInt32(group, 16, trial.Raw); p.WriteUInt32(group, 4, 1);
+        if (operation == TrstOperation.Write && written != 0 && originalCursor.IsNotNull &&
+            p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites)
+            RememberOriginalDataCursor(ref p, originalCursor, group, trial, r.Node, info.Size,
+                0, 0, 0, info.First, info.ObjectBlock, info.ObjectOffset);
         actual = written; return true;
     }
 
@@ -122,19 +146,36 @@ public static partial class AmigaSmartFileSystem2WriteCore
         // Prepare roots from the accepted view before detaching it. No mutation
         // can enter during this single-owner commit.
         w.Error = DOS.Error.None;
-        if (p.Sfs2Context.IsNotNull)
+        var context = p.Sfs2Context;
+        var count = p.ReadUInt32(active);
+        var dataOnly = context.IsNotNull && count == 0 && p.UsesOriginalSfs2DataWrites;
+        if (context.IsNotNull)
         {
             if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
-            if (!Sfs2MountContext.Load(ref p, ref w) || !Sfs2MetadataStore.Unpinned(ref p, active)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            var ready = dataOnly ? Sfs2MountContext.Ready(ref p, context) : Sfs2MountContext.Load(ref p, ref w);
+            if (!ready || !Sfs2MetadataStore.Unpinned(ref p, active)) return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         else if (!Prepare(ref p, ref w)) return false;
         SetTrstOverlay(ref p, APTR.Null); p.WriteUInt32(group, 4, 2);
-        Sfs2MountContext.CommitState(ref p, p.Sfs2Context, 2);
-        var staged = new RedoPlatform<T> { Inner = p, Buffer = APTR.FromPointer(active.Raw + 16),
-            Capacity = (span - 16) / (p.BlockBytes + 4), Count = p.ReadUInt32(active) };
-        if (Sfs2MetadataStore.IsStore(ref p, active)) staged.OwnedArena = active;
-        if (!CommitTrst(ref p, ref w, ref staged)) { Sfs2MountContext.Suspend(ref p, p.Sfs2Context); return false; }
-        p.WriteUInt32(group, 4, 0); Sfs2MountContext.CommitState(ref p, p.Sfs2Context, 0); return true;
+        Sfs2MountContext.CommitState(ref p, context, 2);
+        if (dataOnly)
+        {
+            // An accepted payload overwrite has no metadata images to encode.
+            // Keep the device barrier and the same recovery state on failure.
+            if (!p.Flush())
+            {
+                Sfs2MountContext.Suspend(ref p, context);
+                return Fail(ref w, DOS.Error.DiskNotValidated);
+            }
+        }
+        else
+        {
+            var staged = new RedoPlatform<T> { Inner = p, Buffer = APTR.FromPointer(active.Raw + 16),
+                Capacity = (span - 16) / (p.BlockBytes + 4), Count = count };
+            if (Sfs2MetadataStore.IsStore(ref p, active)) staged.OwnedArena = active;
+            if (!CommitTrst(ref p, ref w, ref staged)) { Sfs2MountContext.Suspend(ref p, context); return false; }
+        }
+        p.WriteUInt32(group, 4, 0); Sfs2MountContext.CommitState(ref p, context, 0); return true;
     }
 
     public static bool RecoverTrstGroup<T>(ref T p, ref Work w, APTR group)

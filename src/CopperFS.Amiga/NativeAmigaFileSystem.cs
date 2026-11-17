@@ -13,8 +13,13 @@ namespace CopperStart.Dos;
 public static partial class NativeAmigaFileSystem
 {
 #if COPPERFS_SFS2_OWNED
-    private const uint BaseStateBytes = 2332;
     internal const int Sfs2ContextOffset = 2320, Sfs2ContextStorageOffset = 2324, Sfs2ContextBytesOffset = 2328;
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+    internal const int Sfs2RetainedWriteCursorOffset = 2332, Sfs2FileWriteCursorOffset = 160;
+    private const uint BaseStateBytes = Sfs2RetainedWriteCursorOffset + AmigaSmartFileSystem2WriteCore.OriginalDataCursorBytes;
+#else
+    private const uint BaseStateBytes = 2332;
+#endif
 #elif COPPERFS_CACHE_PAGE_MASK
     private const uint BaseStateBytes = 2452;
     // One bit and reference count for each hashed 64-block cache page. Hash
@@ -2109,7 +2114,13 @@ public static partial class NativeAmigaFileSystem
         if (NativeSfs2Bridge.IsSfs2(state))
         {
             var position = FilePosition(file); var node = APTR.ReadUInt32(file, 4);
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+            // The cleared handle tail owns the cursor without another allocation.
+            if (!NativeSfs2Bridge.WriteOriginalCached(state, node, position, buffer, bytes,
+                APTR.FromPointer(file.Raw + Sfs2FileWriteCursorOffset), out var count, out error)) return -1;
+#else
             if (!NativeSfsExtension.WriteWide(state, node, position, buffer, bytes, out var count, out error)) return -1;
+#endif
             SetFilePosition(file, position + count);
             if (position + count > FileSize(file)) UpdateFileSizes(state, node, position + count);
             if (count != 0) APTR.WriteUInt32(file, 40, 1);
@@ -2539,6 +2550,9 @@ public static partial class NativeAmigaFileSystem
                     error = DOS.Error.DiskNotValidated;
                     break;
                 }
+#endif
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+                if (changedKey != 0) NativeSfs2Bridge.RetainOriginalCursor(state, retired, changedKey);
 #endif
                 if (retired.IsNotNull) FreeObject(state, retired);
                 if (changedKey != 0) NativeFileSystemNotifications.Changed(state, changedKey);
@@ -3390,7 +3404,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             var output = destination.Raw;
             var remaining = bytes;
             var longwordCopy = ((input ^ output) & 1) == 0;
-#if COPPERFS_FFS_HANDLER
+#if COPPERFS_FFS_HANDLER || COPPERFS_SFS2_OWNED
             // Exec sets AFF_68020 on processors that accept odd longword
             // addresses in RAM. This decision never changes the device DMA mask.
             if (!longwordCopy && remaining >= 32)
@@ -3590,7 +3604,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     public bool Flush() => APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0 ||
         Transfer(4, 0, 0, APTR.Null);
 #endif
-#if COPPERFS_SFS_POOL || COPPERFS_FFS_HANDLER
+#if COPPERFS_SFS_POOL || COPPERFS_FFS_HANDLER || COPPERFS_SFS2_OWNED
     public bool SupportsUnalignedDataReads => true;
 #else
     public bool SupportsUnalignedDataReads => false;
@@ -4120,6 +4134,38 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     }
 
     public bool SupportsRetainedBlockWrites => true;
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+    public bool UsesOriginalSfs2DataWrites => true;
+    public bool WriteExistingFileDataBlocks(uint block, uint count, APTR source)
+    {
+        if (count == 0 || block < ReservedBlocks || block >= BlockCount || count > BlockCount - block) return false;
+        // This profile deliberately permits reachable payload writes before
+        // metadata publication. It does not alter metadata or journal ordering.
+        if (count == 1 && WriteQueue.IsNotNull &&
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) == 0)
+        {
+            // Own a complete updated sector so adjacent short packets can join
+            // one device command. Queue replacement preserves read-your-writes;
+            // the existing flush boundaries drain it before publishing metadata.
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartDeviceDirtyOffset, 1);
+            InvalidateBlockImages(block, count);
+            return QueueWrites(block, count, source);
+        }
+        if (AmigaFileSystemWriteCombiner.Intersects(ref this, WriteQueue, block, count) && !DrainWrites()) return false;
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartDeviceDirtyOffset, 1);
+        InvalidateBlockImages(block, count);
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0)
+        {
+            for (var i = 0u; i < count; i++)
+                if (!WriteRamBlock(block + i, APTR.FromPointer(source.Raw + i * BlockBytes))) return false;
+            return true;
+        }
+        return TransferData(true, block, count, source) == count;
+    }
+#else
+    public bool UsesOriginalSfs2DataWrites => false;
+    public bool WriteExistingFileDataBlocks(uint block, uint count, APTR source) => false;
+#endif
 #if COPPERFS_SFS_POOL
     public bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success)
     {
@@ -4296,7 +4342,12 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             if (count > (uint.MaxValue >> 9) || caller.Raw > uint.MaxValue - (count << 9)) return 0;
         }
         else if (count > (uint.MaxValue - caller.Raw) / blockBytes) return 0;
+#if COPPERFS_SFS2_OWNED
+        if (write) InvalidatePayloadWindow(block, count);
+        else APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+#else
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+#endif
         var maximumBytes = APTR.ReadUInt32(state, NativeFileSystemStateCodec.MaxTransferOffset);
         if (blockBytes == 512 && count != 0 && count <= maximumBytes >> 9 &&
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.SectorBytesOffset) == 512 &&
@@ -4354,6 +4405,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             var buffer = target;
             if (!direct)
             {
+#if COPPERFS_SFS2_OWNED
+                APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+#endif
                 var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
                 if (capacity == 0) return completed;
                 if (blocks > capacity) blocks = capacity;
@@ -4479,7 +4533,11 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
                 cached = next;
             }
         }
+#if COPPERFS_SFS2_OWNED
+        InvalidatePayloadWindow(block, count);
+#else
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+#endif
     }
 
 #if COPPERFS_FFS_HANDLER
@@ -4505,6 +4563,19 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     }
 #endif
 
+#if COPPERFS_SFS2_OWNED
+    private void InvalidatePayloadWindow(uint block, uint count)
+    {
+        // Journal pages and home data often occupy different windows. Queuing
+        // a journal write must not discard untouched payload before-images.
+        // Any caller that uses the window as DMA scratch invalidates it first.
+        var first = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset);
+        var capacity = APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset);
+        if (first == uint.MaxValue || count == 0 ||
+            (block <= first ? first - block >= count : block - first >= capacity)) return;
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+    }
+#endif
 
     public bool WriteBlock(uint block, APTR source)
     {
@@ -4537,6 +4608,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (CanTransferDirect(source, bytes)) buffer = source;
         else
         {
+#if COPPERFS_SFS2_OWNED
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+#endif
             CopyBlock(source, buffer, bytes);
         }
         return TransferBlock(true, block, buffer);
@@ -4852,7 +4926,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             var first=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheTrackOffset);
             var capacity=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheBlocksOffset);
             var cache=APTR.ReadUInt32(state,NativeFileSystemStateCodec.CacheOffset);
-            if(type is 0x444F5301 or 0x444F5303 or 0x444F5305 && cache!=0 &&
+            if((type is 0x444F5301 or 0x444F5303 or 0x444F5305 || type == NativeSfs2Bridge.DosType) && cache!=0 &&
                 first!=uint.MaxValue && block>=first && block-first<capacity)
                 return APTR.FromPointer(cache+(block-first)*BlockBytes);
             return APTR.Null;
@@ -5309,6 +5383,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (CanTransferDirect(source, BlockBytes)) buffer = source;
         else
         {
+#if COPPERFS_SFS2_OWNED
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+#endif
             CopyBlock(source, buffer, BlockBytes);
         }
         return TransferBlock(true, block, buffer);

@@ -4,6 +4,26 @@ namespace CopperSFS.Tests;
 
 public sealed partial class Sfs2ReadOnlyTests
 {
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void UnalignedBodyUsesCapableBackendAndPreservesFailurePrefix(bool failBody)
+    {
+        var disk = new Disk(Image()) { SupportsUnalignedDataReads = true };
+        if (failBody) disk.BadBlock = 41;
+        var cursor = new AmigaSmartFileSystemReadOnlyCore.ReadCursor();
+        disk.Ram.AsSpan(4095, 1282).Fill(0xA7);
+        var actual = AmigaSmartFileSystemReadOnlyCore.Read(ref disk, ref cursor, 8, 7,
+            Target, 1280, Meta, Data, out var error);
+        Assert.Equal(failBody ? 505 : 1280, actual);
+        Assert.Equal(failBody ? DOS.Error.DiskNotValidated : DOS.Error.None, error);
+        Assert.Equal(new[] { (41u, 1u) }, disk.DataReads);
+        Assert.Equal(Enumerable.Range(7, actual).Select(i => (byte)(i * 17 + 3)),
+            disk.Ram.AsSpan(4096, actual).ToArray());
+        Assert.Equal(0xA7, disk.Ram[4095]);
+        Assert.All(disk.Ram.AsSpan(4096 + actual, 1281 - actual).ToArray(), b => Assert.Equal(0xA7, b));
+        if (failBody) Assert.Equal(0u, cursor.Node);
+    }
+
     [Fact]
     public void RootChecksumIncludesEveryWordAcrossUnrolledTilesAndTheFinalWord()
     {

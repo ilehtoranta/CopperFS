@@ -704,7 +704,7 @@ public static partial class AmigaSmartFileSystemReadOnlyCore
             var within = bytes == 512 ? (uint)position & 511 : (uint)(position % bytes);
             var target = APTR.FromPointer(destination.Raw + copied);
             var remaining = length - copied;
-            if (within == 0 && remaining >= bytes && (target.Raw & 3) == 0)
+            if (within == 0 && remaining >= bytes && ((target.Raw & 3) == 0 || p.SupportsUnalignedDataReads))
             {
                 var blocks = bytes == 512 ? remaining >> 9 : remaining / bytes;
                 var available = cursor.Count - (uint)(fileBlock - cursor.Start);

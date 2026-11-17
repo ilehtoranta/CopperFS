@@ -28,12 +28,14 @@ param(
     [switch]$SfsInPlaceOverwrite,
     [ValidateSet(0, 16)] [int]$SfsExtraKiB = 0,
     [switch]$OwnedSfs2,
+    [switch]$Sfs2OriginalDataWrites,
     [ValidateSet(0, 16, 64, 256)] [int]$Sfs2ExtraKiB = 0,
     [switch]$Sfs2CsunWrites
 )
 
 $ErrorActionPreference = 'Stop'
 if ($FfsTrimLayoutControl -and (!$Ffs -or $NoSpecialization -or $SharedDispatch -or $Cpx4)) { throw 'FfsTrimLayoutControl requires the specialized FFS entry.' }
+if ($Sfs2OriginalDataWrites -and (!$OwnedSfs2 -or !$Sfs2 -or $Cpx4)) { throw 'Sfs2OriginalDataWrites requires OwnedSfs2 and Sfs2.' }
 if ($CilicaInlining -and ($SkipCilica -or $Cpx4)) { throw 'CilicaInlining requires this script''s CILica stage and excludes Cpx4.' }
 if ($SfsInPlaceOverwrite -and (!$SharedSfsPool -or $Cpx4)) { throw 'SfsInPlaceOverwrite requires the SFS shared-pool profile.' }
 if ($SfsExtraKiB -ne 0 -and (!$SharedSfsPool -or $Cpx4)) { throw 'SfsExtraKiB requires the SFS shared-pool profile.' }
@@ -77,7 +79,7 @@ if (!$SkipCompilerBuild) {
     dotnet build $cliProject -c $Configuration --verbosity quiet -m:1
     if ($LASTEXITCODE -ne 0) { throw 'CopperSharp compiler build failed.' }
 }
-dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" "-p:CopperFsFfsTrimLayoutControl=$($FfsTrimLayoutControl.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsIndexKiB=$FfsIndexKiB" "-p:CopperFsAutoTrim=$($AutoTrim.IsPresent.ToString().ToLowerInvariant())" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsOnly=$($useFfsOnly.ToString().ToLowerInvariant())" "-p:CopperFsSmartOnly=$($useSmartOnly.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperFsSfsInPlace=$($SfsInPlaceOverwrite.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsExtraKiB=$SfsExtraKiB" "-p:CopperFsSfsPool=$($SharedSfsPool.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsGrouped=$($GroupedSfsTrst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2Owned=$($OwnedSfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2ExtraKiB=$Sfs2ExtraKiB" "-p:CopperStartSfs2TrstGrouped=$($GroupedSfs2Trst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($useSfs2Trst.ToString().ToLowerInvariant())" --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
+dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" "-p:CopperFsFfsTrimLayoutControl=$($FfsTrimLayoutControl.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsIndexKiB=$FfsIndexKiB" "-p:CopperFsAutoTrim=$($AutoTrim.IsPresent.ToString().ToLowerInvariant())" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsOnly=$($useFfsOnly.ToString().ToLowerInvariant())" "-p:CopperFsSmartOnly=$($useSmartOnly.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperFsSfsInPlace=$($SfsInPlaceOverwrite.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsExtraKiB=$SfsExtraKiB" "-p:CopperFsSfsPool=$($SharedSfsPool.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsGrouped=$($GroupedSfsTrst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2Owned=$($OwnedSfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2OriginalDataWrites=$($Sfs2OriginalDataWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2ExtraKiB=$Sfs2ExtraKiB" "-p:CopperStartSfs2TrstGrouped=$($GroupedSfs2Trst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($useSfs2Trst.ToString().ToLowerInvariant())" --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler input build failed.' }
 $compiler = Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"
 $dos = Join-Path $inputRoot 'CopperFS.Amiga.dll'

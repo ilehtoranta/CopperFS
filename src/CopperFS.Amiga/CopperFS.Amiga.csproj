@@ -26,6 +26,7 @@
     <DefineConstants Condition="'$(CopperFsSfsGrouped)' == 'true'">$(DefineConstants);COPPERFS_SFS_GROUPED</DefineConstants>
     <DefineConstants Condition="'$(CopperStartSfs2TrstGrouped)' == 'true'">$(DefineConstants);COPPERSTART_SFS2_TRST_GROUPED</DefineConstants>
     <DefineConstants Condition="'$(CopperFsSfs2Owned)' == 'true'">$(DefineConstants);COPPERFS_SFS2_OWNED</DefineConstants>
+    <DefineConstants Condition="'$(CopperFsSfs2OriginalDataWrites)' == 'true'">$(DefineConstants);COPPERFS_SFS2_ORIGINAL_DATA_WRITES</DefineConstants>
     <DefineConstants Condition="'$(CopperFsSfs2ExtraKiB)' == '16'">$(DefineConstants);COPPERFS_SFS2_EXTRA16</DefineConstants>
     <DefineConstants Condition="'$(CopperFsSfs2ExtraKiB)' == '64'">$(DefineConstants);COPPERFS_SFS2_EXTRA64</DefineConstants>
     <DefineConstants Condition="'$(CopperFsSfs2ExtraKiB)' == '256'">$(DefineConstants);COPPERFS_SFS2_EXTRA256</DefineConstants>
@@ -52,6 +53,9 @@
   <Target Name="ValidateSfs2OwnedProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSfs2Owned)' == 'true'">
     <Error Condition="'$(CopperStartSfs2TrstGrouped)' != 'true'" Text="Owned SFS2 requires grouped SFS2 TRST." />
     <Error Condition="'$(CopperFsSfs2ExtraKiB)' != '' and '$(CopperFsSfs2ExtraKiB)' != '0' and '$(CopperFsSfs2ExtraKiB)' != '16' and '$(CopperFsSfs2ExtraKiB)' != '64' and '$(CopperFsSfs2ExtraKiB)' != '256'" Text="SFS2 extra memory must be 0, 16, 64 or 256 KiB." />
+  </Target>
+  <Target Name="ValidateSfs2OriginalDataProfile" BeforeTargets="BeforeBuild" Condition="'$(CopperFsSfs2OriginalDataWrites)' == 'true'">
+    <Error Condition="'$(CopperFsSfs2Owned)' != 'true'" Text="Original SFS2 data writes require the opt-in owned SFS2 profile." />
   </Target>
   <Target Name="ValidateStandaloneProfile" BeforeTargets="BeforeBuild"
           Condition="'$(CopperStartSfsTrstBuffered)' == 'true'">

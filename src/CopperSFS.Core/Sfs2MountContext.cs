@@ -90,11 +90,18 @@ public static class Sfs2MountContext
     internal static bool Active<T>(ref T p, APTR context) where T : struct, IAmigaGuestMemory =>
         context.IsNotNull && p.ReadUInt32(context) == Magic && p.ReadUInt32(context, 4) == 1;
 
-    public static bool Ready<T>(ref T p, APTR context) where T : struct, IAmigaFileSystemPlatform =>
-        context.IsNotNull && p.IsMapped(context, StorageBytes(p.BlockBytes)) && p.ReadUInt32(context) == Magic && p.ReadUInt32(context, 4) == 1 &&
-        p.ReadUInt32(context, 16) == p.BlockBytes && p.ReadUInt32(context, 20) == p.BlockCount &&
-        p.ReadUInt32(context, 24) == p.ReservedBlocks &&
-        p.ReadUInt32(context, 28) == (uint)p.StartByte && p.ReadUInt32(context, 32) == (uint)(p.StartByte >> 32);
+    public static bool Ready<T>(ref T p, APTR context) where T : struct, IAmigaFileSystemPlatform
+    {
+        if (context.IsNull) return false;
+        var blockBytes = p.BlockBytes;
+        if (!p.IsMapped(context, StorageBytes(blockBytes)) || p.ReadUInt32(context) != Magic || p.ReadUInt32(context, 4) != 1 ||
+            p.ReadUInt32(context, 16) != blockBytes || p.ReadUInt32(context, 20) != p.BlockCount ||
+            p.ReadUInt32(context, 24) != p.ReservedBlocks) return false;
+        // Geometry is immutable during single-owner execution. Obtain the
+        // 64-bit start once rather than rebuilding it for each half comparison.
+        var start = p.StartByte;
+        return p.ReadUInt32(context, 28) == (uint)start && p.ReadUInt32(context, 32) == (uint)(start >> 32);
+    }
 
     public static void Suspend<T>(ref T p, APTR context) where T : struct, IAmigaGuestMemory
     { if (context.IsNotNull) p.WriteUInt32(context, 4, 2); }
@@ -155,6 +162,28 @@ public static class Sfs2MountContext
         p.WriteUInt32(context, 12, generation);
         p.WriteUInt32(context, 52, 1);
         return true;
+    }
+
+    // Only for a preflighted scalar append to an already accepted arena.
+    // Neither root image nor mount geometry may change through that path.
+    internal static bool PrepareScalarAcceptance<T>(ref T p, out uint generation, out uint epoch)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        var context = p.Sfs2Context; generation = epoch = 0;
+        if (!Ready(ref p, context)) return false;
+        generation = unchecked(p.ReadUInt32(context, 12) + 1); epoch = p.ReadUInt32(context, 8);
+        if (generation == 0)
+        {
+            if (epoch == uint.MaxValue) return false;
+            epoch++; generation = 1;
+        }
+        return true;
+    }
+
+    internal static void AcceptPreparedScalars<T>(ref T p, uint generation, uint epoch) where T : struct, IAmigaFileSystemPlatform
+    {
+        var context = p.Sfs2Context;
+        p.WriteUInt32(context, 8, epoch); p.WriteUInt32(context, 12, generation); p.WriteUInt32(context, 52, 1);
     }
 
     private static bool ValidRoot<T>(ref T p, APTR image, uint key) where T : struct, IAmigaFileSystemPlatform =>

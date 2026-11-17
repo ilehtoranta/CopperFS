@@ -35,6 +35,13 @@ Reported blocks are filesystem blocks, not bytes or device sectors. A failed
 command may have discarded part of its last range; completed-range counters
 exclude that partial command. Retry is safe: each invocation scans again.
 
+The experimental CopperCPX4 handler also accepts this packet. On CPX4 a
+reported block is one allocation unit (512–4096 bytes). CHECK can run on a
+write-protected mount. DRYRUN and execute use a persistence barrier followed
+by verification of the retired allocation maps, metadata reserve and free
+counts. The supported native device geometry and measurement results are in
+[the CPX4 qualification report](cpx4-native-progress.md#private-trim-packet).
+
 Only SCSI UNMAP through the Amiga device's `HD_SCSICMD` is implemented. Discovery
 requires VPD B2 LBPU support, nonzero VPD B0 UNMAP limits and READ CAPACITY(16).
 Unknown/unsupported devices are rejected without a checkpoint or discard.

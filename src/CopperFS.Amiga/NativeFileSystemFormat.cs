@@ -83,6 +83,9 @@ public static partial class NativeAmigaFileSystem
                 : AmigaDiskFileSystemCore.Mount(ref p, Metadata(state), out _);
             if (success)
             {
+#if COPPERFS_FFS_HANDLER
+                APTR.WriteUInt32(state, FfsGroupPublicationFailed, 0);
+#endif
                 APTR.WriteUInt32(state, NativeFileSystemStateCodec.DosTypeOffset, type);
                 InitializeWriteTimer(state, APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset)));
                 APTR.WriteUInt32(volume, 8, APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset));

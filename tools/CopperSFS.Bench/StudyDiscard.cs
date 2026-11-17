@@ -13,6 +13,15 @@ internal partial struct StudyDisk : IAmigaDiscardFileSystemPlatform
         ReadDataBlocks(block, count, target);
     public uint ReadDataBlocks(uint block, uint count, APTR target) => AmigaFileSystemBlockIo.Read(ref this, block, count, target);
     public bool WriteDataBlocks(uint block, uint count, APTR source) => AmigaFileSystemBlockIo.Write(ref this, block, count, source);
+    public bool WriteExistingFileDataBlocks(uint block, uint count, APTR source)
+    {
+        if (!UsesOriginalSfs2DataWrites) return false;
+        OriginalDataWrites?.Add((block, count));
+        var overlay = RedoOverlay;
+        RedoOverlay = APTR.Null;
+        try { return WriteBlocks(block, count, source); }
+        finally { RedoOverlay = overlay; }
+    }
     public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits)
     {
         limits = DiscardLimits;

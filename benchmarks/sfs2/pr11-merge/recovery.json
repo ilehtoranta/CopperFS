@@ -1,0 +1,105 @@
+{
+  "MergeSource": "2914862332613b47e02c416d1f71380584515010",
+  "OriginalSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+  "Cases": [
+    {
+      "Profile": "default",
+      "CandidateSha256": "AA96CFDE2242E3B81455A33D540F5853E84EB48BB256490F02C8DA53BAF460C7",
+      "Operation": "Overwrite",
+      "Passed": true,
+      "SectorWrites": 6,
+      "Flushes": 4,
+      "DistinctDurableImages": 5
+    },
+    {
+      "Profile": "default",
+      "CandidateSha256": "AA96CFDE2242E3B81455A33D540F5853E84EB48BB256490F02C8DA53BAF460C7",
+      "Operation": "Truncate",
+      "Passed": true,
+      "SectorWrites": 7,
+      "Flushes": 4,
+      "DistinctDurableImages": 5
+    },
+    {
+      "Profile": "default",
+      "CandidateSha256": "AA96CFDE2242E3B81455A33D540F5853E84EB48BB256490F02C8DA53BAF460C7",
+      "Operation": "Rename",
+      "Passed": true,
+      "SectorWrites": 8,
+      "Flushes": 4,
+      "DistinctDurableImages": 5
+    },
+    {
+      "Profile": "default",
+      "CandidateSha256": "AA96CFDE2242E3B81455A33D540F5853E84EB48BB256490F02C8DA53BAF460C7",
+      "Operation": "Create",
+      "Passed": true,
+      "SectorWrites": 6,
+      "Flushes": 4,
+      "DistinctDurableImages": 5
+    },
+    {
+      "Profile": "default",
+      "CandidateSha256": "AA96CFDE2242E3B81455A33D540F5853E84EB48BB256490F02C8DA53BAF460C7",
+      "Operation": "Comment",
+      "Passed": true,
+      "SectorWrites": 4,
+      "Flushes": 4,
+      "DistinctDurableImages": 5
+    },
+    {
+      "Profile": "default",
+      "CandidateSha256": "AA96CFDE2242E3B81455A33D540F5853E84EB48BB256490F02C8DA53BAF460C7",
+      "Operation": "Delete",
+      "Passed": true,
+      "SectorWrites": 9,
+      "Flushes": 4,
+      "DistinctDurableImages": 5
+    },
+    {
+      "Profile": "optin",
+      "CandidateSha256": "F00B3810E78519E0A3CC9D59D49E8E7EE72711496CAF98B73AF9D0498BDFE7BC",
+      "Operation": "Comment",
+      "Passed": true,
+      "SectorWrites": 3,
+      "Flushes": 3,
+      "DistinctDurableImages": 4
+    },
+    {
+      "Profile": "optin",
+      "CandidateSha256": "F00B3810E78519E0A3CC9D59D49E8E7EE72711496CAF98B73AF9D0498BDFE7BC",
+      "Operation": "Delete",
+      "Passed": true,
+      "SectorWrites": 8,
+      "Flushes": 3,
+      "DistinctDurableImages": 4
+    },
+    {
+      "Profile": "optin",
+      "CandidateSha256": "F00B3810E78519E0A3CC9D59D49E8E7EE72711496CAF98B73AF9D0498BDFE7BC",
+      "Operation": "Rename",
+      "Passed": true,
+      "SectorWrites": 7,
+      "Flushes": 3,
+      "DistinctDurableImages": 4
+    },
+    {
+      "Profile": "optin",
+      "CandidateSha256": "F00B3810E78519E0A3CC9D59D49E8E7EE72711496CAF98B73AF9D0498BDFE7BC",
+      "Operation": "Create",
+      "Passed": true,
+      "SectorWrites": 5,
+      "Flushes": 3,
+      "DistinctDurableImages": 4
+    },
+    {
+      "Profile": "optin",
+      "CandidateSha256": "F00B3810E78519E0A3CC9D59D49E8E7EE72711496CAF98B73AF9D0498BDFE7BC",
+      "Operation": "Truncate",
+      "Passed": true,
+      "SectorWrites": 6,
+      "Flushes": 3,
+      "DistinctDurableImages": 4
+    }
+  ]
+}

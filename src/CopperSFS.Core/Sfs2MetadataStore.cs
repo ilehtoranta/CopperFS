@@ -7,7 +7,7 @@ namespace CopperSFS;
 /// rebasing pointers. Verification belongs to an image revision, not a block key.</summary>
 public static class Sfs2MetadataStore
 {
-    public const uint Format = 0x20000000, HeaderBytes = 32, SlotBytes = 16;
+    public const uint Format = 0x20000000, HeaderBytes = 32, SlotBytes = 20;
     public const uint CleanCache = 1, Trial = 2;
     private const uint Dirty = 0x80000000;
     public struct Handle
@@ -15,6 +15,8 @@ public static class Sfs2MetadataStore
         public APTR Arena, Slot, Image, Mount;
         public uint Epoch, Revision, Block, Type, MountEpoch;
         public bool Editable;
+        internal uint Checksum;
+        internal bool TracksChecksum;
     }
 
     public static bool IsStore<T>(ref T p, APTR arena) where T : struct, IAmigaGuestMemory =>
@@ -23,7 +25,8 @@ public static class Sfs2MetadataStore
     public static bool Initialize<T>(ref T p, APTR arena, uint budget, uint bytes, uint epoch)
         where T : struct, IAmigaGuestMemory
     {
-        if (bytes < 512 || bytes > 32768 || (bytes & (bytes - 1)) != 0 || arena.IsNull || budget < bytes + HeaderBytes + SlotBytes + 16 ||
+        // One image needs the header, two hash buckets, and one slot.
+        if (bytes < 512 || bytes > 32768 || (bytes & (bytes - 1)) != 0 || arena.IsNull || budget < bytes + HeaderBytes + SlotBytes + 8 ||
             !p.IsMapped(arena, budget)) return false;
         var maximum = (budget - HeaderBytes) / (bytes + SlotBytes);
         var buckets = 2u;
@@ -35,6 +38,20 @@ public static class Sfs2MetadataStore
         p.Clear(arena, prefix); p.WriteUInt32(arena, 4, capacity);
         p.WriteUInt32(arena, 8, Format | bytes); p.WriteUInt32(arena, 16, buckets - 1);
         p.WriteUInt32(arena, 20, prefix); p.WriteUInt32(arena, 28, epoch == 0 ? 1u : epoch);
+        return true;
+    }
+
+    // Existing-data overwrites need an empty logical overlay, not hundreds of
+    // hash buckets. The first metadata mutation materializes the ordinary store
+    // in its disposable arena before accepting any image.
+    internal static bool InitializeEmpty<T>(ref T p, APTR arena, uint bytes, uint epoch)
+        where T : struct, IAmigaGuestMemory
+    {
+        if (bytes < 512 || bytes > 32768 || (bytes & (bytes - 1)) != 0 || arena.IsNull ||
+            !p.IsMapped(arena, HeaderBytes + 8)) return false;
+        p.Clear(arena, HeaderBytes + 8);
+        p.WriteUInt32(arena, 8, Format | bytes); p.WriteUInt32(arena, 16, 1);
+        p.WriteUInt32(arena, 20, HeaderBytes + 8); p.WriteUInt32(arena, 28, epoch == 0 ? 1u : epoch);
         return true;
     }
 
@@ -97,6 +114,9 @@ public static class Sfs2MetadataStore
         p.WriteUInt32(slot, 8, revision);
         if (image != source) p.Copy(source, image, p.ReadUInt32(arena, 8) & ~Format);
         p.WriteUInt32(slot, 4, verified);
+        // Arbitrary stores replace the whole image. Only the checked scalar
+        // edit path may narrow this conservative 16-byte-region change mask.
+        p.WriteUInt32(slot, 16, uint.MaxValue);
         return true;
     }
 
@@ -181,6 +201,12 @@ public static class Sfs2MetadataStore
             (mask & (mask + 1)) != 0 || mask + 1 > (budget - HeaderBytes) / 4) return false;
         var prefix = HeaderBytes + (mask + 1) * 4;
         var count = p.ReadUInt32(source); var capacity = p.ReadUInt32(source, 4);
+        if (count == 0 && capacity == 0 && mask == 1 && prefix == p.ReadUInt32(source, 20) &&
+            p.ReadUInt32(source, 24) == 0)
+        {
+            if (!Initialize(ref p, destination, budget, bytes, epoch)) return false;
+            p.WriteUInt32(destination, 24, Trial); return true;
+        }
         if (prefix != p.ReadUInt32(source, 20) || capacity == 0 || count > capacity ||
             capacity > (budget - prefix) / (bytes + SlotBytes) || capacity >= mask + 1 || !Unpinned(ref p, source)) return false;
         var oldCount = p.ReadUInt32(destination);
@@ -197,9 +223,29 @@ public static class Sfs2MetadataStore
             {
                 var offset = prefix + i * stride;
                 var from = APTR.FromPointer(source.Raw + offset); var to = APTR.FromPointer(destination.Raw + offset);
-                if (i >= oldCount || p.ReadUInt32(from) != p.ReadUInt32(to) ||
-                    p.ReadUInt32(from, 8) != p.ReadUInt32(to, 8)) p.Copy(from, to, stride);
-                else p.WriteUInt32(to, 4, p.ReadUInt32(from, 4)); // Retain verification of this unchanged revision.
+                if (i >= oldCount || p.ReadUInt32(from) != p.ReadUInt32(to)) p.Copy(from, to, stride);
+                else if (p.ReadUInt32(from, 8) != p.ReadUInt32(to, 8))
+                {
+                    var changed = p.ReadUInt32(from, 16) | p.ReadUInt32(to, 16);
+                    if (bytes != 512 || changed == uint.MaxValue) p.Copy(from, to, stride);
+                    else
+                    {
+                        // Both arenas descend from the same durable image.
+                        // Either image differs from the common physical image
+                        // wherever they differ from each other. Including both
+                        // masks also copies words restored by a generic edit.
+                        p.Copy(from, to, SlotBytes);
+                        for (var region = 0; changed != 0; region++, changed >>= 1)
+                            if ((changed & 1) != 0)
+                                p.Copy(APTR.FromPointer(from.Raw + SlotBytes + (uint)region * 16),
+                                    APTR.FromPointer(to.Raw + SlotBytes + (uint)region * 16), 16);
+                    }
+                }
+                else
+                {
+                    p.WriteUInt32(to, 4, p.ReadUInt32(from, 4)); // Same image revision.
+                    p.WriteUInt32(to, 16, p.ReadUInt32(from, 16));
+                }
             }
         }
         else p.Copy(source, destination, prefix + count * (bytes + SlotBytes));
@@ -212,7 +258,10 @@ public static class Sfs2MetadataStore
         p.ReadUInt32(arena, 24) == Trial && p.ReadUInt32(source, 8) == block &&
         Store(ref p, arena, block, source, p.ReadUInt32(source) | Dirty);
 
-    public static bool Publish<T>(ref T p, APTR arena) where T : struct, IAmigaFileSystemPlatform
+    public static bool Publish<T>(ref T p, APTR arena) where T : struct, IAmigaFileSystemPlatform =>
+        Publish(ref p, arena, false);
+
+    internal static bool Publish<T>(ref T p, APTR arena, bool trackRegions) where T : struct, IAmigaFileSystemPlatform
     {
         if (!Unpinned(ref p, arena) || p.ReadUInt32(arena, 24) != Trial) return false;
         var count = p.ReadUInt32(arena); var address = arena.Raw + p.ReadUInt32(arena, 20);
@@ -226,8 +275,28 @@ public static class Sfs2MetadataStore
             p.WriteUInt32(image, 4, 0);
             p.WriteUInt32(image, 4, unchecked(0u - 2u - AmigaSmartFileSystemCore.BlockSum(ref p, image, p.BlockBytes)));
             p.WriteUInt32(slot, 4, id & ~Dirty);
+            if (trackRegions && p.BlockBytes == 512 && p.ReadUInt32(slot, 16) == uint.MaxValue)
+            {
+                var cache = Sfs2MountContext.Cache(ref p, p.Sfs2Context);
+                var before = cache.IsNull ? APTR.Null : Find(ref p, cache, p.ReadUInt32(slot));
+                if (before.IsNotNull) p.WriteUInt32(slot, 16, ChangedRegions(ref p, before, image));
+            }
         }
         p.WriteUInt32(arena, 24, 0); return true;
+    }
+
+    private static uint ChangedRegions<T>(ref T p, APTR before, APTR image) where T : struct, IAmigaGuestMemory
+    {
+        uint changed = 0;
+        for (var region = 0; region < 32; region++)
+        {
+            var at = region * 16;
+            if (p.ReadUInt32(before, at) != p.ReadUInt32(image, at) ||
+                p.ReadUInt32(before, at + 4) != p.ReadUInt32(image, at + 4) ||
+                p.ReadUInt32(before, at + 8) != p.ReadUInt32(image, at + 8) ||
+                p.ReadUInt32(before, at + 12) != p.ReadUInt32(image, at + 12)) changed |= 1u << region;
+        }
+        return changed;
     }
 
     // Delete a cache key with backward-shift rehashing. Transaction keys never
@@ -251,8 +320,12 @@ public static class Sfs2MetadataStore
 
     public static bool Invalidate<T>(ref T p, APTR arena, uint first, uint count) where T : struct, IAmigaGuestMemory
     {
-        if (arena.IsNull) return true;
-        if (count <= 8)
+        if (arena.IsNull || count == 0) return true;
+        var entries = p.ReadUInt32(arena);
+        // A warm mount often has fewer metadata slots than a short payload
+        // run has sectors. Scan that smaller set instead of hashing every
+        // sector. Preserve wrapped short-range lookup semantics as well.
+        if (count <= 8 && (count < entries || first > uint.MaxValue - (count - 1)))
         {
             for (var offset = 0u; offset < count; offset++)
             {
@@ -263,9 +336,11 @@ public static class Sfs2MetadataStore
             }
             return true;
         }
-        for (var i = 0u; i < p.ReadUInt32(arena); i++)
+        var address = arena.Raw + p.ReadUInt32(arena, 20);
+        var stride = (p.ReadUInt32(arena, 8) & ~Format) + SlotBytes;
+        for (var i = 0u; i < entries; i++, address += stride)
         {
-            var slot = Slot(ref p, arena, i); var key = p.ReadUInt32(slot);
+            var slot = APTR.FromPointer(address); var key = p.ReadUInt32(slot);
             if (key == uint.MaxValue || key < first || key - first >= count) continue;
             if (p.ReadUInt32(slot, 12) != 0) return false;
             Remove(ref p, arena, key); p.WriteUInt32(slot, 0, uint.MaxValue); p.WriteUInt32(slot, 4, 0);
@@ -278,8 +353,22 @@ public static class Sfs2MetadataStore
         var count = p.ReadUInt32(arena); var capacity = p.ReadUInt32(arena, 4); uint ordinal;
         if (count < capacity)
         {
-            ordinal = count; var added = Slot(ref p, arena, ordinal); p.Clear(added, SlotBytes);
-            p.WriteUInt32(added, 0, uint.MaxValue); p.WriteUInt32(arena, 0, count + 1);
+            ordinal = count;
+            var candidate = arena.Raw + p.ReadUInt32(arena, 20);
+            var stride = (p.ReadUInt32(arena, 8) & ~Format) + SlotBytes;
+            for (var i = 0u; i < count; i++, candidate += stride)
+            {
+                var empty = APTR.FromPointer(candidate);
+                if (p.ReadUInt32(empty) == uint.MaxValue && p.ReadUInt32(empty, 12) == 0 &&
+                    p.ReadUInt32(empty, 8) != uint.MaxValue) { ordinal = i; break; }
+            }
+            if (ordinal == count)
+            {
+                var added = Slot(ref p, arena, ordinal); p.Clear(added, SlotBytes);
+                p.WriteUInt32(added, 0, uint.MaxValue); p.WriteUInt32(arena, 0, count + 1);
+            }
+            // An invalidated slot keeps its revision. Reusing it must not
+            // revive a released handle with the same key in this mount.
         }
         else
         {
@@ -295,6 +384,7 @@ public static class Sfs2MetadataStore
         var next = ordinal + 1; if (next == capacity) next = 0;
         p.WriteUInt32(arena, 12, next); p.WriteUInt32(slot, 0, key); p.WriteUInt32(slot, 4, 0);
         p.WriteUInt32(slot, 8, p.ReadUInt32(slot, 8) + 1);
+        p.WriteUInt32(slot, 16, 0);
         p.WriteUInt32(Bucket(ref p, arena, key), 0, slot.Raw - arena.Raw);
         return APTR.FromPointer(slot.Raw + SlotBytes);
     }
@@ -349,6 +439,16 @@ public static class Sfs2MetadataStore
     /// until Publish seals the packet's changed images once.</summary>
     public static bool Edit<T>(ref T p, uint block, uint id, APTR scratch, out Handle handle)
         where T : struct, IAmigaFileSystemPlatform
+        => EditCore(ref p, block, id, scratch, out handle, false);
+
+    // Only callers that route every payload change through the scalar helpers
+    // may request this path. A previously dirty image retains full sealing.
+    internal static bool EditScalars<T>(ref T p, uint block, uint id, APTR scratch, out Handle handle)
+        where T : struct, IAmigaFileSystemPlatform
+        => EditCore(ref p, block, id, scratch, out handle, true);
+
+    private static bool EditCore<T>(ref T p, uint block, uint id, APTR scratch, out Handle handle, bool scalars)
+        where T : struct, IAmigaFileSystemPlatform
     {
         handle = default; var arena = Sfs2MountContext.Overlay(ref p, p.Sfs2Context);
         if (arena.IsNull || p.ReadUInt32(arena, 24) != Trial) return false;
@@ -357,11 +457,16 @@ public static class Sfs2MetadataStore
         {
             if (!Store(ref p, arena, block, image, id)) return false;
             image = Find(ref p, arena, block);
+            // ReadView obtained the physical before-image, not another trial.
+            p.WriteUInt32(APTR.FromPointer(image.Raw - SlotBytes), 16, 0);
         }
         if (!Pin(ref p, arena, image, block, id, out handle)) return false;
         if (p.ReadUInt32(handle.Slot, 12) != 1) { Release(ref p, ref handle); return false; }
         var revision = unchecked(p.ReadUInt32(handle.Slot, 8) + 1);
         if (revision == 0) { Release(ref p, ref handle); return false; }
+        handle.TracksChecksum = scalars && id != 0 && p.ReadUInt32(handle.Slot, 4) == id;
+        if (handle.TracksChecksum) handle.Checksum = p.ReadUInt32(image, 4);
+        else p.WriteUInt32(handle.Slot, 16, uint.MaxValue);
         p.WriteUInt32(handle.Slot, 8, revision); handle.Revision = revision;
         p.WriteUInt32(handle.Slot, 12, uint.MaxValue);
         p.WriteUInt32(handle.Slot, 4, id | Dirty); handle.Editable = true;
@@ -371,7 +476,71 @@ public static class Sfs2MetadataStore
     public static bool ReleaseEdit<T>(ref T p, ref Handle handle) where T : struct, IAmigaGuestMemory
     {
         if (!handle.Editable || !Current(ref p, handle)) return false;
+        if (handle.TracksChecksum)
+        {
+            if (p.ReadUInt32(handle.Image) != handle.Type || p.ReadUInt32(handle.Image, 8) != handle.Block) return false;
+            p.WriteUInt32(handle.Image, 4, handle.Checksum);
+            p.WriteUInt32(handle.Slot, 4, handle.Type);
+        }
         p.WriteUInt32(handle.Slot, 12, 1);
         handle.Editable = false; return Release(ref p, ref handle);
+    }
+
+    // The single-owner append path pins only images already in the accepted
+    // arena. It performs every fallible check and payload I/O before changing
+    // these images; its final scalar publication contains memory writes only.
+    internal static bool ReserveAcceptedScalar<T>(ref T p, APTR arena, uint block, uint id, out Handle handle)
+        where T : struct, IAmigaFileSystemPlatform
+    {
+        handle = default;
+        if (p.ReadUInt32(arena, 24) != 0 || !Acquire(ref p, arena, block, id, out handle)) return false;
+        if (p.ReadUInt32(handle.Slot, 12) != 1 || handle.Revision == uint.MaxValue)
+        { Release(ref p, ref handle); return false; }
+        handle.Mount = p.Sfs2Context; handle.MountEpoch = p.ReadUInt32(handle.Mount, 8);
+        handle.Checksum = p.ReadUInt32(handle.Image, 4); handle.TracksChecksum = true;
+        return true;
+    }
+
+    internal static bool MaterializeAcceptedBeforeImage<T>(ref T p, APTR arena, uint block, uint id, APTR scratch,
+        out APTR addedBucket) where T : struct, IAmigaFileSystemPlatform
+    {
+        addedBucket = APTR.Null;
+        if (p.ReadUInt32(arena, 24) != 0 || p.ReadUInt32(arena) >= p.ReadUInt32(arena, 4) ||
+            Find(ref p, arena, block).IsNotNull) return false;
+        var bucket = Bucket(ref p, arena, block);
+        if (bucket.IsNull || p.ReadUInt32(bucket) != 0) return false;
+        var before = ReadView(ref p, block, id, scratch);
+        if (before.IsNull || !Store(ref p, arena, block, before, id)) return false;
+        var image = Find(ref p, arena, block);
+        p.WriteUInt32(APTR.FromPointer(image.Raw - SlotBytes), 16, 0);
+        // This was the empty end of a probe chain. With no intervening accepted
+        // store, rolling back additions in reverse order restores the old index.
+        addedBucket = bucket; return true;
+    }
+
+    internal static void CancelAcceptedScalar<T>(ref T p, ref Handle handle) where T : struct, IAmigaGuestMemory
+    {
+        if (handle.Arena.IsNull) return;
+        // A failed device operation may suspend the mount. The reservation
+        // still owns its unchanged slot; never leave its structural pin held.
+        handle.Mount = APTR.Null;
+        Release(ref p, ref handle);
+    }
+
+    internal static void BeginReservedScalar<T>(ref T p, ref Handle handle) where T : struct, IAmigaGuestMemory
+    {
+        // Caller has just checked all reservations and acceptance counters.
+        // No lookup, allocation, I/O or failure is permitted until completion.
+        handle.Revision++;
+        p.WriteUInt32(handle.Slot, 8, handle.Revision);
+        p.WriteUInt32(handle.Slot, 12, uint.MaxValue);
+        p.WriteUInt32(handle.Slot, 4, handle.Type | Dirty); handle.Editable = true;
+    }
+
+    internal static void CompleteReservedScalar<T>(ref T p, ref Handle handle) where T : struct, IAmigaGuestMemory
+    {
+        p.WriteUInt32(handle.Image, 4, handle.Checksum);
+        p.WriteUInt32(handle.Slot, 4, handle.Type);
+        p.WriteUInt32(handle.Slot, 12, 0); handle = default;
     }
 }
