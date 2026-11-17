@@ -5,6 +5,87 @@ of deleting and overwriting files. The 0.1% AutoTrim on/off gate and the
 original-handler parity gate still fail. The results below distinguish an
 improvement over the audited CopperFFS binary from a passing release criterion.
 
+## November 17 qualification
+
+Fixed-disk truncation can consume a staged attribute header while retaining
+the existing write-protection check. Portable tests passed on both OFS and
+FFS and observed one write to the header through publication. The mixed FFS
+ROM trace still used 50 write commands against FFS 40.1's 47. That probe
+truncates one file and changes attributes on another.
+
+Three alternating warm-device trials from the same 256 KiB AutoTrim-enabled
+managed input measured the following effect of CILica inlining on the 96 KiB
+workload. Both profiles used scalar replacement. The inlined handler was
+153,528 bytes and the scalar-replacement-only handler was 129,932 bytes.
+
+| Format and buffer | Growth | Overwrite | Verification |
+|---|---:|---:|---:|
+| FFS Fast | −10.001% | +1.244% | −0.045% |
+| FFS Chip | −8.673% | +0.943% | −0.071% |
+| OFS Fast | −2.176% | −3.496% | −0.020% |
+| OFS Chip | −3.591% | −2.646% | −0.037% |
+
+Inlining improved growth in every arm and regressed both FFS overwrite arms.
+This comparison isolates inlining. It uses AutoTrim enabled in both handlers.
+
+With the same inlined AutoTrim build against the ordinary disabled build,
+warm-device overwrite used 0.655–0.728% fewer cycles on FFS and
+1.991–2.007% fewer on OFS. FFS growth still cost 0.392–0.404% more and
+OFS verification cost 0.277–0.286% more. The cached-read probe still failed
+on FFS in Chip RAM and OFS in Fast RAM.
+
+Against FFS 40.1, all 96 KiB phase timings passed. OFS growth still issued
+five read commands versus three. The device trace attributes each read to
+fetching the last sector of a staged write run before updating its forward
+link or extending its partial payload. Each read fetched a 64 KiB window.
+
+The next cached-read candidate used the OFS reader directly for DOS packets
+whose output was disjoint from the native file record. OFS reads traverse their
+own chain and need only clear the FFS cursor identity. Cached reads passed
+against FFS 40.1 in both memory placements, taking 1.281% fewer cycles with
+Fast RAM and 2.461% fewer with Chip RAM. The preceding candidate was 2.993%
+and 2.820% slower, respectively.
+
+Truncation can also reuse a sealed header retained at the preceding close.
+Four focused portable tests passed across OFS and FFS, covering the retained
+header, staged attributes and write protection.
+
+Retaining the last sector of each successful staged OFS run removed the
+five 64 KiB rereads from growth. The 96 KiB tests passed against FFS 40.1
+with both Fast and Chip RAM. Growth used zero reads, 27 writes and one flush.
+FFS 40.1 used three reads, 433 writes and one flush on the same packets.
+
+The build that reused the previous close's header put FFS mixed mutation
+0.682% behind FFS 40.1 in Fast RAM and 0.692% behind in Chip RAM.
+The fragmented, original-created files passed both small append and scattered
+overwrite tests in all four format and memory combinations. Appends took
+3.741–4.979% fewer cycles and overwrites took 1.968–10.869% fewer.
+
+The corresponding matched-layout control produced two 153,916-byte binaries
+that differed in three mount-policy bytes. Warm FFS mixed mutation still cost
+0.178% more in Fast RAM and 0.177% more in Chip RAM with AutoTrim enabled.
+In the separate warm trace, deleting the donor cost 6,180 additional guest
+cycles with AutoTrim enabled. Both arms performed the same DOS operations.
+Profiling the timed warm workload attributed roughly 21,500 of its 28,000
+additional guest cycles to execution outside the handler.
+
+Keeping the sealed header with the parked allocation map and updating
+successive attributes inside the existing transaction reduced the FFS
+mixed-mutation gap to 0.638% in Fast RAM and 0.642% in Chip RAM.
+
+Recording one hint for each uninterrupted run of freed bits brought the
+matched-layout warm FFS mutation difference to +0.054% in each memory
+placement. Verification and cached reads also passed in both placements.
+All 442 CopperFFS core tests passed with that change.
+
+Maintaining the checksum on the staged attribute header lets later lookups
+borrow it before publication. The cached-read comparison with this candidate
+passed against FFS 40.1 in both formats and both memory placements, with
+0.411–1.374% fewer cycles. Its FFS mixed mutation remained 0.643–0.660%
+slower. A separate unsupported-device run on the previous matched-layout
+candidate passed 11 of 12 cases. Its OFS Fast RAM cached read cost +0.865%
+with AutoTrim enabled.
+
 ## November 15 qualification
 
 Three alternating Kickstart 3.1 trials with the 256 KiB workspace and restricted

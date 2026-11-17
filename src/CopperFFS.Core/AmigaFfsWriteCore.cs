@@ -275,6 +275,7 @@ public static partial class AmigaFfsWriteCore
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.PublishedHeader, 0);
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.PublishedTable, 0);
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.PublishedParent, 0);
+                p.WriteUInt32(w.Index, AmigaFfsMountIndex.SealedAttributeHeader, 0);
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.FreshHeaderImage, 0);
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.FreshTableImage, 0);
             }
@@ -474,6 +475,7 @@ public static partial class AmigaFfsWriteCore
 
     private static bool FreeRun<T>(ref T p, ref Work w, uint first, uint count) where T : struct, IAmigaWritableFileSystemPlatform
     {
+        var releasedFirst = first;
         while (count != 0)
         {
             if (!LoadBitmap(ref p, ref w, first)) return false;
@@ -495,7 +497,6 @@ public static partial class AmigaFfsWriteCore
                     w.BitmapChecksumDelta = unchecked(w.BitmapChecksumDelta + released);
                     var blocks = released << 5;
                     w.BitmapDirty = 1; w.IndexedUsed -= blocks;
-                    NoteFreed(ref p, ref w, first, blocks);
                     first += blocks; count -= blocks;
                     continue;
                 }
@@ -510,12 +511,18 @@ public static partial class AmigaFfsWriteCore
                 p.WriteUInt32(w.ActiveBitmap, at, old | mask);
                 w.BitmapDirty = 1; w.BitmapChecksumDelta = unchecked(w.BitmapChecksumDelta - mask);
                 w.IndexedUsed -= take;
-                NoteFreed(ref p, ref w, first, take);
             }
-            else if ((old & mask) != mask)
-                for (var n = 0u; n < take; n++) Bit(ref p, ref w, first + n, true);
+            else
+            {
+                // An already-free bit interrupts this run of transitions.
+                if (first != releasedFirst) NoteFreed(ref p, ref w, releasedFirst, first - releasedFirst);
+                if ((old & mask) != mask)
+                    for (var n = 0u; n < take; n++) Bit(ref p, ref w, first + n, true);
+                releasedFirst = first + take;
+            }
             count -= take; first += take;
         }
+        if (first != releasedFirst) NoteFreed(ref p, ref w, releasedFirst, first - releasedFirst);
         return w.Error == DOS.Error.None;
     }
     private static uint Allocate<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry) where T : struct, IAmigaWritableFileSystemPlatform
@@ -1024,8 +1031,16 @@ public static partial class AmigaFfsWriteCore
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         if (key == geometry.RootBlock) return Fail(ref w, DOS.Error.ObjectInUse);
-        if (!Prepare(ref p, ref w, in geometry, 0)) return false;
-        var header = InspectHeader(ref p, ref w, in geometry, key);
+        if (!Prepare(ref p, ref w, in geometry, 0, attributeHeader: truncate ? key : 0)) return false;
+        // The private header survives bitmap release and the invalid-root
+        // write. It can carry either staged attributes or the last close's
+        // sealed header. A borrowed physical cache view can expire sooner.
+        var retained = APTR.Null;
+        if (truncate && key != 0 && w.LayoutKnown &&
+            ((w.GroupMetadata && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) == key) ||
+             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedHeader) == key))
+            retained = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
+        var header = retained.IsNotNull ? retained : InspectHeader(ref p, ref w, in geometry, key);
         if (header.IsNull) return false;
         var type = unchecked((int)p.ReadUInt32(header, geometry.Tail + 508));
         w.CacheParent = p.ReadUInt32(header, geometry.Tail + 500);
@@ -1039,7 +1054,7 @@ public static partial class AmigaFfsWriteCore
             saved = AmigaFfsMountIndex.BorrowRemovalSpace(ref p, w.Index, key, size, blocks, geometry.TableEntries);
         }
         w.UnlinkedOwner = 0;
-        var ok = RemoveEntry(ref p, ref w, key, truncate, type, header, in geometry, in saved);
+        var ok = RemoveEntry(ref p, ref w, key, truncate, type, header, in geometry, in saved, retained);
         AmigaFfsMountIndex.RestoreRemovalSpace(ref p, w.Index, in saved, ok);
         if (ok && !truncate && saved.Key != 0)
         {
@@ -1054,7 +1069,8 @@ public static partial class AmigaFfsWriteCore
     }
 
     private static bool RemoveEntry<T>(ref T p, ref Work w, uint key, bool truncate, int type, APTR header,
-        in AmigaFfsGeometry geometry, in AmigaFfsMountIndex.SavedFile saved) where T : struct, IAmigaWritableFileSystemPlatform
+        in AmigaFfsGeometry geometry, in AmigaFfsMountIndex.SavedFile saved, APTR retained)
+        where T : struct, IAmigaWritableFileSystemPlatform
     {
         var slot = 0;
         uint successor = 0;
@@ -1127,7 +1143,12 @@ public static partial class AmigaFfsWriteCore
         else if (type < 0 && !Chain(ref p, ref w, key, true)) return false;
         if (truncate)
         {
-            if (!Header(ref p, ref w, key)) return false;
+            if (retained.IsNotNull)
+            {
+                p.Copy(retained, w.Meta, geometry.BlockBytes);
+                p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, 0);
+            }
+            else if (!Header(ref p, ref w, key)) return false;
             // The old chain has been checked and released. Let the first write
             // replace this empty header before publishing the retained bitmap.
             if (w.GroupFileWrites && indexedRelease && saved.Key == 0 && w.RootImage.IsNotNull &&
@@ -1278,6 +1299,18 @@ public static partial class AmigaFfsWriteCore
         if (r.Header == geometry.RootBlock) return Fail(ref w, DOS.Error.ActionNotKnown);
         if (action == DosPacketAction.SetComment && r.Length > 79)
             return Fail(ref w, DOS.Error.CommentTooBig);
+        if (w.GroupMetadata && r.Header != 0 && w.Index.IsNotNull &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.MetadataOpen &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.SealedAttributeHeader) == r.Header &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) == r.Header)
+        {
+            if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
+            // The existing group already owns the invalid root and bitmap.
+            var pending = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
+            EditAttribute(ref p, pending, geometry.Tail, ref r, action);
+            w.Error = DOS.Error.None;
+            return true;
+        }
         if (!Prepare(ref p, ref w, in geometry, 0, attributeHeader: r.Header)) return false;
         var image = w.Meta;
         var staged = w.GroupMetadata && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304 &&
@@ -1291,26 +1324,56 @@ public static partial class AmigaFfsWriteCore
                 if (current.IsNull) return false;
                 p.Copy(current, image, geometry.BlockBytes);
             }
+            else Seal(ref p, image, 20);
         }
         else if (!Header(ref p, ref w, r.Header)) return false;
         KeepFile(ref p, ref w);
         if (!Begin(ref p, ref w, in geometry) || (w.RootImage.IsNull && !Header(ref p, ref w, r.Header))) return false;
         w.CacheParent = p.ReadUInt32(image, geometry.Tail + 500);
+        EditAttribute(ref p, image, geometry.Tail, ref r, action);
+        if (staged)
+        {
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, r.Header);
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.SealedAttributeHeader, r.Header);
+        }
+        else if (!Put(ref p, ref w, r.Header, image, SealedHeader)) return false;
+        return Finish(ref p, ref w, in geometry);
+    }
+
+    private static void EditAttribute<T>(ref T p, APTR image, int tail, ref Request r, DosPacketAction action)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        // Keep the verified image available to later namespace lookups until
+        // the group publishes. Only the attribute words and their sum change.
+        var checksum = p.ReadUInt32(image, 20);
         if (action == DosPacketAction.SetProtection)
-            p.WriteUInt32(image, geometry.Tail + 320, r.Position);
+        {
+            checksum = unchecked(checksum + p.ReadUInt32(image, tail + 320) - r.Position);
+            p.WriteUInt32(image, tail + 320, r.Position);
+        }
         else if (action == DosPacketAction.SetDate)
             for (var offset = 0; offset < 12; offset += 4)
-                p.WriteUInt32(image, geometry.Tail + 420 + offset, p.ReadUInt32(r.Buffer, offset));
-        else if (action == DosPacketAction.SetComment)
+            {
+                var at = tail + 420 + offset;
+                var value = p.ReadUInt32(r.Buffer, offset);
+                checksum = unchecked(checksum + p.ReadUInt32(image, at) - value);
+                p.WriteUInt32(image, at, value);
+            }
+        else
         {
-            p.Clear(APTR.FromPointer(image.Raw + (uint)(geometry.Tail + 328)), 80);
-            p.WriteUInt8(image, geometry.Tail + 328, (byte)r.Length);
+            var comment = APTR.FromPointer(image.Raw + (uint)(tail + 328));
+            for (var offset = 0; offset < 80; offset += 4)
+            {
+                checksum = unchecked(checksum + p.ReadUInt32(comment, offset));
+                p.WriteUInt32(comment, offset, 0);
+            }
+            p.WriteUInt8(comment, 0, (byte)r.Length);
             for (var index = 0u; index < r.Length; index++)
-                p.WriteUInt8(image, geometry.Tail + 329 + (int)index, p.ReadUInt8(r.Buffer, (int)index));
+                p.WriteUInt8(comment, 1 + (int)index, p.ReadUInt8(r.Buffer, (int)index));
+            for (var offset = 0; offset < 80; offset += 4)
+                checksum = unchecked(checksum - p.ReadUInt32(comment, offset));
         }
-        if (staged) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, r.Header);
-        else if (!Put(ref p, ref w, r.Header, image, 20)) return false;
-        return Finish(ref p, ref w, in geometry);
+        p.WriteUInt32(image, 20, checksum);
     }
 
     // A directory reader can observe a completed attribute change without
@@ -1322,13 +1385,14 @@ public static partial class AmigaFfsWriteCore
         if (key == 0 || key == keep) return true;
         var image = APTR.FromPointer(p.ReadUInt32(index, AmigaFfsMountIndex.HeaderImage));
         p.WriteUInt32(index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.Updating);
-        Seal(ref p, image, 20);
-        if (!(p.SupportsRetainedBlockWrites ? p.WriteRetainedBlock(key, image) : p.WriteBlock(key, image)))
+        if (p.ReadUInt32(index, AmigaFfsMountIndex.SealedAttributeHeader) != key) Seal(ref p, image, 20);
+        if (!p.WriteSealedClassicBlock(key, image))
         {
             p.WriteUInt32(index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.GroupFailed);
             return false;
         }
         p.WriteUInt32(index, AmigaFfsMountIndex.PendingHeader, 0);
+        p.WriteUInt32(index, AmigaFfsMountIndex.SealedAttributeHeader, 0);
         p.WriteUInt32(index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.MetadataOpen);
         return true;
     }
@@ -1383,7 +1447,8 @@ public static partial class AmigaFfsWriteCore
         {
             var sizeInGroup = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBytes);
             var sameFile = w.GroupFileWrites && fixedHardDisk && r.Header == p.ReadUInt32(w.Index, AmigaFfsMountIndex.Header);
-            if (sameFile && r.Position < sizeInGroup && TryWriteGroupRun(ref p, w.Index, ref r, w.DeviceChecksDataProtection, out w.Error))
+            if (sameFile && r.Position < sizeInGroup &&
+                TryWriteGroupRun(ref p, w.Index, ref r, blockBytes, sizeInGroup, w.DeviceChecksDataProtection, out w.Error))
             {
                 if (w.Error != DOS.Error.None) return false;
                 actual = r.Length;
@@ -1675,14 +1740,13 @@ public static partial class AmigaFfsWriteCore
 
     // An open group owns the validated mapping and its invalid on-disk root.
     // A contained run can be submitted without constructing mutation scratch.
-    internal static bool TryWriteGroupRun<T>(ref T p, APTR index, ref Request r, bool deviceChecksProtection,
-        out DOS.Error error) where T : struct, IAmigaWritableFileSystemPlatform
+    // The caller has already matched the request to the open group and read
+    // the group's materialized length.
+    internal static bool TryWriteGroupRun<T>(ref T p, APTR index, ref Request r, uint blockBytes, uint size,
+        bool deviceChecksProtection, out DOS.Error error) where T : struct, IAmigaWritableFileSystemPlatform
     {
         error = DOS.Error.None;
-        if (!HasFileWriteGroup(ref p, index) || p.ReadUInt32(index, AmigaFfsMountIndex.Header) != r.Header ||
-            r.Length == 0) return false;
-        var blockBytes = p.BlockBytes;
-        var size = p.ReadUInt32(index, AmigaFfsMountIndex.FileBytes);
+        if (r.Length == 0) return false;
         if ((p.ReadUInt32(index, AmigaFfsMountIndex.Type) & 1) == 0)
             return TryOverwriteOfsRun(ref p, index, ref r, blockBytes, size, deviceChecksProtection, out error);
         if (((r.Position | r.Length) & (blockBytes - 1)) != 0 ||
