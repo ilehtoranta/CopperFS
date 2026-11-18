@@ -23,7 +23,7 @@ var reports=new List<object>();
 Directory.CreateDirectory(args[2]);
 // Inspect actual CRC/common-helper ranges, not pre-optimization ASM exports.
 // General dispatch methods also contain embedded jump-table data and are omitted.
-foreach(var symbol in symbols.Where(s=>s.Name.Contains("NovaEngine")&&new[]{"Crc","CrcFour","SectorCrc","PatchedCrc","WalkPath","Find","Load","Issue","Finish","BeginPacket","CompleteIo"}.Any(n=>s.Name.EndsWith("::"+n))))
+foreach(var symbol in symbols.Where(s=>s.Name.Contains("NovaEngine")&&new[]{"Crc","CrcFour","SectorCrc","PositionCrc","PatchedCrc","EncodeResidentLeaf","WalkPath","Find","Load","Issue","Finish","BeginPacket","CompleteIo"}.Any(n=>s.Name.EndsWith("::"+n))))
 {
     if(symbol.Offset<0||symbol.Bytes<=0||symbol.Offset+symbol.Bytes>codeBytes||(symbol.Bytes&1)!=0) throw new InvalidDataException("Invalid map range");
     byte[] bytes=hunk.AsSpan(32+symbol.Offset,symbol.Bytes).ToArray();
