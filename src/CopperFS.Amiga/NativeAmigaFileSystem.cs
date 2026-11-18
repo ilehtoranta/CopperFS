@@ -458,7 +458,16 @@ public static partial class NativeAmigaFileSystem
             // Sixteen blocks cover the full disk Shell's extension chain;
             // memory never grows with read or file length. Allocation failure
             // rolls back this optional cache and keeps ordinary track reads.
-            MoreCache(s, 16, out _);
+#if !COPPERSTART_SFS_STANDALONE
+            var bootstrap = APTR.FromPointer(0x200);
+            // Leave the optional headers out of the boot floppy's Chip RAM
+            // budget when there is no expansion RAM to hold them.
+            if (APTR.ReadUInt32(bootstrap, BootstrapAbi.ChipSizeOffset) != 0x100000 ||
+                APTR.ReadUInt32(bootstrap, BootstrapAbi.BoardCountOffset) != 0 ||
+                APTR.ReadUInt32(bootstrap, BootstrapAbi.PseudoFastSizeOffset) != 0 ||
+                !DeviceNamed(deviceName, "trackdisk.device"))
+#endif
+                MoreCache(s, 16, out _);
 #if COPPERFS_FFS_HANDLER
             var workspace = APTR.FromPointer(global::Amiga.Exec.AllocMem(FfsIndexBytes, global::Amiga.Exec.MemoryFlags.Public));
             if (workspace.IsNotNull)
