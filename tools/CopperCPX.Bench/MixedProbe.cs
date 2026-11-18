@@ -6,15 +6,19 @@ public static class Probe
     private static APTR data;
     private static APTR port;
 
-    public static int Entry()
+    public static int Entry() => Run(Exec.MemoryFlags.Public | Exec.MemoryFlags.Fast | Exec.MemoryFlags.Clear, 32768);
+
+    public static int ChipEntry() => Run(Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear, 4096);
+
+    private static int Run(Exec.MemoryFlags probeMemory, uint stackLongwords)
     {
         APTR dos = Exec.OpenLibraryRaw(CString.FromLiteral("dos.library"), 37);
         if (dos.IsNull) { Report(250); return 1; }
         DOS.DOSLibraryBase = dos;
         APTR process = Exec.FindTask(CString.FromPointer(0));
         APTR.WriteUInt32(process, 184, uint.MaxValue);
-        control = APTR.FromPointer(Exec.AllocMem(1024, Exec.MemoryFlags.Public | Exec.MemoryFlags.Fast | Exec.MemoryFlags.Clear));
-        data = APTR.FromPointer(Exec.AllocMem(8192, Exec.MemoryFlags.Public | Exec.MemoryFlags.Fast | Exec.MemoryFlags.Clear));
+        control = APTR.FromPointer(Exec.AllocMem(1024, probeMemory));
+        data = APTR.FromPointer(Exec.AllocMem(8192, probeMemory));
         if (control.IsNull || data.IsNull) { Report(250); return 2; }
         Report(200); Report((int)(control.Raw >> 24)); Report((int)(control.Raw >> 16)); Report((int)(control.Raw >> 8)); Report((int)control.Raw);
 
@@ -47,7 +51,7 @@ public static class Probe
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.Mask, 0xFFFFFFFE);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.BootPriority, 0xFFFFFF7F);
         APTR.WriteUInt32(environment, DosLayout.DosEnvec.DosType, flavor == 0 ? 0x43505834u : flavor == 1 ? 0x444F5301u : 0x53465300u);
-        APTR.WriteUInt32(node, DosLayout.DeviceNode.StackSize, 32768);
+        APTR.WriteUInt32(node, DosLayout.DeviceNode.StackSize, stackLongwords);
         APTR.WriteUInt32(node, DosLayout.DeviceNode.Priority, 10);
         APTR.WriteUInt32(node, DosLayout.DeviceNode.Startup, startup.Raw >> 2);
         APTR.WriteUInt32(node, DosLayout.DeviceNode.SegmentList, segment.Value.Raw);

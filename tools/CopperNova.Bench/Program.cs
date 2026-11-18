@@ -20,6 +20,7 @@ internal static class Program
     private static readonly string ArtifactRoot = Environment.GetEnvironmentVariable("CPX_BENCH_ROOT") ?? Path.Combine(Repo,"artifacts","nova-crossfs-benchmark");
     private static readonly string CpxHandler = Environment.GetEnvironmentVariable("CPX_BENCH_HANDLER") ?? Path.Combine(Repo,"artifacts","nova-prototype-handler","CopperNovaPrototype");
     private static string Input(string name) => Environment.GetEnvironmentVariable(name) ?? throw new ArgumentException($"Set {name} to the required external input path. See tools/CopperNova.Bench/README.md.");
+    private static bool ChipOnly => Environment.GetEnvironmentVariable("NOVA_BENCH_MACHINE") == "68000-chip";
     private static bool Streaming;
     private static bool CachePressure;
     private static int PayloadBytes => Streaming?2097152:6003;
@@ -30,16 +31,17 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
-        if(args.Length==2&&args[0]=="compile-cache")
+        bool compileChip = args.Length == 3 && args[0] == "compile-chip" && args[1] is "mixed" or "stream";
+        if(compileChip || args.Length==2&&args[0]=="compile-cache")
         {
             var compiled=AmigaM68kCompiler.Compile(new M68kCompilationRequest {
-                AssemblyPath=typeof(CachePressureProbe).Assembly.Location,EntryPoint="CachePressureProbe::Entry",Cpu=M68kCpuTarget.M68000,
+                AssemblyPath=typeof(CachePressureProbe).Assembly.Location,EntryPoint=compileChip ? (args[1] == "mixed" ? "Probe::ChipEntry" : "StreamingProbe::ChipEntry") : "CachePressureProbe::Entry",Cpu=M68kCpuTarget.M68000,
                 OutputFormat=M68kOutputFormat.Hunk,RuntimeProfile=M68kRuntimeProfile.Application,ExceptionMode=M68kExceptionMode.Full,IncludedExportNames=[] });
-            if(!compiled.FrameworkAnalysis.IsCompatible||compiled.FrameworkAnalysis.ManagedAllocationSites.Count!=0) throw new InvalidOperationException("Incompatible pressure probe");
-            File.WriteAllBytes(args[1],compiled.Image); return 0;
+            if(!compiled.FrameworkAnalysis.IsCompatible||compiled.FrameworkAnalysis.ManagedAllocationSites.Count!=0) throw new InvalidOperationException("Incompatible benchmark probe");
+            File.WriteAllBytes(args[^1],compiled.Image); return 0;
         }
         if(args.Length>1||args.Length==1&&args[0] is not ("mixed" or "stream" or "cache"))
-        { Console.Error.WriteLine("Usage: CopperNova.Bench [mixed|stream|cache], or compile-cache <output HUNK>"); return 2; }
+        { Console.Error.WriteLine("Usage: CopperNova.Bench [mixed|stream|cache], compile-cache <output HUNK>, or compile-chip <mixed|stream> <output HUNK>"); return 2; }
         Streaming=args.Length==1&&args[0]=="stream";
         CachePressure=args.Length==1&&args[0]=="cache";
         if(CachePressure&&Environment.GetEnvironmentVariable("CPX_ONLY")!="1") throw new ArgumentException("Cache experiment compares prototype variants only");
@@ -62,7 +64,7 @@ internal static class Program
 
         var arms = new[]
         {
-            new Arm("CopperNova prototype", CpxHandler, nova, 0),
+            new Arm("CopperNova prototype", CpxHandler, nova, 0, packed),
             new Arm("Kickstart FFS 40.1", FfsHandler, ffs, 1),
             new Arm("SmartFilesystem 1.279", SfsHandler, sfs, 2)
         };
@@ -72,9 +74,14 @@ internal static class Program
         string? baselineHandler=Environment.GetEnvironmentVariable("NOVA_BENCH_BASELINE_HANDLER");
         if(!string.IsNullOrEmpty(baselineHandler))
         {
-            var baselineArm=new Arm(packed?"Current CopperNova prototype (execution core)":"Current CopperNova prototype (CLOCK)",baselineHandler,packed?NovaImage.Format(DiskBytes):nova,0);
+            bool packedBaseline = Environment.GetEnvironmentVariable("NOVA_BENCH_BASELINE_PACKED") == "1";
+            if(packedBaseline && !packed) throw new ArgumentException("A packed baseline requires a packed comparison");
+            string baselineName = packedBaseline ? "Qualified CNP2" : packed ? "Current CopperNova prototype (execution core)" : "Current CopperNova prototype (CLOCK)";
+            var baselineArm = new Arm(baselineName, baselineHandler, packed && !packedBaseline ? NovaImage.Format(DiskBytes) : nova, 0, packedBaseline);
             order=[baselineArm,arms[0],arms[1],arms[2],arms[2],arms[1],arms[0],baselineArm];
         }
+        // The original SFS 1.279 HUNK requires a 68020.
+        if (ChipOnly) order = order.Where(arm => arm.Flavor != 2).ToArray();
         foreach (var arm in Environment.GetEnvironmentVariable("CPX_ONLY") == "1" ? new[] { arms[0] } : order)
         {
             var trial = reports.Count(r => r.Name == arm.Name) + 1;
@@ -87,6 +94,7 @@ internal static class Program
         {
             var mutation = group.Select(result => result.PhaseCycles["mutationCycles"]).Order().ToArray();
             var flush = group.Select(result => result.PhaseCycles["flushCycles"]).Order().ToArray();
+            var mutationAndFlush = group.Select(result => result.PhaseCycles["mutationCycles"] + result.PhaseCycles["flushCycles"]).Order().ToArray();
             var remount = group.Select(result => result.PhaseCycles["remountCycles"]).Order().ToArray();
             var verify = group.Select(result => result.PhaseCycles["verifyCycles"]).Order().ToArray();
             var total = group.Select(result => result.PhaseCycles.Values.Sum()).Order().ToArray();
@@ -97,6 +105,7 @@ internal static class Program
                 AllPassed = group.All(result => result.Passed),
                 MutationCyclesMedian = Median(mutation), MutationCyclesRange = new[] { mutation[0], mutation[^1] },
                 FlushCyclesMedian = Median(flush), FlushCyclesRange = new[] { flush[0], flush[^1] },
+                MutationAndFlushCyclesMedian = Median(mutationAndFlush), MutationAndFlushCyclesRange = new[] { mutationAndFlush[0], mutationAndFlush[^1] },
                 RemountCyclesMedian = Median(remount), RemountCyclesRange = new[] { remount[0], remount[^1] },
                 VerifyCyclesMedian = Median(verify), VerifyCyclesRange = new[] { verify[0], verify[^1] },
                 TotalMeasuredCyclesMedian = Median(total), TotalMeasuredCyclesRange = new[] { total[0], total[^1] }
@@ -108,20 +117,21 @@ internal static class Program
         var report = new
         {
             Schema = 1,
-            Machine = "Kickstart 3.1, emulated 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+            Machine = "Kickstart 3.1, " + (ChipOnly ? "68000, 512 KiB Chip" : "68020, 512 KiB Chip + 2 MiB Fast") + ", 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
             Workload = Streaming?"32 writes of 64 KiB (2 MiB); two partial overwrites; no-op truncates; rename; second file; ACTION_FLUSH; remount; complete read/verify.":"Create directory; write 8 KiB; two partial overwrites; truncate to 6003 twice; close and rename; second file; ACTION_FLUSH; remount; complete read/verify.",
             Timing = "Emulated bus-cycle deltas; host wall time is informational only.",
+            Unavailable = ChipOnly ? new[] { "SmartFilesystem 1.279 requires a 68020" } : Array.Empty<string>(),
             Trials = reports,
             Summary = summaries,
             Ratios = new
             {
                 PrototypeMutationVsKickstartFfs = summaries.Single(summary => summary.Name == "CopperNova prototype").MutationCyclesMedian /
                     summaries.Single(summary => summary.Name == "Kickstart FFS 40.1").MutationCyclesMedian,
-                PrototypeMutationVsSfs1279 = summaries.Single(summary => summary.Name == "CopperNova prototype").MutationCyclesMedian /
+                PrototypeMutationVsSfs1279 = ChipOnly ? (double?)null : summaries.Single(summary => summary.Name == "CopperNova prototype").MutationCyclesMedian /
                     summaries.Single(summary => summary.Name == "SmartFilesystem 1.279").MutationCyclesMedian,
                 PrototypeTotalVsKickstartFfs = summaries.Single(summary => summary.Name == "CopperNova prototype").TotalMeasuredCyclesMedian /
                     summaries.Single(summary => summary.Name == "Kickstart FFS 40.1").TotalMeasuredCyclesMedian,
-                PrototypeTotalVsSfs1279 = summaries.Single(summary => summary.Name == "CopperNova prototype").TotalMeasuredCyclesMedian /
+                PrototypeTotalVsSfs1279 = ChipOnly ? (double?)null : summaries.Single(summary => summary.Name == "CopperNova prototype").TotalMeasuredCyclesMedian /
                     summaries.Single(summary => summary.Name == "SmartFilesystem 1.279").TotalMeasuredCyclesMedian
             },
             Inputs = new
@@ -156,9 +166,9 @@ internal static class Program
         var hook = new IoHook();
         var machine = new LightweightA500Machine(new()
         {
-            CpuModel = M68kCpuModel.M68020,
+            CpuModel = ChipOnly ? M68kCpuModel.M68000 : M68kCpuModel.M68020,
             ChipRamBytes = 512 * 1024,
-            FastRamBytes = 2 * 1024 * 1024,
+            FastRamBytes = ChipOnly ? 0 : 2 * 1024 * 1024,
             SlowRamBytes = 0,
             FramebufferWidth = 908,
             FloppyDriveCount = 1,
@@ -225,9 +235,9 @@ internal static class Program
             Console.WriteLine($"Failed {arm.Name} trial {trial}: stage {stage}, DOS IoErr {error}, PC {pc:X8}, {frames} frames.");
         try
         {
-            if (result.Passed && arm.Name is "CopperNova prototype" or "Current CopperNova prototype (CLOCK)" or "Current CopperNova prototype (execution core)")
+            if (result.Passed && arm.Flavor == 0)
             {
-                var check = arm.Name=="CopperNova prototype"&&Environment.GetEnvironmentVariable("NOVA_PACKED")=="1"?NovaImage.CheckPacked(finishedMedia):NovaImage.Check(finishedMedia);
+                var check = arm.Packed ? NovaImage.CheckPacked(finishedMedia):NovaImage.Check(finishedMedia);
                 if(CachePressure)
                 {
                     if(Hash(finishedMedia)!=Hash(arm.Media)||check.AllocatedInodes!=115) throw new InvalidDataException("Read-only cache workload changed media");
@@ -404,7 +414,7 @@ internal static class Program
         return image;
     }
 
-    private sealed record Arm(string Name, string Handler, byte[] Media, uint Flavor);
+    private sealed record Arm(string Name, string Handler, byte[] Media, uint Flavor, bool Packed = false);
     private sealed record RunResult(string Name, int Trial, bool Passed, uint Stage, uint IoErr, int LoopFrames,
         long CompletedFrames, double HostSeconds, Dictionary<string, long> PhaseCycles,
         int ReadCommands, int WriteCommands, int ReadRequests, int WriteRequests,

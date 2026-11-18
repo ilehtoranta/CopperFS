@@ -42,37 +42,98 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
     private uint Tree(uint group)=>m.Read16(Root()+160+group*2);
     private uint Extra(uint group)=>m.Read16(Root()+288+group*2);
     private uint Row(uint index)=>Arena+Rows+index*224;
-    // CRC differences are linear. The reference contains a complete sector
-    // whose CRC this mount verified or generated. Each set bit covers a
-    // 32-byte region that may have changed since that exact image.
-    private uint PatchedCrc(uint page,uint reference,uint mask)
+
+    // Fold the four big-endian byte lanes with the existing reflected CRC table.
+    private uint FoldWriteCrc(uint high, uint upper, uint lower, uint low)
     {
-        uint normal=Arena+CrcTable,table=Arena+WordTable,spill=Arena+State+CrcWord;
-        uint a=0,b=0,c=0,d=m.Read32(reference+8),check=page+8;
-        for(uint chunk=0;mask!=0;chunk++,mask>>=1) {
-            if((mask&1)==0) continue;
-            uint src=page+(chunk<<5),prior=reference+(chunk<<5),row=table+(chunk<<10),end=src+32;
-            for(;src<end;src+=4,prior+=4,row+=128) {
-                uint change=m.Read32(src)^m.Read32(prior);
-                if(change==0||src==check) continue;
-                if(change>255) {
-                    m.Write32(spill,change);
-                    if(change>65535) {
-                        uint x=m.Read8(spill),y=m.Read8(spill+1);
-                        a^=m.Read32(row+((x&15)<<2))^m.Read32(row+64+((x>>4)<<2));
-                        b^=m.Read32(row+((y&15)<<2))^m.Read32(row+64+((y>>4)<<2));
-                    }
-                    uint z=m.Read8(spill+2);
-                    c^=m.Read32(row+((z&15)<<2))^m.Read32(row+64+((z>>4)<<2));
+        uint table = Arena + CrcTable;
+        uint crc = (high >> 8) ^ m.Read32(table + ((high & 255) << 2)) ^ upper;
+        crc = (crc >> 8) ^ m.Read32(table + ((crc & 255) << 2)) ^ lower;
+        return (crc >> 8) ^ m.Read32(table + ((crc & 255) << 2)) ^ low;
+    }
+
+    private uint LeafWriteCrc(uint page, uint end)
+    {
+        // Stamp owns this unpublished image and replaces its CRC before any I/O.
+        // Zeroing the field once keeps it out of every word's inner-loop test.
+        m.Write32(page + 8, 0);
+        uint row = Arena + WordTable;
+        // CRC-32C of 512 zero bytes supplies the affine offset. Each 128-byte
+        // row stores the low- and high-nibble weights for one word position.
+        uint high = 0, upper = 0, lower = 0, low = 0x30fcedc0;
+        // The encoder has already cleared the suffix. The row weights still
+        // advance each byte through its full position in a 512-byte sector.
+        for (uint src = page; src < end; src += 4, row += 128)
+        {
+            uint word = m.Read32(src);
+            if (word == 0) continue;
+            if (word < 16)
+            {
+                low ^= m.Read32(row + (word << 2));
+                continue;
+            }
+            if ((word & 255) != 0)
+                low ^= m.Read32(row + ((word << 2) & 60)) ^ m.Read32(row + 64 + ((word >> 2) & 60));
+            if (word <= 255) continue;
+            uint second = m.Read8(src + 2);
+            if (second != 0)
+                lower ^= m.Read32(row + ((second << 2) & 60)) ^ m.Read32(row + 64 + ((second >> 2) & 60));
+            if (word <= 65535) continue;
+            uint third = m.Read8(src + 1);
+            if (third != 0)
+                upper ^= m.Read32(row + ((third << 2) & 60)) ^ m.Read32(row + 64 + ((third >> 2) & 60));
+            uint fourth = m.Read8(src);
+            if (fourth != 0)
+                high ^= m.Read32(row + ((fourth << 2) & 60)) ^ m.Read32(row + 64 + ((fourth >> 2) & 60));
+        }
+        return FoldWriteCrc(high, upper, lower, low);
+    }
+
+    private uint PatchedCrc(uint page, uint reference, uint mask)
+    {
+        uint row = Arena + WordTable;
+        uint high = 0, upper = 0, lower = 0, low = m.Read32(reference + 8);
+        // Matching the reference checksum makes the checksum word contribute zero
+        // to the delta. Stamp has exclusive ownership of the candidate page.
+        m.Write32(page + 8, low);
+        // Start at the CRC of the exact verified reference. Each bit covers
+        // eight longwords. Advance both cursors and their table row together.
+        for (mask &= 0xffff; mask != 0; mask >>= 1)
+        {
+            if ((mask & 1) == 0)
+            {
+                page += 32;
+                reference += 32;
+                row += 1024;
+                continue;
+            }
+            uint end = page + 32;
+            for (; page < end; page += 4, reference += 4, row += 128)
+            {
+                uint word = m.Read32(page) ^ m.Read32(reference);
+                if (word == 0) continue;
+                if (word < 16)
+                {
+                    low ^= m.Read32(row + (word << 2));
+                    continue;
                 }
-                uint last=change&255;
-                d^=m.Read32(row+((last&15)<<2))^m.Read32(row+64+((last>>4)<<2));
+                if ((word & 255) != 0)
+                    low ^= m.Read32(row + ((word << 2) & 60)) ^ m.Read32(row + 64 + ((word >> 2) & 60));
+                word >>= 8;
+                if (word == 0) continue;
+                if ((word & 255) != 0)
+                    lower ^= m.Read32(row + ((word << 2) & 60)) ^ m.Read32(row + 64 + ((word >> 2) & 60));
+                word >>= 8;
+                if (word == 0) continue;
+                upper ^= m.Read32(row + ((word << 2) & 60)) ^ m.Read32(row + 64 + ((word >> 2) & 60));
+                word >>= 8;
+                if (word != 0)
+                    high ^= m.Read32(row + ((word << 2) & 60)) ^ m.Read32(row + 64 + ((word >> 2) & 60));
             }
         }
-        uint v=(a>>8)^m.Read32(normal+((a&255)<<2))^b;
-        v=(v>>8)^m.Read32(normal+((v&255)<<2))^c;
-        return d^(v>>8)^m.Read32(normal+((v&255)<<2));
+        return FoldWriteCrc(high, upper, lower, low);
     }
+
     private void RootPointer(uint at,uint value)
     {
         m.Write16(at,value);
@@ -89,7 +150,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(type==30&&(R(ProofMask)&(1u<<(int)(1-sector)))!=0) { prior=Arena+ProofImages+((1-sector)<<9); mask=5|R(RootChanges); }
         if(type==34&&R(BitmapProof)==owner+1) { prior=Arena+BitmapImage; mask=7|R(BitmapChanges); }
         if(prior!=0) m.Write32(p+8,PatchedCrc(p,prior,mask));
-        else if(type==32) m.Write32(p+8,PositionCrc(p,p+m.Read16(p+32)));
+        else if(type==32) m.Write32(p+8,LeafWriteCrc(p,p+m.Read16(p+32)));
         else Seal(p);
         if(type==30) W(RootChanges,0);
         if(type==34) { W(BitmapChanges,0); m.Copy(Arena+BitmapImage,p,512); W(BitmapProof,owner+1); }

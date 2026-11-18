@@ -44,21 +44,62 @@ public class ExecutionCoreTests
             var bytes=h.Memory.Bytes.AsSpan((int)page,512);
             bytes.Clear();
             random.NextBytes(bytes[..used]);
-            bytes.Slice(8,4).Clear();
             h.Memory.Write16(page+32,(uint)used);
             stamp.Invoke(h.Engine,new object[] { page,32u,195u,0u,1u });
 
-            uint crc=uint.MaxValue;
-            for(int i=0;i<bytes.Length;i++) {
-                if(i<8||i>=12) crc^=bytes[i];
-                for(int bit=0;bit<8;bit++) crc=(crc>>1)^((crc&1)!=0?0x82F63B78u:0);
-            }
-            Assert.Equal(~crc,h.Memory.Read32(page+8));
+            Assert.Equal(SectorChecksum(bytes),h.Memory.Read32(page+8));
             if(used<512) {
                 bytes[used]^=1;
                 Assert.False((bool)validate.Invoke(h.Engine,new object[] { page,32u,195u })!);
             }
         }
+    }
+
+    [Fact]
+    public void DeltaWriteChecksumMatchesFullSectorForEveryDirtyChunk()
+    {
+        var h = new Harness(CopperNova.Reference.NovaImage.FormatPacked());
+        h.Mount();
+        var delta = typeof(NovaEngine<Ram>).GetMethod("PatchedCrc", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        const uint page = Harness.Data, prior = page + 512;
+        var random = new Random(0x68000);
+        foreach (uint mask in Enumerable.Range(0, 16).Select(bit => 1u << bit).Concat(new uint[] { 0, 0x5555, 0x8001, 0xffff }))
+        {
+            var original = h.Memory.Bytes.AsSpan((int)prior, 512);
+            var updated = h.Memory.Bytes.AsSpan((int)page, 512);
+            random.NextBytes(original);
+            h.Memory.Write32(prior + 8, SectorChecksum(original));
+            original.CopyTo(updated);
+            ReadOnlySpan<uint> changes = [0, 1, 15, 16, 0xff00, 0x10000, 0xff000000, uint.MaxValue];
+            for (int chunk = 0; chunk < 16; chunk++)
+            {
+                if ((mask & (1u << chunk)) == 0) continue;
+                if (mask == 0xffff) random.NextBytes(updated.Slice(chunk * 32, 32));
+                else for (int i = 0; i < changes.Length; i++)
+                {
+                    uint at = (uint)(chunk * 32 + i * 4);
+                    h.Memory.Write32(page + at, h.Memory.Read32(prior + at) ^ changes[i]);
+                }
+            }
+            byte[] referenceBefore = original.ToArray();
+            byte[] candidateBefore = updated.ToArray();
+            uint actual = (uint)delta.Invoke(h.Engine, new object[] { page, prior, mask })!;
+            Assert.Equal(SectorChecksum(candidateBefore), actual);
+            Assert.True(original.SequenceEqual(referenceBefore));
+            Assert.True(updated[..8].SequenceEqual(candidateBefore.AsSpan(0, 8)));
+            Assert.True(updated[12..].SequenceEqual(candidateBefore.AsSpan(12)));
+        }
+    }
+
+    private static uint SectorChecksum(ReadOnlySpan<byte> bytes)
+    {
+        uint crc = uint.MaxValue;
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            if (i < 8 || i >= 12) crc ^= bytes[i];
+            for (int bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0x82f63b78u : 0);
+        }
+        return ~crc;
     }
 
     [Theory] [InlineData(false)] [InlineData(true)]
