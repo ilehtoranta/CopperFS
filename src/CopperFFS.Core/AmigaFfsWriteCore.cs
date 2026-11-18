@@ -1321,7 +1321,7 @@ public static partial class AmigaFfsWriteCore
     private static APTR EditDirectoryLinks<T>(ref T p, ref Work w, uint key, APTR current, bool directory)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        var image = directory && w.ReadsGroupedDirectories && w.GroupMetadata && w.LayoutKnown &&
+        var image = MountIndexEnabled && directory && w.ReadsGroupedDirectories && w.GroupMetadata && w.LayoutKnown &&
             key != w.RootKey && w.DosType < 0x444F5304
             ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage)) : APTR.Null;
         if (!MountIndexEnabled || image.IsNull)
@@ -1351,7 +1351,7 @@ public static partial class AmigaFfsWriteCore
         if (r.Header == geometry.RootBlock) return Fail(ref w, DOS.Error.ActionNotKnown);
         if (action == DosPacketAction.SetComment && r.Length > 79)
             return Fail(ref w, DOS.Error.CommentTooBig);
-        if (w.GroupMetadata && r.Header != 0 && w.Index.IsNotNull &&
+        if (MountIndexEnabled && w.GroupMetadata && r.Header != 0 && w.Index.IsNotNull &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.MetadataOpen &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.SealedAttributeHeader) == r.Header &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) == r.Header)
@@ -1831,7 +1831,7 @@ public static partial class AmigaFfsWriteCore
     }
 
     public static bool HasFileWriteGroup<T>(ref T p, APTR index) where T : struct, IAmigaFileSystemPlatform
-        => index.IsNotNull && p.ReadUInt32(index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.GroupOpen;
+        => MountIndexEnabled && index.IsNotNull && p.ReadUInt32(index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.GroupOpen;
 
     // A short overwrite cannot relocate or change the file length. The open
     // group already verified both the logical keys and their allocation bits.
@@ -1955,6 +1955,9 @@ public static partial class AmigaFfsWriteCore
 
     private static bool ReadWriteTable<T>(ref T p, ref Work w, uint table) where T : struct, IAmigaWritableFileSystemPlatform
     {
+#if COPPERFS_NO_FFS_MOUNT_INDEX
+        return p.ReadBlock(table, w.Meta);
+#else
         if (w.GroupHeader != 0 && table != 0 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.FirstExtension) == table)
         {
             p.Copy(APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.FirstExtensionImage)), w.Meta, p.BlockBytes);
@@ -1969,6 +1972,7 @@ public static partial class AmigaFfsWriteCore
             return p.ReadBlock(table, w.Meta);
         p.Copy(APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage)), w.Meta, p.BlockBytes);
         return true;
+#endif
     }
 
     private static bool PublishGroupTable<T>(ref T p, ref Work w, bool retainPrivate = false,
@@ -2168,6 +2172,9 @@ public static partial class AmigaFfsWriteCore
 
     public static bool FinishFileWriteGroup<T>(ref T p, ref Work w) where T : struct, IAmigaWritableFileSystemPlatform
     {
+#if COPPERFS_NO_FFS_MOUNT_INDEX
+        return true;
+#else
         if (w.Index.IsNull) return true;
         var status = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status);
         if (status == AmigaFfsMountIndex.GroupFailed || status == AmigaFfsMountIndex.Updating)
@@ -2211,6 +2218,7 @@ public static partial class AmigaFfsWriteCore
         if (w.ReadsGroupedDirectories) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PublishedParent, parent);
         p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.Clean);
         return true;
+#endif
     }
 
     // The header is also the first pointer table. Seal the final pointer and

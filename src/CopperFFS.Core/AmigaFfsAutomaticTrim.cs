@@ -27,7 +27,9 @@ public static partial class AmigaFfsWriteCore
             if (!p.ReadBlock(0, w.Meta) || p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301) ||
                 !Header(ref p, ref w, g.RootBlock) || p.ReadUInt32(w.Meta, g.Tail + 312) != uint.MaxValue || !p.Flush())
             {
-                if (MountIndexEnabled) AmigaFfsMountIndex.Forget(ref p, w.Index);
+#if !COPPERFS_NO_FFS_MOUNT_INDEX
+                AmigaFfsMountIndex.Forget(ref p, w.Index);
+#endif
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             }
             uint used = 0, previous = uint.MaxValue, total = 0;

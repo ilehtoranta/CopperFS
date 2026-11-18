@@ -313,7 +313,7 @@ public static partial class AmigaFfsWriteCore
             fileTables = AmigaFfsMountIndex.TableKeys(ref p, w.Index);
             p.WriteUInt32(fileTables, 0, r.Header);
             w.RestoreFile = r.Header; w.RestoreSize = newSize; w.WritingIndexedFile = true;
-            if (w.GroupFileWrites && w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0)
+            if (MountIndexEnabled && w.GroupFileWrites && w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0)
                 w.GroupHeader = r.Header;
         }
         if (MountIndexEnabled && w.BufferSmallAppends && TryStartBufferedAppend(ref p, ref w, ref r, in g, size, out actual))

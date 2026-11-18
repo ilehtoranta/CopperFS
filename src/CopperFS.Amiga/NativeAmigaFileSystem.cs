@@ -1610,7 +1610,7 @@ public static partial class NativeAmigaFileSystem
         if (w.GroupHeader != 0)
         {
             APTR.WriteUInt32(state, FfsWriteGroupHandle, obj.Raw);
-            if (obj.IsNull && !AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w))
+            if (AmigaFfsMountIndex.Enabled && obj.IsNull && !AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref w))
             {
                 APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
                 error = w.Error;
