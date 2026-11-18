@@ -4,6 +4,18 @@ namespace CopperCPX.Amiga;
 public struct NativeCpxMemory : ICpxMemory
 {
     public uint Reserved;
+    public void Copy(uint destination,uint source,uint bytes)
+    {
+        if(destination==source||bytes==0) return;
+        bool disjoint=destination<source?bytes<=source-destination:bytes<=destination-source;
+        if(bytes>=64&&disjoint)
+        {
+            if(((destination|source|bytes)&3)==0) Exec.CopyMemQuick(APTR.FromPointer(source),APTR.FromPointer(destination),bytes);
+            else Exec.CopyMem(APTR.FromPointer(source),APTR.FromPointer(destination),bytes);
+            return;
+        }
+        CpxMemoryCopy.Forward(ref this,destination,source,bytes);
+    }
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public uint Read16(uint p)=>APTR.ReadUInt16(APTR.FromPointer(p),0);
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]

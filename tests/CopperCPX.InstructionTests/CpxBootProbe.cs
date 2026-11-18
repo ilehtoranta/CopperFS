@@ -147,8 +147,15 @@ public static partial class CpxBootProbe
             APTR.WriteUInt32(control,36,400);
             uint mediaFailure=MediaLifecycle(control,port,data); if(mediaFailure!=0) return Fail(control,mediaFailure);
         }
+        bool appendLease=(APTR.ReadUInt32(control,60)&16384)!=0;
+        if(appendLease)
+        {
+            uint appendFailure=AppendLeaseWork(control,port); if(appendFailure!=0) return Fail(control,appendFailure);
+        }
         APTR.WriteUInt32(control,36,0);
-        if(DOS.DoPkt(port,27,0,0,0,0,0)==0) return Fail(control,15);
+        // The append fixture deliberately leaves its last writes unflushed:
+        // DIE must persist them through the normal shutdown continuation.
+        if(!appendLease&&DOS.DoPkt(port,27,0,0,0,0,0)==0) return Fail(control,15);
         APTR.WriteUInt32(control,48,Exec.AvailMem(Exec.MemoryFlags.Public)); Report(226);
         if(DOS.DoPkt(port,5,0,0,0,0,0)==0) return Fail(control,16);
         DOS.Delay(5); APTR.WriteUInt32(control,52,Exec.AvailMem(Exec.MemoryFlags.Public)); Report(210); return 0;

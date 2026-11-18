@@ -15,7 +15,10 @@ internal static class NativeCpxMaintenance
         APTR port=NativeCpxRecordTimers.Port(arena);
         APTR request=Exec.CreateIORequest(port,TimerRequest.Size);
         if(request.IsNull) return false;
-        if(Exec.OpenDevice(CString.FromLiteral("timer.device"),(uint)TimerUnit.MicroHz,request,0)!=0)
+        // A thirty-second idle deadline needs frame resolution. Keep this
+        // separate from record-lock timers so an idle filesystem does not
+        // require the CIA-backed high-resolution timer to count a long wait.
+        if(Exec.OpenDevice(CString.FromLiteral("timer.device"),(uint)TimerUnit.VBlank,request,0)!=0)
         { Exec.DeleteIORequest(request); return false; }
         APTR.WriteUInt32(State(arena),Request,request.Raw); return true;
     }

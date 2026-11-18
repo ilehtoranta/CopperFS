@@ -109,13 +109,54 @@ public static class NativeCpxTransport
         APTR.WriteUInt32(APTR.FromPointer(arena+2304),0,0); return true;
     }
     public static StepResult Service(uint arena,CpxIo io,out uint completed,out bool unsupported)
+        => ServiceRequest(arena,in io,out completed,out unsupported);
+    internal static unsafe StepResult ServiceEngineRequest(uint arena,out uint token,out uint completed,out bool unsupported)
+    {
+        // The engine remains single-owner and suspended in NeedIo throughout
+        // this call. Capture identity before device/bounce completion can touch
+        // caller storage; never retain this reference across visits.
+        ref readonly CpxIo io=ref *(CpxIo*)(arena+CpxArena.PendingIo);
+        token=io.Token;
+        return ServiceRequest(arena,in io,out completed,out unsupported);
+    }
+    internal static StepResult ServiceRequest(uint arena,in CpxIo io,out uint completed,out bool unsupported)
     {
         completed=0; unsupported=false; APTR s=State(arena),request=APTR.FromPointer(APTR.ReadUInt32(s,16));
         APTR.WriteUInt32(s,72,0);
         if(APTR.ReadUInt32(s,64)!=0) return Quiesce(arena)==StepResult.Pending?StepResult.Pending:StepResult.Failed;
         if(io.Kind is IoKind.Discard or IoKind.QueryDiscard) return NativeCpxUnmap.Service(arena,io,out completed,out unsupported);
-        if(Waiting(arena))
+        if(Waiting(arena)) return ReapTransfer(arena,s,request,in io,out completed);
+        if(APTR.ReadUInt32(s,48)!=io.Token) { APTR.WriteUInt32(s,48,io.Token); APTR.WriteUInt32(s,52,0); }
+        if(io.Kind==IoKind.Flush)
         {
+            APTR.WriteUInt32(s,56,0);
+            if(NativeCpxIo.SubmitFlush(request,s,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
+            return APTR.ReadUInt32(s,0)==3?ReapTransfer(arena,s,request,in io,out completed):StepResult.Pending;
+        }
+        uint done=APTR.ReadUInt32(s,52);
+        if(done>io.Bytes) return StepResult.Failed;
+        if(!TryDirect(s,in io,out var command)&&!NextSplitTransfer(arena,s,in io,done,out command)) return StepResult.Failed;
+        APTR.WriteUInt32(s,56,command.Length); APTR.WriteUInt32(s,60,command.Bounced?1u:0u);
+        if(io.Kind==IoKind.Write&&command.Bounced) Copy(io.Buffer+done,command.Buffer,command.Length);
+        if(NativeCpxIo.Submit(request,s,command,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
+        return APTR.ReadUInt32(s,0)==3?ReapTransfer(arena,s,request,in io,out completed):StepResult.Pending;
+    }
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool NextSplitTransfer(uint arena,APTR s,in CpxIo io,uint done,out DeviceRequest command)
+    {
+        command=default;
+        var cursor=new Td64Transfer();
+        int shift=SectorShift(arena);
+        CpxError begin=cursor.Begin(new(APTR.ReadUInt32(s,20),APTR.ReadUInt32(s,24)),new(APTR.ReadUInt32(s,28),APTR.ReadUInt32(s,32)),
+            io.Sector+(done>>shift),shift,io.Bytes-done,io.Buffer+done,APTR.ReadUInt32(s,36),APTR.ReadUInt32(s,40),
+            APTR.ReadUInt32(s,Bounce),APTR.ReadUInt32(s,BounceBytes),io.Kind==IoKind.Write,APTR.ReadUInt32(s,44)!=0,APTR.ReadUInt32(s,ForceBounce)!=0);
+        return begin==CpxError.None&&cursor.Next(out command)==StepResult.NeedIo;
+    }
+    private static StepResult ReapTransfer(uint arena,APTR s,APTR request,in CpxIo io,out uint completed)
+    {
+        completed=0; APTR.WriteUInt32(s,72,0);
+        if(APTR.ReadUInt32(s,64)!=0) return Quiesce(arena)==StepResult.Pending?StepResult.Pending:StepResult.Failed;
+
             if(!NativeCpxIo.Reap(request,s,out uint token,out uint actual,out CpxError error)) return StepResult.Pending;
             if(token!=io.Token) return StepResult.Failed;
             if(error!=CpxError.None) { APTR.WriteUInt32(s,72,1); return StepResult.Failed; }
@@ -125,31 +166,9 @@ public static class NativeCpxTransport
             completed=prior+take; APTR.WriteUInt32(s,52,completed);
             if(io.Kind==IoKind.Flush||completed==io.Bytes) { APTR.WriteUInt32(s,48,0); return StepResult.Complete; }
             return StepResult.Pending;
-        }
-        if(APTR.ReadUInt32(s,48)!=io.Token) { APTR.WriteUInt32(s,48,io.Token); APTR.WriteUInt32(s,52,0); }
-        if(io.Kind==IoKind.Flush)
-        {
-            APTR.WriteUInt32(s,56,0);
-            if(NativeCpxIo.SubmitFlush(request,s,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
-            return APTR.ReadUInt32(s,0)==3?Service(arena,io,out completed,out unsupported):StepResult.Pending;
-        }
-        uint done=APTR.ReadUInt32(s,52);
-        if(done>io.Bytes) return StepResult.Failed;
-        if(!TryDirect(s,io,out var command))
-        {
-        var cursor=new Td64Transfer();
-        int shift=SectorShift(arena);
-        CpxError begin=cursor.Begin(new(APTR.ReadUInt32(s,20),APTR.ReadUInt32(s,24)),new(APTR.ReadUInt32(s,28),APTR.ReadUInt32(s,32)),
-            io.Sector+(done>>shift),shift,io.Bytes-done,io.Buffer+done,APTR.ReadUInt32(s,36),APTR.ReadUInt32(s,40),
-            APTR.ReadUInt32(s,Bounce),APTR.ReadUInt32(s,BounceBytes),io.Kind==IoKind.Write,APTR.ReadUInt32(s,44)!=0,APTR.ReadUInt32(s,ForceBounce)!=0);
-        if(begin!=CpxError.None||cursor.Next(out command)!=StepResult.NeedIo) return StepResult.Failed;
-        }
-        APTR.WriteUInt32(s,56,command.Length); APTR.WriteUInt32(s,60,command.Bounced?1u:0u);
-        if(io.Kind==IoKind.Write&&command.Bounced) Copy(io.Buffer+done,command.Buffer,command.Length);
-        if(NativeCpxIo.Submit(request,s,command,io.Token,APTR.ReadUInt32(s,100)!=0)!=CpxError.None) return StepResult.Failed;
-        return APTR.ReadUInt32(s,0)==3?Service(arena,io,out completed,out unsupported):StepResult.Pending;
+
     }
-    private static bool TryDirect(APTR s,CpxIo io,out DeviceRequest command)
+    private static bool TryDirect(APTR s,in CpxIo io,out DeviceRequest command)
     {
         command=default;
         uint shift=APTR.ReadUInt32(s,68);

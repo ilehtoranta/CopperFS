@@ -13,20 +13,20 @@ public static class NativeStorageCancellationProbe
         const uint arena=0x40000,buffer=0x80000; uint mode=APTR.ReadUInt32(APTR.FromPointer(0x7ff0),0);
         NativeCpxTransport.Initialize(arena,APTR.FromPointer(0x8200),Wide.From(512),Wide.From(8192),512,0x7fffe,true);
         var io=new CpxIo {Kind=mode==0?IoKind.Read:mode==1?IoKind.Write:mode==2?IoKind.Flush:IoKind.Discard,Sector=Wide.From(1024),Bytes=mode==2?0u:1024,Buffer=buffer,Token=1};
-        if(NativeCpxTransport.Service(arena,io,out _,out _)!=StepResult.Pending) return 1;
+        if(DmaAllocationProbe.Transfer(arena,io,out _,out _)!=StepResult.Pending) return 1;
         if(mode==1)
         {
             // First split reached the device, but the entire engine request has
             // not completed. Cancellation must never submit its second split.
-            if(NativeCpxTransport.Service(arena,io,out uint prefix,out _)!=StepResult.Pending||prefix!=512) return 2;
+            if(DmaAllocationProbe.Transfer(arena,io,out uint prefix,out _)!=StepResult.Pending||prefix!=512) return 2;
         }
         NativeCpxTransport.RequestStop(arena); NativeCpxTransport.RequestStop(arena);
         if(mode!=1)
         {
             if(NativeCpxTransport.ResetMedia(arena)) return 3;
-            if(NativeCpxTransport.Service(arena,io,out _,out _)!=StepResult.Pending) return 4;
+            if(DmaAllocationProbe.Transfer(arena,io,out _,out _)!=StepResult.Pending) return 4;
         }
-        if(NativeCpxTransport.Service(arena,io,out uint actual,out bool unsupported)!=StepResult.Failed||actual!=0||unsupported||NativeCpxTransport.Waiting(arena)) return 5;
+        if(DmaAllocationProbe.Transfer(arena,io,out uint actual,out bool unsupported)!=StepResult.Failed||actual!=0||unsupported||NativeCpxTransport.Waiting(arena)) return 5;
         if(mode==0) for(uint n=0;n<1024;n++) if(APTR.ReadUInt8(APTR.FromPointer(buffer+n),0)!=0xa5) return 6;
         if(!NativeCpxTransport.ResetMedia(arena)) return 7;
         if(APTR.ReadUInt32(APTR.FromPointer(arena+2304),0)!=0) return 8;
@@ -47,7 +47,7 @@ public class NativeStorageCancellationInstructions(Xunit.Abstractions.ITestOutpu
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
         var bus=new NativeTestBus(); compiled.Code.CopyTo(bus.Bytes,0x10000);
         foreach(var r in compiled.Relocations) { uint p=0x10000+(uint)r.Offset; bus.Put(p,bus.Get(p)+0x10000); }
-        bus.Put(4,0x9000); bus.Put(0x7ff0,(uint)mode); bus.Put(0xf0000,0xf1000); bus.Bytes.AsSpan(0xee000,4096).Fill(0xa5);
+        bus.Put(4,0x9000); bus.Put(0x7ff0,(uint)mode); bus.Put(0x7ff8,1); bus.Put(0xf0000,0xf1000); bus.Bytes.AsSpan(0xee000,4096).Fill(0xa5);
         bus.Bytes.AsSpan(0x80000,1024).Fill(0xa5);
         using var cpu=M68kCoreFactory.Default.Create(M68kCpuModel.M68000,bus); cpu.Reset(0x10000+compiled.EntryPoint,0xf0000);
         int sends=0,aborts=0,polls=0,reaps=0; bool active=false; uint minimum=0xf0000;

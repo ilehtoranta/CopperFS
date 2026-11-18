@@ -8,7 +8,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private void ReadAttribute(ulong page,ulong id)
     {
         Load(page,B(4));
-        if(!IsPage(B(4),PageType.Attribute,page,id)||U16(B(4),64)==2&&!OwnershipEnabled) throw new InvalidDataException("Invalid attributes or ownership feature.");
+        if(!VolumePage(B(4),PageType.Attribute,page,id)||U16(B(4),64)==2&&!OwnershipEnabled) throw new InvalidDataException("Invalid attributes or ownership feature.");
     }
     public uint ReadOwner(ulong id)
     {
@@ -90,7 +90,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         int length=(int)U64(obj,8);
         if(obj[85]==0) { if(length>160||U16(obj,88)!=length) throw new InvalidDataException("Invalid inline symlink."); obj.Slice(96,length).CopyTo(output); }
         else
-        { ulong page=U64(obj,96); Load(page,B(4)); if(obj[85]!=3||!IsPage(B(4),PageType.Symlink,page,id)||U16(B(4),64)!=length) throw new InvalidDataException("Invalid external symlink."); B(4).Slice(68,length).CopyTo(output); }
+        { if(obj[85]!=3) throw new InvalidDataException("Invalid external symlink."); ReadBlob(U64(obj,96),PageType.Symlink,id,length,output); }
         return length;
     }
     private static int EncodeLatin1(scoped ReadOnlySpan<byte> source,scoped Span<byte> target)

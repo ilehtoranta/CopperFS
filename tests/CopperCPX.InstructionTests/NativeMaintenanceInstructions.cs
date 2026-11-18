@@ -29,7 +29,7 @@ public partial class NativeStorageLoopInstructions
             switch(lvo)
             {
                 case 654: Assert.Equal(0x8080u,cpu.State.A[0]); cpu.State.D[0]=timer; break;
-                case 444: cpu.State.D[0]=0; break;
+                case 444: Assert.Equal((uint)global::Amiga.TimerUnit.VBlank,cpu.State.D[0]); cpu.State.D[0]=0; break;
                 case 120: case 126: break;
                 case 306: cpu.State.D[0]=0; break;
                 case 372:

@@ -58,7 +58,11 @@ public static class NativeCpxMedia
     public static bool TakeChange(uint arena)
     {
         if(APTR.ReadUInt32(S(arena),0)==0) return false;
-        Exec.Disable(); APTR data=APTR.FromPointer(arena+3808); bool changed=APTR.ReadUInt32(data,0)!=0;
+        APTR data=APTR.FromPointer(arena+3808);
+        // A zero peek acknowledges nothing. An interrupt arriving afterward
+        // remains latched for the next bounded visit, just as after Enable.
+        if(APTR.ReadUInt32(data,0)==0) return false;
+        Exec.Disable(); bool changed=APTR.ReadUInt32(data,0)!=0;
         APTR.WriteUInt32(data,0,0); Exec.Enable(); return changed;
     }
     public static StepResult Detach(uint arena)

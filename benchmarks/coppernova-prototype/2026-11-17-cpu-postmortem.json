@@ -1,0 +1,2454 @@
+{
+  "schema": 1,
+  "date": "2026-11-17",
+  "kind": "diagnosis-only; filesystem source unchanged",
+  "configuration": "MC68000; 512 KiB Chip; zero Fast; 4 KiB handler stack; frozen P4 HUNK and frozen correctness probe",
+  "units": "Scalar CPU instruction cycle deltas attributed to the handler task. NOT the 68020 end-to-end benchmark bus-cycle medians.",
+  "handlerSha256": "434545812FBB9B04CB84606106278EC4619F6EF5B1D1A0B5E3D80AF7E4FA7B38",
+  "sourceHashesMatched": true,
+  "mapSha256": "3850474F094A0E26688432D8FFFF81D27D5662E8ACB986CD077287E9452D030B",
+  "rawCodeEvidence": {
+    "crcFourOffset": "0x6CA0",
+    "crcFourBytes": 214,
+    "registerSaveInstruction": "48E7 3C30 = MOVEM.L D2-D5/A2-A3,-(SP)",
+    "registerRestoreInstruction": "4CDF 0C3C = MOVEM.L (SP)+,D2-D5/A2-A3",
+    "registerBytesSavedPerCall": 24,
+    "flushRegisterSaveRestoreTrafficBytes": 79344,
+    "crcInputBytesForMixedCommitFromSource": 6656
+  },
+  "diagnosticPhaseProfiles": {
+    "mutation": {
+      "Phase": "mutation",
+      "Methods": [
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CrcFour",
+          "Cycles": 284114,
+          "Calls": 381
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::R",
+          "Cycles": 140518,
+          "Calls": 1403
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Copy",
+          "Cycles": 72048,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::W",
+          "Cycles": 69732,
+          "Calls": 544
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Ptr",
+          "Cycles": 58836,
+          "Calls": 1335
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PacketStep",
+          "Cycles": 56120,
+          "Calls": 49
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Step",
+          "Cycles": 39536,
+          "Calls": 91
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferStep",
+          "Cycles": 37566,
+          "Calls": 30
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Zero",
+          "Cycles": 31600,
+          "Calls": 12
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Crc",
+          "Cycles": 31494,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Meta",
+          "Cycles": 29030,
+          "Calls": 188
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Find",
+          "Cycles": 28122,
+          "Calls": 36
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryDirect",
+          "Cycles": 24394,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Drive",
+          "Cycles": 22986,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceRequest",
+          "Cycles": 21970,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartPath",
+          "Cycles": 17856,
+          "Calls": 5
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Issue",
+          "Cycles": 14894,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::DmaRange",
+          "Cycles": 14332,
+          "Calls": 34
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Busy",
+          "Cycles": 13116,
+          "Calls": 212
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameHash",
+          "Cycles": 13094,
+          "Calls": 13
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Submit",
+          "Cycles": 12234,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReapTransfer",
+          "Cycles": 9784,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Load",
+          "Cycles": 9620,
+          "Calls": 29
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fold",
+          "Cycles": 9610,
+          "Calls": 148
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginPacket",
+          "Cycles": 9576,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Reap",
+          "Cycles": 8872,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bit",
+          "Cycles": 8328,
+          "Calls": 50
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CacheSlot",
+          "Cycles": 8214,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Dirty",
+          "Cycles": 8064,
+          "Calls": 28
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ShrinkStep",
+          "Cycles": 7814,
+          "Calls": 9
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Arg",
+          "Cycles": 7208,
+          "Calls": 57
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Run",
+          "Cycles": 6838,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FindEntry",
+          "Cycles": 6084,
+          "Calls": 9
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Map",
+          "Cycles": 6078,
+          "Calls": 8
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidInode",
+          "Cycles": 6032,
+          "Calls": 17
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Begin",
+          "Cycles": 5350,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CompleteIo",
+          "Cycles": 5232,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Finish",
+          "Cycles": 4988,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameEqual",
+          "Cycles": 4724,
+          "Calls": 5
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExternalRange",
+          "Cycles": 4718,
+          "Calls": 21
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Image",
+          "Cycles": 4620,
+          "Calls": 36
+        },
+        {
+          "Name": "CopperCPX.CpxMemoryCopy::Forward<CopperCPX.Amiga.NativeCpxMemory>",
+          "Cycles": 4580,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::NextSplitTransfer",
+          "Cycles": 3906,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Next",
+          "Cycles": 3504,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Prepare",
+          "Cycles": 3376,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Reply",
+          "Cycles": 3216,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Start",
+          "Cycles": 3130,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetRange",
+          "Cycles": 2956,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetBit",
+          "Cycles": 2912,
+          "Calls": 13
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HandlePointer",
+          "Cycles": 2790,
+          "Calls": 10
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HashHome",
+          "Cycles": 2778,
+          "Calls": 42
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Next",
+          "Cycles": 2682,
+          "Calls": 58
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxMemory::Copy",
+          "Cycles": 2574,
+          "Calls": 10
+        },
+        {
+          "Name": "CopperCPX.Wide::Left",
+          "Cycles": 2558,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceEngineRequest",
+          "Cycles": 2466,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::WriteEntry",
+          "Cycles": 2192,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Wide::Add",
+          "Cycles": 2140,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FreeResource",
+          "Cycles": 2048,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Header",
+          "Cycles": 1898,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExtentAt",
+          "Cycles": 1874,
+          "Calls": 13
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::LockSlot",
+          "Cycles": 1676,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Valid",
+          "Cycles": 1560,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::OpenHandle",
+          "Cycles": 1424,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::State",
+          "Cycles": 1410,
+          "Calls": 32
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Position",
+          "Cycles": 1160,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Waiting",
+          "Cycles": 960,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasOutstandingIo",
+          "Cycles": 902,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MakeLock",
+          "Cycles": 512,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Addition",
+          "Cycles": 490,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_DosError",
+          "Cycles": 420,
+          "Calls": 30
+        },
+        {
+          "Name": "CopperCPX.Wide::Compare",
+          "Cycles": 332,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Wide::From",
+          "Cycles": 284,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Result",
+          "Cycles": 210,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::SectorShift",
+          "Cycles": 100,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Entry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Geometry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Initialize",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReserveDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::EnableQuickIo",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bind",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_IsMounted",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReleaseDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Multiply",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxArena::Shift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryAllocateDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasResources",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Cancel",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::RequestStop",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::RequestAbort",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fatal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MountStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FlushStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FailMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CommitHome",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BankBase",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::DescriptorEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MetadataHome",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidHomeType",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PrepareClean",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Seal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Error",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartFlush",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferError",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Conflicts",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ZeroTail",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Quiesce",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Service",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitFlush",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ScsiAddress",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Prepare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Submit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Right",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::get_IsZero",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Subtraction",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitScsi",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_DOSLibraryBase",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_ExecBase",
+          "Cycles": 0,
+          "Calls": 0
+        }
+      ],
+      "Cpu": "MC68000",
+      "Unit": "nominal CPU instruction cycles in scalar diagnostic; not benchmark bus medians",
+      "CrcFourCalls": 381,
+      "PtrCallsFromCrcFour": 762,
+      "TotalPtrCalls": 1335,
+      "CrcFourSelfCycles": 284114,
+      "PtrSelfCycles": 58836,
+      "TaskCycles": 1364910,
+      "TaskInstructions": 141059,
+      "HandlerSha256": "434545812FBB9B04CB84606106278EC4619F6EF5B1D1A0B5E3D80AF7E4FA7B38",
+      "ProbeSha256": "3D7ED95BC65F07EF220C7B89501D6BBC5DC455C2F58A1F1FE2DE6122EB5B5129"
+    },
+    "flush": {
+      "Phase": "flush",
+      "Methods": [
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CrcFour",
+          "Cycles": 1232684,
+          "Calls": 1653
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Zero",
+          "Cycles": 166300,
+          "Calls": 19
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Ptr",
+          "Cycles": 156308,
+          "Calls": 3547
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Crc",
+          "Cycles": 135734,
+          "Calls": 12
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::R",
+          "Cycles": 63006,
+          "Calls": 629
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FlushStep",
+          "Cycles": 47040,
+          "Calls": 44
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::W",
+          "Cycles": 25906,
+          "Calls": 202
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Meta",
+          "Cycles": 20832,
+          "Calls": 135
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceRequest",
+          "Cycles": 19516,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryDirect",
+          "Cycles": 18594,
+          "Calls": 11
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Step",
+          "Cycles": 16132,
+          "Calls": 46
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Issue",
+          "Cycles": 14050,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Drive",
+          "Cycles": 10514,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::DmaRange",
+          "Cycles": 10094,
+          "Calls": 22
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReapTransfer",
+          "Cycles": 9464,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Submit",
+          "Cycles": 8976,
+          "Calls": 11
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Reap",
+          "Cycles": 8722,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::DescriptorEntry",
+          "Cycles": 6936,
+          "Calls": 14
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Busy",
+          "Cycles": 5862,
+          "Calls": 94
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CompleteIo",
+          "Cycles": 5226,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Prepare",
+          "Cycles": 3366,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Start",
+          "Cycles": 3120,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Header",
+          "Cycles": 2588,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceEngineRequest",
+          "Cycles": 2468,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxMemory::Copy",
+          "Cycles": 2316,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidHomeType",
+          "Cycles": 1866,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Seal",
+          "Cycles": 1656,
+          "Calls": 11
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidInode",
+          "Cycles": 1422,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitFlush",
+          "Cycles": 1328,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::State",
+          "Cycles": 1320,
+          "Calls": 30
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PacketStep",
+          "Cycles": 1192,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Waiting",
+          "Cycles": 960,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Image",
+          "Cycles": 896,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginPacket",
+          "Cycles": 636,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MetadataHome",
+          "Cycles": 596,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PrepareClean",
+          "Cycles": 464,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Run",
+          "Cycles": 460,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Finish",
+          "Cycles": 332,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Next",
+          "Cycles": 322,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BankBase",
+          "Cycles": 256,
+          "Calls": 8
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExternalRange",
+          "Cycles": 224,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CommitHome",
+          "Cycles": 216,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Reply",
+          "Cycles": 214,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartFlush",
+          "Cycles": 80,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasOutstandingIo",
+          "Cycles": 60,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_DosError",
+          "Cycles": 28,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Result",
+          "Cycles": 14,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Entry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Geometry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::From",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Initialize",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReserveDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::EnableQuickIo",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bind",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_IsMounted",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReleaseDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Multiply",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Left",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxArena::Shift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::SectorShift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryAllocateDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasResources",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Cancel",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::RequestStop",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Add",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::RequestAbort",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fatal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MountStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ShrinkStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Valid",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FailMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Load",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Error",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Map",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExtentAt",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetRange",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Dirty",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferError",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Find",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Arg",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::LockSlot",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HandlePointer",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FreeResource",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartPath",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MakeLock",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FindEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CacheSlot",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetBit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::WriteEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::OpenHandle",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Conflicts",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ZeroTail",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Position",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Quiesce",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Service",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::NextSplitTransfer",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Copy",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxMemoryCopy::Forward<CopperCPX.Amiga.NativeCpxMemory>",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HashHome",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameHash",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameEqual",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ScsiAddress",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Prepare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Submit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Right",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::get_IsZero",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Subtraction",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Compare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Addition",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Begin",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Next",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fold",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitScsi",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_DOSLibraryBase",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_ExecBase",
+          "Cycles": 0,
+          "Calls": 0
+        }
+      ],
+      "Cpu": "MC68000",
+      "Unit": "nominal CPU instruction cycles in scalar diagnostic; not benchmark bus medians",
+      "CrcFourCalls": 1653,
+      "PtrCallsFromCrcFour": 3306,
+      "TotalPtrCalls": 3547,
+      "CrcFourSelfCycles": 1232684,
+      "PtrSelfCycles": 156308,
+      "TaskCycles": 2136832,
+      "TaskInstructions": 246165,
+      "HandlerSha256": "434545812FBB9B04CB84606106278EC4619F6EF5B1D1A0B5E3D80AF7E4FA7B38",
+      "ProbeSha256": "3D7ED95BC65F07EF220C7B89501D6BBC5DC455C2F58A1F1FE2DE6122EB5B5129"
+    },
+    "remount": {
+      "Phase": "remount",
+      "Methods": [
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CrcFour",
+          "Cycles": 662964,
+          "Calls": 889
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Ptr",
+          "Cycles": 85716,
+          "Calls": 1945
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Crc",
+          "Cycles": 73492,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Zero",
+          "Cycles": 33088,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::R",
+          "Cycles": 19118,
+          "Calls": 191
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasResources",
+          "Cycles": 16058,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::W",
+          "Cycles": 11414,
+          "Calls": 89
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryDirect",
+          "Cycles": 8460,
+          "Calls": 5
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceRequest",
+          "Cycles": 8028,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MountStep",
+          "Cycles": 7232,
+          "Calls": 8
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Issue",
+          "Cycles": 5748,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Step",
+          "Cycles": 5604,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::DmaRange",
+          "Cycles": 4590,
+          "Calls": 10
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Drive",
+          "Cycles": 4366,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Submit",
+          "Cycles": 4070,
+          "Calls": 5
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReapTransfer",
+          "Cycles": 3940,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Reap",
+          "Cycles": 3516,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Valid",
+          "Cycles": 2754,
+          "Calls": 5
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PacketStep",
+          "Cycles": 2682,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Busy",
+          "Cycles": 2116,
+          "Calls": 34
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CompleteIo",
+          "Cycles": 2092,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Prepare",
+          "Cycles": 1354,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginPacket",
+          "Cycles": 1280,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Start",
+          "Cycles": 1248,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceEngineRequest",
+          "Cycles": 984,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Run",
+          "Cycles": 910,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CacheSlot",
+          "Cycles": 804,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FlushStep",
+          "Cycles": 710,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Finish",
+          "Cycles": 670,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Find",
+          "Cycles": 668,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::State",
+          "Cycles": 528,
+          "Calls": 12
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Meta",
+          "Cycles": 464,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExternalRange",
+          "Cycles": 448,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Reply",
+          "Cycles": 428,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Load",
+          "Cycles": 420,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Waiting",
+          "Cycles": 390,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidInode",
+          "Cycles": 356,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitFlush",
+          "Cycles": 334,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Next",
+          "Cycles": 322,
+          "Calls": 7
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Image",
+          "Cycles": 256,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Arg",
+          "Cycles": 254,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HashHome",
+          "Cycles": 200,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasOutstandingIo",
+          "Cycles": 120,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartFlush",
+          "Cycles": 80,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_DosError",
+          "Cycles": 56,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CommitHome",
+          "Cycles": 54,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BankBase",
+          "Cycles": 32,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Result",
+          "Cycles": 28,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Entry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Geometry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::From",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Initialize",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReserveDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::EnableQuickIo",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bind",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_IsMounted",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReleaseDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Multiply",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Left",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxArena::Shift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::SectorShift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryAllocateDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Cancel",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::RequestStop",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Add",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::RequestAbort",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fatal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ShrinkStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FailMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::DescriptorEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MetadataHome",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidHomeType",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PrepareClean",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Header",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Seal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxMemory::Copy",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Error",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Map",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExtentAt",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetRange",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Dirty",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferError",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::LockSlot",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HandlePointer",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FreeResource",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartPath",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MakeLock",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FindEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetBit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::WriteEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::OpenHandle",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Conflicts",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ZeroTail",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Position",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Quiesce",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Service",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::NextSplitTransfer",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Copy",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxMemoryCopy::Forward<CopperCPX.Amiga.NativeCpxMemory>",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameHash",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameEqual",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ScsiAddress",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Prepare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Submit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Right",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::get_IsZero",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Subtraction",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Compare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Addition",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Begin",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Next",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fold",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitScsi",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_DOSLibraryBase",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_ExecBase",
+          "Cycles": 0,
+          "Calls": 0
+        }
+      ],
+      "Cpu": "MC68000",
+      "Unit": "nominal CPU instruction cycles in scalar diagnostic; not benchmark bus medians",
+      "CrcFourCalls": 889,
+      "PtrCallsFromCrcFour": 1778,
+      "TotalPtrCalls": 1945,
+      "CrcFourSelfCycles": 662964,
+      "PtrSelfCycles": 85716,
+      "TaskCycles": 1040096,
+      "TaskInstructions": 120715,
+      "HandlerSha256": "434545812FBB9B04CB84606106278EC4619F6EF5B1D1A0B5E3D80AF7E4FA7B38",
+      "ProbeSha256": "3D7ED95BC65F07EF220C7B89501D6BBC5DC455C2F58A1F1FE2DE6122EB5B5129"
+    },
+    "read": {
+      "Phase": "read",
+      "Methods": [
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CrcFour",
+          "Cycles": 189428,
+          "Calls": 254
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Ptr",
+          "Cycles": 27418,
+          "Calls": 622
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::R",
+          "Cycles": 26222,
+          "Calls": 262
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Crc",
+          "Cycles": 20996,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::W",
+          "Cycles": 13720,
+          "Calls": 107
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PacketStep",
+          "Cycles": 9610,
+          "Calls": 9
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Step",
+          "Cycles": 7854,
+          "Calls": 17
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryDirect",
+          "Cycles": 6764,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceRequest",
+          "Cycles": 5724,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferStep",
+          "Cycles": 5494,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Drive",
+          "Cycles": 4634,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartPath",
+          "Cycles": 4286,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Conflicts",
+          "Cycles": 4270,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Issue",
+          "Cycles": 3968,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::DmaRange",
+          "Cycles": 3674,
+          "Calls": 8
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Submit",
+          "Cycles": 3264,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fold",
+          "Cycles": 3154,
+          "Calls": 48
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReapTransfer",
+          "Cycles": 2670,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameEqual",
+          "Cycles": 2546,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Busy",
+          "Cycles": 2480,
+          "Calls": 40
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Reap",
+          "Cycles": 2364,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Find",
+          "Cycles": 2340,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Meta",
+          "Cycles": 2312,
+          "Calls": 15
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::NameHash",
+          "Cycles": 2238,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginPacket",
+          "Cycles": 1918,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CacheSlot",
+          "Cycles": 1894,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Map",
+          "Cycles": 1760,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FindEntry",
+          "Cycles": 1526,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Arg",
+          "Cycles": 1516,
+          "Calls": 12
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Load",
+          "Cycles": 1486,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidInode",
+          "Cycles": 1418,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CompleteIo",
+          "Cycles": 1396,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Run",
+          "Cycles": 1372,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExternalRange",
+          "Cycles": 1124,
+          "Calls": 5
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Zero",
+          "Cycles": 1124,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Valid",
+          "Cycles": 1042,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Finish",
+          "Cycles": 1008,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Prepare",
+          "Cycles": 898,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::Start",
+          "Cycles": 832,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Image",
+          "Cycles": 772,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FreeResource",
+          "Cycles": 692,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ServiceEngineRequest",
+          "Cycles": 660,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::OpenHandle",
+          "Cycles": 660,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Reply",
+          "Cycles": 642,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HandlePointer",
+          "Cycles": 558,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HashHome",
+          "Cycles": 528,
+          "Calls": 8
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Next",
+          "Cycles": 460,
+          "Calls": 10
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::State",
+          "Cycles": 352,
+          "Calls": 8
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxMemory::Copy",
+          "Cycles": 344,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExtentAt",
+          "Cycles": 288,
+          "Calls": 2
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Waiting",
+          "Cycles": 256,
+          "Calls": 4
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::LockSlot",
+          "Cycles": 204,
+          "Calls": 1
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasOutstandingIo",
+          "Cycles": 180,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_DosError",
+          "Cycles": 84,
+          "Calls": 6
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_Result",
+          "Cycles": 42,
+          "Calls": 3
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Entry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Amiga.NativeNovaHandler::Geometry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::From",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Initialize",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReserveDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::EnableQuickIo",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bind",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_IsMounted",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ReleaseDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Multiply",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Left",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxArena::Shift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::SectorShift",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::TryAllocateDma",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::get_HasResources",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Cancel",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::RequestStop",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Add",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::RequestAbort",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Fatal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MountStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FlushStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ShrinkStep",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::FailMount",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CommitHome",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BankBase",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::DescriptorEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MetadataHome",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ValidHomeType",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::PrepareClean",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Header",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Seal",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Error",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::StartFlush",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetRange",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Dirty",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::TransferError",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Bit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::MakeLock",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::SetBit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::WriteEntry",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ZeroTail",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Position",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Quiesce",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Service",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitFlush",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::NextSplitTransfer",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::Copy",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.CpxMemoryCopy::Forward<CopperCPX.Amiga.NativeCpxMemory>",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxTransport::ScsiAddress",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Prepare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxUnmap::Submit",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Right",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::get_IsZero",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Subtraction",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::Compare",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Wide::op_Addition",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Begin",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Td64Transfer::Next",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "CopperCPX.Amiga.NativeCpxIo::SubmitScsi",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_DOSLibraryBase",
+          "Cycles": 0,
+          "Calls": 0
+        },
+        {
+          "Name": "_ExecBase",
+          "Cycles": 0,
+          "Calls": 0
+        }
+      ],
+      "Cpu": "MC68000",
+      "Unit": "nominal CPU instruction cycles in scalar diagnostic; not benchmark bus medians",
+      "CrcFourCalls": 254,
+      "PtrCallsFromCrcFour": 508,
+      "TotalPtrCalls": 622,
+      "CrcFourSelfCycles": 189428,
+      "PtrSelfCycles": 27418,
+      "TaskCycles": 415236,
+      "TaskInstructions": 45298,
+      "HandlerSha256": "434545812FBB9B04CB84606106278EC4619F6EF5B1D1A0B5E3D80AF7E4FA7B38",
+      "ProbeSha256": "3D7ED95BC65F07EF220C7B89501D6BBC5DC455C2F58A1F1FE2DE6122EB5B5129"
+    }
+  },
+  "interpretation": [
+    "Zero allocations and low peak stack usage do not imply low CPU or stack traffic.",
+    "AggressiveInlining annotations did not eliminate CrcFour, Ptr, R or W in the measured native image.",
+    "The new diagnostic is not a faster handler or a new benchmark result.",
+    "Assembly-output recompilation disabled generated-size passes and was excluded from exact-code evidence; the original HUNK and map were inspected directly."
+  ],
+  "diagnosticArtifacts": "artifacts\\metadata-postmortem",
+  "diagnosticHostSourceSha256": "B98793098C7A59790A1D7D349CF9F3F012D1D0DF816899FED23B019A6102CB00",
+  "recommendation": "Prove the native execution kernels first; evaluate compact COW metadata with direct child pointers and two ordered publication barriers only after cost and reclamation bounds pass."
+}

@@ -139,14 +139,13 @@ public static class NativeCpxHandler
                 StepResult result=dispatcher.Step();
                 if(result==StepResult.NeedIo)
                 {
-                    CpxIo io=dispatcher.Request;
-                    StepResult transfer=NativeCpxTransport.Service(arena,io,out uint actual,out bool unsupported);
+                    StepResult transfer=NativeCpxTransport.ServiceEngineRequest(arena,out uint token,out uint actual,out bool unsupported);
                     if(transfer is StepResult.Complete or StepResult.Failed)
                     {
                         APTR deviceRequest=APTR.FromPointer(APTR.ReadUInt32(APTR.FromPointer(arena+2048),16));
                         if(transfer==StepResult.Failed&&APTR.ReadUInt8(deviceRequest,31)==29) { dispatcher.MediaRemoved(); NativeCpxTransport.RequestStop(arena); }
-                        if(unsupported) new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).CompleteUnsupportedDiscard(io.Token);
-                        else dispatcher.CompleteIo(io.Token,actual,transfer==StepResult.Complete);
+                        if(unsupported) new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).CompleteUnsupportedDiscard(token);
+                        else dispatcher.CompleteIo(token,actual,transfer==StepResult.Complete);
                     }
                     else if(NativeCpxTransport.Waiting(arena)) break;
                 }

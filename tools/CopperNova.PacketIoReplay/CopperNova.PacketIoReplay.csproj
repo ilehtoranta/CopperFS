@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CopperNova.Bench/CopperNova.Bench.csproj" />
+    <!-- Host-only HUNK loader and MC68000 gateway fixture from the CopperStart replay suite. -->
+    <Compile Include="../../../CopperStart/tests/CopperStart.Exec.Tests/NativeParityBus.cs" Link="Fixtures/NativeParityBus.cs" />
+  </ItemGroup>
+</Project>

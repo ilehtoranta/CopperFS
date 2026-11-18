@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/prototypes/">
+    <Project Path="prototypes/CopperNova.Prototype/CopperNova.Prototype.csproj" />
+    <Project Path="prototypes/CopperNova.Reference/CopperNova.Reference.csproj" />
+    <Project Path="prototypes/CopperNova.Tests/CopperNova.Tests.csproj" />
     <Project Path="prototypes/CopperFS.Cpx4.Reference/CopperFS.Cpx4.Reference.csproj" />
     <Project Path="prototypes/CopperFS.Prototype/CopperFS.Prototype.csproj" />
     <Project Path="prototypes/CopperFS.Prototype.Demo/CopperFS.Prototype.Demo.csproj" />
@@ -21,6 +24,10 @@
     <Project Path="tests/CopperFS.StorageBench.Tests/CopperFS.StorageBench.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/CopperNova.HunkInspect/CopperNova.HunkInspect.csproj" />
+    <Project Path="tools/CopperNova.CacheBench/CopperNova.CacheBench.csproj" />
+    <Project Path="tools/CopperNova.Bench/CopperNova.Bench.csproj" />
+    <Project Path="tools/CopperNova.Qualification/CopperNova.Qualification.csproj" />
     <Project Path="tools/CopperCPX.Bench/CopperCPX.Bench.csproj" />
     <Project Path="tools/CopperSFS.Bench/CopperSFS.Bench.csproj" />
     <Project Path="tools/CopperSFS.Check/CopperSFS.Check.csproj" />

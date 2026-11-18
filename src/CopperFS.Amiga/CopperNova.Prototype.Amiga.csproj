@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);COPPERFS_CPX4</DefineConstants><IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../prototypes/CopperNova.Native/NativeNovaHandler.cs" />
+    <Compile Include="Cpx4/NativeCpxMemory.cs" /><Compile Include="Cpx4/NativeCpxIo.cs" />
+    <Compile Include="Cpx4/NativeCpxTransport.cs" /><Compile Include="Cpx4/NativeCpxUnmap.cs" />
+    <ProjectReference Include="../../prototypes/CopperNova.Prototype/CopperNova.Prototype.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Sdk.Amiga/CopperSharp.Sdk.Amiga.csproj" />
+  </ItemGroup>
+</Project>
