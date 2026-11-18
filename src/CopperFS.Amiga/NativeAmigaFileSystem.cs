@@ -1512,12 +1512,23 @@ public static partial class NativeAmigaFileSystem
     }
     private static bool PacketName(APTR state, uint baseToken, uint nameToken, ref AmigaFfsWriteCore.Request r)
     {
-        var owned = Object(state, baseToken, false);
-        r.Directory = baseToken == 0 ? RootKey(state) : owned.IsNotNull ? APTR.ReadUInt32(owned, 4) : 0;
+        if (baseToken == 0) r.Directory = RootKey(state);
+        else
+        {
+            var owned = Object(state, baseToken, false);
+            r.Directory = owned.IsNotNull ? APTR.ReadUInt32(owned, 4) : 0;
+        }
         if (r.Directory == 0 || nameToken > 0x3FFFFFFF) return false;
         var p = new NativeFileSystemPlatform(state); var name = APTR.FromPointer(nameToken << 2);
+#if COPPERFS_FFS_HANDLER
+        if (!p.TryMappedRegion(name, 1, out _, out var upper)) return false;
+        var length = p.ReadUInt8(name);
+        if ((uint)length + 1 > upper - name.Raw && !p.IsMapped(name, (uint)length + 1)) return false;
+        r.Name = APTR.FromPointer(name.Raw + 1); r.Length = length; return true;
+#else
         if (!p.IsMapped(name, 1) || !p.IsMapped(name, (uint)p.ReadUInt8(name) + 1)) return false;
         r.Name = APTR.FromPointer(name.Raw + 1); r.Length = p.ReadUInt8(name); return true;
+#endif
     }
     private static int OpenWrite(APTR state, APTR packet, DosPacketAction action, out DOS.Error error)
     {
@@ -1936,15 +1947,12 @@ public static partial class NativeAmigaFileSystem
     }
 #endif
 
-    public static void Dispatch(APTR state, APTR packet)
-    {
-        // Read and enumeration packets need no mutation work area. Keep recovery
-        // and inhibited-media handling in the full dispatcher below.
-        // The FFS-only standalone entry reaches packet dispatch only after it
-        // accepts an FFS/OFS mount.
-        var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
 #if COPPERFS_FFS_HANDLER
-        var owner = APTR.ReadUInt32(state, FfsWriteGroupHandle);
+    // Preparing or publishing a write group needs scratch that ordinary
+    // reads, seeks and lookups do not use.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool DispatchClassicWriteGroup(APTR state, APTR packet, DosPacketAction action, uint owner)
+    {
 #if !COPPERSTART_PACKED_EXTENSION
         // FindOutput can consume the staged attributes during truncation.
         // Opens and lookups that read attributes publish them first.
@@ -1964,12 +1972,12 @@ public static partial class NativeAmigaFileSystem
                 APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
                 APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, 0);
                 APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.DiskNotValidated);
-                return;
+                return true;
             }
             owner = 0;
         }
         if (owner > MetadataGroupOwner && (action is DosPacketAction.FindOutput or DosPacketAction.FindUpdate) &&
-            TryOpenGroupedSibling(state, packet)) return;
+            TryOpenGroupedSibling(state, packet)) return true;
         // Every operation that can retire the object first closes its group.
         if (owner > MetadataGroupOwner && action == DosPacketAction.Write &&
             APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset) == owner)
@@ -1979,35 +1987,50 @@ public static partial class NativeAmigaFileSystem
                 APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset), owner, out var error);
             APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
             APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
-            return;
+            return true;
         }
 #endif
-#endif
-#if COPPERFS_AUTOTRIM && !COPPERFS_FFS_HANDLER
-        NativeAutomaticTrim.BeforeOperation(state);
-#endif
-#if COPPERFS_FFS_HANDLER
         if (owner != 0 && (owner == MetadataGroupOwner || (action != DosPacketAction.Write && action != DosPacketAction.Seek) ||
             APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset) != owner))
+            return PublishBeforeClassicPacket(state, packet, action);
+        return false;
+    }
+
+    // A packet that can observe or close the group publishes it first.
+    // Continuing packets never reserve the publication scratch frame.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool PublishBeforeClassicPacket(APTR state, APTR packet, DosPacketAction action)
+    {
+        var platform = new NativeFileSystemPlatform(state);
+        InitializeWriteWork(state, out var work);
+        var published = AmigaFfsWriteCore.FinishFileWriteGroup(ref platform, ref work);
+        APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+        if (published) return false;
+        APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
+        if (action == DosPacketAction.End)
         {
-            var platform = new NativeFileSystemPlatform(state);
-            InitializeWriteWork(state, out var work);
-            if (!AmigaFfsWriteCore.FinishFileWriteGroup(ref platform, ref work))
-            {
-                APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
-                APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
-                if (action == DosPacketAction.End)
-                {
-                    var closing = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
-                    if (closing.IsNotNull) FreeObject(state, closing);
-                }
-                APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset,
-                    action is DosPacketAction.Read or DosPacketAction.Write or DosPacketAction.Seek or DosPacketAction.SetFileSize ? uint.MaxValue : 0);
-                APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.DiskNotValidated);
-                return;
-            }
-            APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+            var closing = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
+            if (closing.IsNotNull) FreeObject(state, closing);
         }
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset,
+            action is DosPacketAction.Read or DosPacketAction.Write or DosPacketAction.Seek or DosPacketAction.SetFileSize ? uint.MaxValue : 0);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)DOS.Error.DiskNotValidated);
+        return true;
+    }
+#endif
+
+    public static void Dispatch(APTR state, APTR packet)
+    {
+        // Read and enumeration packets need no mutation work area. Keep recovery
+        // and inhibited-media handling in the full dispatcher below.
+        // The FFS-only standalone entry reaches packet dispatch only after it
+        // accepts an FFS/OFS mount.
+        var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+#if COPPERFS_FFS_HANDLER
+        var owner = APTR.ReadUInt32(state, FfsWriteGroupHandle);
+        if (owner != 0 && DispatchClassicWriteGroup(state, packet, action, owner)) return;
+#elif COPPERFS_AUTOTRIM
+        NativeAutomaticTrim.BeforeOperation(state);
 #endif
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
         if (action == DosPacketAction.Seek && APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) != 0)
@@ -2028,7 +2051,7 @@ public static partial class NativeAmigaFileSystem
                 NativeFileSystemPlatform.TryDispatchCachedFfsRead(state, packet)) return;
             if (cachedLength == 4096 && APTR.ReadUInt32(state, AdaptiveReadTimerOffset) != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state)))
             { DispatchAdaptiveReadPacket(state, packet); return; }
-            // DispatchPacket repeats the action/type checks before reaching
+            // DispatchPacket repeats the format check before reaching
             // this same reader. FFS/OFS have no SFS recovery gate to traverse.
             if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { DispatchReadPacket(state, packet); return; }
         }
@@ -2040,7 +2063,7 @@ public static partial class NativeAmigaFileSystem
 #endif
         if (action is not (DosPacketAction.Read or DosPacketAction.ExamineNext) || !(SpecializeFormat ? FormatIsSmart : Smart(state)) ||
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 || APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset) != 0)
-        { DispatchPacket(state, packet); return; }
+        { DispatchPacket(state, packet, action); return; }
 #if COPPERFS_NATIVE_FFS_READAHEAD
         DispatchSmartReadOrNext(state, packet, action);
     }
@@ -2267,19 +2290,33 @@ public static partial class NativeAmigaFileSystem
         return -1;
     }
 
-    private static void DispatchPacket(APTR state, APTR packet)
+    private static void DispatchPacket(APTR state, APTR packet, DosPacketAction action)
     {
 #if COPPERSTART_SFS_STANDALONE && !COPPERSTART_PACKED_EXTENSION
         // Keep normal reads out of the general packet decoder's large frame,
         // lock lookup and root-key setup. Exceptional media/recovery states
         // continue through the original decoder and its ordering below.
-        var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
 #if COPPERSTART_FFS_ONLY && !COPPERSTART_FULL_FILESYSTEM_EXTENSION
-        // FFS FindInput has no smart-media recovery gate; avoid the general
-        // decoder's unrelated file/lock lookups before the same object path.
-        if (action == DosPacketAction.FindInput)
+        // The classic object dispatcher performs these lookups itself. Group
+        // publication has already run before any of these packets can close a file.
+        if (action is DosPacketAction.FindInput or DosPacketAction.LocateObject or
+            DosPacketAction.FreeLock or DosPacketAction.End)
         {
             DispatchObjectPacket(state, packet, action);
+            return;
+        }
+#if COPPERFS_FFS_HANDLER
+        if (action == DosPacketAction.Write)
+        {
+            DispatchClassicWritePacket(state, packet);
+            return;
+        }
+#endif
+        if (action is DosPacketAction.FindOutput or DosPacketAction.FindUpdate or
+            DosPacketAction.DeleteObject or DosPacketAction.RenameObject or DosPacketAction.CreateDirectory or
+            DosPacketAction.SetProtection or DosPacketAction.SetComment or DosPacketAction.SetDate)
+        {
+            DispatchClassicNamespacePacket(state, packet, action);
             return;
         }
 #endif
@@ -2312,8 +2349,43 @@ public static partial class NativeAmigaFileSystem
             return;
         }
 #endif
-        DispatchGeneralPacket(state, packet);
+        DispatchGeneralPacket(state, packet, action);
     }
+
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_FFS_ONLY && !COPPERSTART_PACKED_EXTENSION && !COPPERSTART_FULL_FILESYSTEM_EXTENSION
+#if COPPERFS_FFS_HANDLER
+    // Dispatch handles an open group's owner and publication before reaching here.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DispatchClassicWritePacket(APTR state, APTR packet)
+    {
+        var file = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
+        var error = DOS.Error.InvalidLock;
+        var result = file.IsNull ? -1 : WriteFfsFile(state, file,
+            APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset)),
+            APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset),
+            APTR.ReadUInt32(state, FfsWriteGroupHandle), out error);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
+    }
+#endif
+
+    // Namespace mutations decode their own arguments. The general decoder
+    // would also look up Arg1 as both an open file and a directory lock.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DispatchClassicNamespacePacket(APTR state, APTR packet, DosPacketAction action)
+    {
+        DOS.Error error;
+        int result;
+        if (action is DosPacketAction.FindOutput or DosPacketAction.FindUpdate)
+            result = OpenWrite(state, packet, action, out error);
+        else if (action is DosPacketAction.DeleteObject or DosPacketAction.RenameObject or DosPacketAction.CreateDirectory)
+            result = Mutate(state, packet, action, out error);
+        else
+            result = SetMetadata(state, packet, action, out error);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, unchecked((uint)result));
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, (uint)error);
+    }
+#endif
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void DispatchSmartNext(APTR state, APTR packet)
@@ -2620,12 +2692,11 @@ public static partial class NativeAmigaFileSystem
         return -1;
     }
 
-    private static void DispatchGeneralPacket(APTR state, APTR packet)
+    private static void DispatchGeneralPacket(APTR state, APTR packet, DosPacketAction action)
     {
         var p = new NativeFileSystemPlatform(state);
         var metadata = Metadata(state);
         var data = Data(state);
-        var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
 #if COPPERSTART_FULL_FILESYSTEM_EXTENSION
         if (action == DosPacketAction.Format || (uint)action == 0xF00067)
         {
@@ -4775,6 +4846,34 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         }
         WriteUInt32(index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.GroupFailed);
         error = WriteProtected() ? DOS.Error.DiskWriteProtected : DOS.Error.DiskNotValidated;
+        return true;
+    }
+
+    public bool TryPatchClassicOfsForwardLink(uint key, uint successor, out bool written)
+    {
+        written = false;
+        var index = FfsMountIndex;
+        if (index.IsNull || ReadUInt32(index, AmigaFfsMountIndex.Status) != AmigaFfsMountIndex.Updating ||
+            key < ReservedBlocks || key >= BlockCount ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return false;
+
+        var entry = FindCached(key);
+        if (entry.IsNull) return false;
+        var image = APTR.FromPointer(entry.Raw + NativeAmigaFileSystem.ExtraCacheHeaderBytes);
+        if (!CanTransferDirect(image, BlockBytes)) return false;
+        var old = ReadUInt32(image, 16);
+        WriteUInt32(image, 20, unchecked(ReadUInt32(image, 20) + old - successor));
+        WriteUInt32(image, 16, successor);
+        WriteUInt32(entry, NativeFileSystemCacheEntryCodec.VerificationOffset, 0);
+        NativeAmigaFileSystem.InvalidateDirectoryCursors(state);
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+        written = TransferBlock(true, key, image);
+        if (written) TouchCached(entry);
+        else
+        {
+            ForgetCached(entry);
+            WriteUInt32(index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.GroupFailed);
+        }
         return true;
     }
 

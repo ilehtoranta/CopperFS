@@ -242,6 +242,10 @@ public static partial class AmigaFfsWriteCore
     private static bool SetOfsForwardLink<T>(ref T p, ref Work w, uint previous, uint next)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+#if COPPERFS_FFS_HANDLER
+        if (p.TryPatchClassicOfsForwardLink(previous, next, out var written))
+            return written || Fail(ref w, DOS.Error.DiskNotValidated);
+#endif
         if (!p.ReadBlock(previous, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
         var old = p.ReadUInt32(w.Data, 16);
         p.WriteUInt32(w.Data, 20, unchecked(p.ReadUInt32(w.Data, 20) + old - next));

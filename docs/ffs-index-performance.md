@@ -177,6 +177,225 @@ at most +0.055% on any timed workload there. Its OFS Fast RAM cached-read
 delta was −0.001% on cold supported discard and within 0.001% on unsupported
 discard. These results use the current guest probe and the control build.
 
+The compact warm pair passed ten of twelve cases. In the profiled FFS Chip
+RAM cached-read trial, AutoTrim added 17,870 guest cycles. Kickstart added
+27,657 cycles while the handler used 10,645 fewer. Warm OFS Fast RAM growth
+added 16,850 guest cycles, including 12,326 in Kickstart and 4,142 in the
+handler. The handler's OFS copy and checksum routine accounted for 4,216
+additional exclusive cycles.
+
+The mixed-write trace against FFS 40.1 attributed 33,560 extra cycles to
+creating and appending to the main file, 24,830 to deleting the donor and
+48,690 to the final reopens and attribute changes. In the latter interval,
+path resolution and checked block borrowing used 22,728 exclusive handler
+cycles. Reusing the device protection check within a single append packet
+saved about 1,550 cycles per mixed mutation. An exact repeated-path cache
+saved 3,553–4,320 cycles. Neither experiment went into the handler.
+
+Moving active write-group handling out of ordinary packet dispatch reduced
+the compiler's dispatcher stack frame from 180 bytes to eight. In three
+alternating warm trials, enabled FFS Chip RAM cached reads used 46,183 fewer
+guest cycles than the preceding enabled build and 0.100% fewer than the paired
+disabled build. Enabled OFS Fast RAM growth used 8,003 fewer cycles than the
+preceding enabled build and 0.152% fewer than the paired disabled build.
+The warm OFS Fast RAM overwrite also passed at −0.782%.
+Against FFS 40.1, OFS passed both mixed cases. FFS mixed mutation remained
+0.445% slower in Fast RAM and 0.460% slower in Chip RAM. The mixed FFS
+trace still issued 50 write commands against 47 for FFS 40.1.
+
+The wider matrix found a warm FFS overwrite regression. The enabled
+dispatcher candidate took 213,100 cycles in Fast RAM and 218,143 in Chip RAM,
+versus 199,137 and 199,700 with the preceding enabled build. The candidate
+also missed the cold and unsupported growth limits in both formats. In the
+profiled unsupported FFS Chip RAM growth trial, the enabled handler used
+1,814 fewer cycles while Kickstart used 14,401 more. Both arms issued fourteen
+write commands. Kickstart's resident ranges attributed 5,419 additional
+cycles to Intuition, 4,785 to Exec and 3,217 to timer.device.
+The dispatcher candidate passed 172 selected CopperStart replays and all
+37 full-ROM correctness cases.
+
+A separate candidate kept publication scratch out of continuing file
+writes. It saved 14,563 mixed FFS cycles in Fast RAM and 15,683 in Chip RAM
+against the dispatcher candidate. Each arm issued 50 write commands.
+Warm FFS overwrite on that candidate still took 4.121% and 3.792% more
+cycles than the preceding enabled build, respectively.
+
+The indexed mutation path now leaves the cold allocation scan in its own
+routine and reads the mount status once. The native compiler reports zero
+local frame bytes in indexed preparation, down from 168. In separate
+alternating mixed trials this saved 14,263 cycles in Fast RAM and 15,587 in
+Chip RAM against the dispatcher candidate, with 50 writes in both arms.
+
+Reserving the same workspace tail in the compact disabled build left
+unsupported FFS growth 4.527% slower with AutoTrim enabled in Fast RAM and
+4.482% slower in Chip RAM. Matching the workspace reservation alone did
+not account for the cycle gap.
+
+The combined indexed-preparation and publication changes narrowed the
+direct FFS 40.1 mixed-mutation gap to 0.308% in Fast RAM and 0.314% in Chip
+RAM. Mixed verification took 3.396% and 3.378% fewer cycles, respectively.
+
+The dispatcher build's matched-layout binaries were each 154,412 bytes
+and differed in three mount-policy bytes. All 36 cases passed across the
+unsupported, cold-supported and warm-supported device modes. On the
+unsupported device the largest absolute large-write phase difference was
+0.021%. Across the cold cases the largest absolute difference was 0.092%,
+including cached-read and mount timing.
+Across the two unsupported-device runs, matched-layout FFS growth took
+4.490–4.532% more cycles in the disabled arm and 0.061–0.077% more in the
+enabled arm than the corresponding compact build. In a separate
+enabled-to-enabled comparison, warm FFS overwrite took
+0.362% more cycles in Fast RAM and 0.317% more in Chip RAM than the
+preceding enabled compact build. The compact dispatcher build took
+more than 7% longer in both memory placements.
+
+The compact build with both changes passed all 37 selected full-ROM cases.
+Its warm FFS overwrite took 8.896% more cycles in Fast RAM and 8.146% more
+in Chip RAM with AutoTrim enabled. Warm OFS growth took 1.483% and 1.399%
+more cycles. All four large-write tests exceeded the 0.5% ceiling.
+
+The standalone classic handler now sends namespace packets directly to the
+routines that decode their arguments. Three alternating FFS 40.1 comparisons
+put mixed mutation 0.202% above the original in Fast RAM and 0.193% above
+in Chip RAM. Mixed verification used 3.407% and 3.389% fewer cycles.
+Reusing the first memory-region lookup for the counted filename and skipping
+the token lookup for root-relative names reduced the mutation gap to 0.166%
+in both placements. Verification used 3.406% fewer cycles in Fast RAM and
+3.392% fewer in Chip RAM. Mutation still exceeds the 0.1% allowance and uses
+50 write commands against the original's 47.
+
+Against FFS 40.1, the same handler's 96 KiB workload measured the following
+cycle changes over three alternating trials.
+
+| Format and buffer | Growth | Overwrite | Verification |
+|---|---:|---:|---:|
+| FFS Fast | +1.915% | −28.221% | −0.509% |
+| FFS Chip | +1.920% | −28.213% | −0.378% |
+| OFS Fast | −62.569% | −64.185% | −12.412% |
+| OFS Chip | −61.932% | −63.512% | −12.291% |
+
+Both OFS cases passed the cycle and I/O assertions. Both FFS cases failed
+the growth cycle assertion.
+
+This build passed the two compact warm FFS cases and warm OFS in Chip RAM.
+Warm OFS growth in Fast RAM cost 0.727% more with AutoTrim enabled. The
+enabled FFS overwrite averaged 205,807 cycles in Fast RAM and 207,503 in
+Chip RAM, down from 211,780 and 210,823 in the preceding compact build.
+The published enabled build averaged 199,137 and 199,700 cycles in the same
+workload. This build passed all 37 selected full-ROM correctness cases.
+
+Routing locate, lock release and close through the classic object dispatcher
+eliminated their second argument decode. Close still publishes a pending
+group before releasing its handle. The FFS mixed mutation gap dropped to
+0.115% in Fast RAM and 0.118% in Chip RAM. Verification used 3.459% and
+3.451% fewer cycles. The mixed mutation still issued 50 writes in both runs.
+
+Routing initial writes directly to the classic writer after checking the
+file handle reduced mixed mutation to 0.102% over FFS 40.1 in both placements.
+The mixed run still exceeded the 0.1% allowance. The same build passed
+both 96 KiB FFS cycle and I/O tests against FFS 40.1.
+
+| FFS buffer | Growth | Overwrite | Verification |
+|---|---:|---:|---:|
+| Fast RAM | −4.823% | −29.108% | −0.444% |
+| Chip RAM | −4.755% | −28.926% | −0.427% |
+
+Growth issued 14 writes versus 15 for FFS 40.1. Overwrite issued 14 versus 16.
+
+All six OFS cases against FFS 40.1 passed on this build. Mixed mutation used
+8.001% fewer cycles in Fast RAM and 7.860% fewer in Chip RAM. Cached reads
+used 4.037% and 4.546% fewer cycles, respectively. In the 96 KiB workload,
+growth used 62.899% and 62.218% fewer cycles and overwrite used 64.228% and
+63.433% fewer cycles.
+
+Testing a single allocation-index status read at transaction entry used
+1,567 fewer mixed mutation cycles in Fast RAM and 1,300 fewer in Chip RAM
+than the direct-write build's separate trials. Growth and overwrite passed
+in both placements. Mixed mutation passed at +0.094% in Fast RAM and
+missed at +0.106% in Chip RAM. The original handler ran 2,040 cycles faster
+in the Chip RAM comparison.
+
+The retained revision passes the action decoded at packet entry to the
+classic and general dispatchers. It passed all four FFS comparisons against
+FFS 40.1. Mixed mutation cost 0.092% more cycles in Fast RAM and 0.097% more
+in Chip RAM. Growth used 4.889% and 4.755% fewer cycles, and overwrite used
+29.248% and 28.897% fewer cycles, respectively.
+
+The retained handler passed all 16 original-handler performance tests,
+including cached reads and the original-created fragmented files. On those
+files, FFS short appends used 7.892–8.247% fewer cycles and overwrites used
+10.628–10.766% fewer cycles. OFS appends used 5.226–5.459% fewer cycles and
+overwrites used 13.670–13.723% fewer cycles. Cached reads used 2.222–2.310%
+fewer cycles in FFS and 4.012–4.739% fewer in OFS. The mount probe measured
+381,032 bytes per format and placement, versus 54,232 for FFS 40.1. Its
+instrumented FFS mutation phase measured +0.659% in each placement, while
+the separately timed standard mixed test passed.
+
+With the compact handlers on the warm supported device, both FFS large-write
+cases passed. Enabled FFS overwrite averaged 190,023 cycles in Fast RAM and
+190,513 in Chip RAM, roughly 4.6% below the published enabled build.
+OFS overwrite was 0.031% and 0.386% slower with AutoTrim enabled, within the
+0.5% allowance. OFS growth remained above the limit at +1.934% and +1.884%.
+The retained enabled build passed all 37 selected full-ROM correctness cases.
+
+Writing a cached OFS forward link directly from its DMA-safe cache entry
+used 2.873% fewer warm growth cycles in Fast RAM and 3.136% fewer in Chip
+RAM in a separate enabled-to-enabled comparison. The successor data reaches
+the device before the link is updated. A failed write evicts the cache
+entry and leaves group publication failed.
+
+The retained combined handler passed all 16 original-handler performance
+tests and 37 full-ROM correctness checks. Its FFS mixed mutation was
+0.087% slower than FFS 40.1 in Fast RAM and 0.092% slower in Chip RAM.
+Warm OFS growth fell from 1,410,887 to 1,370,020 cycles with AutoTrim enabled
+in Fast RAM, and from 1,441,617 to 1,394,967 in Chip RAM. The disabled build
+also improved. The remaining compact gaps were +1.583% and +1.789% for warm
+OFS growth and +0.514% for the warm Chip RAM FFS cached-read case. The SCSI
+command and UNMAP counts in all enabled large-write trials matched their
+warmup counts. The timed growth, overwrite and verification phases issued
+no new SCSI commands.
+
+In a paired warm Fast RAM OFS growth profile, enabling AutoTrim added
+21,280 guest cycles. The handler used 564 fewer cycles and Kickstart used
+21,165 more. In the paired warm Chip RAM FFS cached-read profile, enabling
+AutoTrim added 11,880 guest cycles. The handler used 11,250 fewer cycles
+and Kickstart used 22,225 more. That probe reads through the partial-block
+path. The profiles do not isolate the cause of the Kickstart difference.
+
+In a separate three-trial comparison of warm AutoTrim-enabled builds from
+the same source, the CILica inlining build used 8.329–8.332% fewer FFS growth
+cycles and 16.903–16.961% fewer FFS overwrite cycles. OFS growth used
+2.158–2.233% fewer cycles and overwrite used 2.974–3.292% fewer. The inlining
+build occupied 155,000 bytes, compared with 131,344 bytes with inlining off.
+
+The OFS forward-link fault test observed the successor data on disk before
+injecting a partial write of the preceding sector. The interrupted sector
+retained its old checksum, the root stayed invalid, and close and flush
+reported failure.
+
+CopperStart native replay on the preceding handler passed 220 tests.
+The four failed SFS2 cases also failed on published commit c734d87 using
+the same CopperStart workspace and local CopperSharp SDK. The partial
+aligned-write check passed with the preceding handler and both experimental
+aligned FFS paths.
+
+A separate direct flush dispatch preserved the published-group failure check
+and the device barrier. It also passed the four FFS comparisons. Mixed
+mutation was 0.089% and 0.085% slower than FFS 40.1 in Fast and Chip RAM.
+Its growth advantage was 0.123% and 0.086%, respectively.
+
+The matched-layout transaction-entry candidate used 4.50% fewer enabled
+overwrite cycles than the published handler on the warm device and
+4.26% fewer growth cycles. Against FFS 40.1 its mixed mutation was 0.108%
+slower in Fast RAM and 0.142% slower in Chip RAM.
+
+In a separate test, an open FFS group's aligned overwrite reused the verified
+physical run without constructing a write request. Warm Fast RAM overwrite
+averaged 179,063 cycles and Chip RAM averaged 179,510, 10.08% below the
+published enabled handler in both memory placements. Mixed mutation on this
+experimental build was 0.177% above FFS 40.1 in Fast RAM and 0.180% above in
+Chip RAM.
+
 ## November 15 qualification
 
 Three alternating Kickstart 3.1 trials with the 256 KiB workspace and restricted

@@ -193,12 +193,12 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
             var sfs2ThroughputProfile = entry.StartsWith("Sfs2ThroughputProbe::", StringComparison.Ordinal) &&
                 Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
             var overwriteProfile = entry == "LargeWriteProbe::Sfs" && Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
-            var deletionProfile = label == "candidate" && (entry is "CorrectnessProbe::TraceCommitFfs" or "CorrectnessProbe::TraceCommitOfs") &&
+            var classicMutationProfile = label == "candidate" && (entry is "CorrectnessProbe::TraceCommitFfs" or "CorrectnessProbe::TraceCommitOfs") &&
                 Environment.GetEnvironmentVariable("COPPERFS_TRIM_DELETE_PROFILE") == "1";
             var writeProfile = Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&
                 (entry is "WriteQualificationProbe::Sfs2BulkAppend" or "WriteQualificationProbe::SfsBulkAppend" or "WriteQualificationProbe::FfsAppend");
             var mutationProfile = benchmarkProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile || writeProfile;
-            var writeProfiler = trimProfile || mutationProfile || overwriteProfile || deletionProfile || cachedReadProfile
+            var writeProfiler = trimProfile || mutationProfile || overwriteProfile || classicMutationProfile || cachedReadProfile
                 ? new ReadCpuProfile(machine, handler, rom) : null;
             if (writeProfiler != null)
             {
@@ -260,20 +260,33 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 }
                 if ((overwriteProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile) && value == 222) writeProfiler!.Begin("overwrite", busCycle);
                 if ((overwriteProfile || ffsLargeProfile || appendProfile || sfs2ThroughputProfile) && value == 223) writeProfiler!.End(directory, busCycle);
-                if (deletionProfile)
+                if (classicMutationProfile)
                 {
-                    if (value is 176 or 177 or 178 or 164 or 166 or 167 or 168 or 169) writeProfiler!.End(directory, busCycle);
-                    if (value == 163) writeProfiler!.Begin("delete", busCycle);
-                    if (value == 176) writeProfiler!.Begin("reopen", busCycle);
-                    if (value == 177) writeProfiler!.Begin("append-after-delete", busCycle);
-                    if (value == 178) writeProfiler!.Begin("patch", busCycle);
-                    if (value == 165) writeProfiler!.Begin("rename-create-write", busCycle);
-                    if (value == 166) writeProfiler!.Begin("publish-new-file", busCycle);
-                    if (value == 167) writeProfiler!.Begin("truncate-write", busCycle);
-                    if (value == 168) writeProfiler!.Begin("publish-truncate", busCycle);
+                    var phase = value switch
+                    {
+                        160 => "publish-donor",
+                        161 => "create-and-append",
+                        162 => "publish-main",
+                        163 => "delete",
+                        164 => "publish-patch",
+                        165 => "rename-create-write",
+                        166 => "publish-new-file",
+                        167 => "truncate-write",
+                        168 => "publish-truncate",
+                        169 => "retruncate-and-create-empty",
+                        170 => "publish-empty",
+                        171 => "reopen-and-set-attributes",
+                        174 => "flush-metadata",
+                        176 => "reopen",
+                        177 => "append-after-delete",
+                        178 => "patch",
+                        _ => null
+                    };
+                    if (phase is not null || value == 175) writeProfiler!.End(directory, busCycle);
+                    if (phase is not null) writeProfiler!.Begin(phase, busCycle);
                 }
-                if (mutationProfile && !trimProfile && !overwriteProfile && !deletionProfile && value == 220) writeProfiler!.Begin(benchmarkProfile ? "mutate" : ffsLargeProfile ? "grow" : appendProfile ? "append" : "write", busCycle);
-                if (mutationProfile && !trimProfile && !overwriteProfile && !deletionProfile && value == 221) writeProfiler!.End(directory, busCycle);
+                if (mutationProfile && !trimProfile && !overwriteProfile && !classicMutationProfile && value == 220) writeProfiler!.Begin(benchmarkProfile ? "mutate" : ffsLargeProfile ? "grow" : appendProfile ? "append" : "write", busCycle);
+                if (mutationProfile && !trimProfile && !overwriteProfile && !classicMutationProfile && value == 221) writeProfiler!.End(directory, busCycle);
                 if (benchmarkProfile && value == 222) writeProfiler?.Begin("verify", busCycle);
                 if (benchmarkProfile && value == 223) writeProfiler?.End(directory, busCycle);
                 if (cachedReadProfile && value == 228) writeProfiler!.Begin("cached-read", busCycle);

@@ -174,6 +174,10 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     // slot. False requests the caller's ordinary read/modify/write path.
     bool TryPatchClassicSector(uint key, uint offset, APTR source, uint length, out DOS.Error error)
     { error = DOS.Error.None; return false; }
+    // Patch a cached OFS tail after the successor data was written. An
+    // unavailable cache slot leaves the ordinary read/modify/write to the core.
+    bool TryPatchClassicOfsForwardLink(uint key, uint successor, out bool written)
+    { written = false; return false; }
     /// <summary>Maximum adjacent TRST home images the platform can gather using
     /// existing storage. Each entry in slots points at a redo slot, with its
     /// image at SlotHeaderBytes. Only called after durable journal publication.</summary>

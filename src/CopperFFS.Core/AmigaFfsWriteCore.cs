@@ -1,4 +1,5 @@
 using Amiga;
+using System.Runtime.CompilerServices;
 
 namespace CopperStart.Dos;
 
@@ -165,42 +166,49 @@ public static partial class AmigaFfsWriteCore
         w.RootLinkChanged = false;
         w.FreedCount = 0; w.CheckedTracking = false;
         w.Error = DOS.Error.None;
-        var bitmapBits = geometry.BitmapBits;
-        if (bitmapBits == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (geometry.BitmapBits == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (w.OpenProtectionChecked) w.OpenProtectionChecked = false;
         else if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
         w.RootKey = geometry.RootBlock;
         w.RootImage = APTR.Null;
         w.BitmapBlock = 0; w.BitmapDirty = 0; w.BitmapChecksumDelta = 0; w.NextKey = geometry.ReservedBlocks;
-        w.LayoutKnown = w.Index.IsNotNull && (p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean ||
-            (w.GroupMetadata && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.MetadataOpen) ||
-            (w.GroupFileWrites && HasFileWriteGroup(ref p, w.Index)));
-        if (w.LayoutKnown)
+        var status = w.Index.IsNull ? 0u : p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status);
+        w.LayoutKnown = status == AmigaFfsMountIndex.Clean ||
+            (w.GroupMetadata && status == AmigaFfsMountIndex.MetadataOpen) ||
+            (w.GroupFileWrites && status == AmigaFfsMountIndex.GroupOpen);
+        if (!w.LayoutKnown) return PrepareUnindexed(ref p, ref w, in geometry, needed, scan);
+
+        w.RootImage = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.RootImage));
+        w.DosType = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Type);
+        w.IndexedUsed = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Used);
+        w.NextKey = p.ReadUInt32(w.Index, AmigaFfsMountIndex.NextCandidate);
+        if (status == AmigaFfsMountIndex.MetadataOpen)
         {
-            w.RootImage = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.RootImage));
-            w.DosType = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Type);
-            w.IndexedUsed = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Used);
-            w.NextKey = p.ReadUInt32(w.Index, AmigaFfsMountIndex.NextCandidate);
-            if (w.GroupMetadata && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.MetadataOpen)
+            if (!PublishMetadataAttributes(ref p, w.Index, attributeHeader)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            var parent = p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingParent);
+            if (parent != 0 && parent != keepDirectory)
             {
-                if (!PublishMetadataAttributes(ref p, w.Index, attributeHeader)) return Fail(ref w, DOS.Error.DiskNotValidated);
-                var parent = p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingParent);
-                if (parent != 0 && parent != keepDirectory)
+                // The native owner treats physical metadata writes between
+                // packets as untracked. This publication belongs to the
+                // existing group, just like PublishMetadataAttributes.
+                p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.Updating);
+                if (!PublishParent(ref p, ref w))
                 {
-                    // The native owner treats physical metadata writes between
-                    // packets as untracked. This publication belongs to the
-                    // existing group, just like PublishMetadataAttributes.
-                    p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.Updating);
-                    if (!PublishParent(ref p, ref w))
-                    {
-                        p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.GroupFailed);
-                        return false;
-                    }
-                    p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.MetadataOpen);
+                    p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.GroupFailed);
+                    return false;
                 }
+                p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.MetadataOpen);
             }
-            return geometry.BlockCount - w.IndexedUsed >= needed || Fail(ref w, DOS.Error.DiskFull);
         }
+        return geometry.BlockCount - w.IndexedUsed >= needed || Fail(ref w, DOS.Error.DiskFull);
+    }
+
+    // Only a cold or unindexed mount needs validation and bitmap traversal
+    // scratch. Keep that work out of indexed mutation packets.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool PrepareUnindexed<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint needed, bool scan)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
         if (!LoadDosType(ref p, ref w)) return false;
         if (!Header(ref p, ref w, geometry.RootBlock) || p.ReadUInt32(w.Meta, geometry.Tail + 312) != uint.MaxValue)
             return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -223,6 +231,7 @@ public static partial class AmigaFfsWriteCore
         // Overwrites validate the touched pages on demand. Growth and other
         // metadata operations still inspect the whole map.
         if (!scan) return w.Error == DOS.Error.None;
+        var bitmapBits = geometry.BitmapBits;
         var maps = AmigaGeometryMath.Divide(geometry.BlockCount - geometry.ReservedBlocks - 1, bitmapBits) + 1;
         var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
         for (var index = 0u; index < maps; index++)

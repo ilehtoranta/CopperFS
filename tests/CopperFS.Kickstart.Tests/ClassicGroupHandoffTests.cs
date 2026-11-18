@@ -66,18 +66,60 @@ public sealed partial class OriginalHandlerCorrectnessTests
         }
     }
 
-    private sealed class PartialSectorWrite : WritableHook
+    private sealed class PartialSectorWrite(bool aligned) : WritableHook
     {
-        public bool Armed, Failed;
+        public bool Armed, Failed, SameCommand;
         public long Offset;
+        private int firstCommand;
+
         public override void Write(FileStream backing, long offset, ReadOnlySpan<byte> source)
         {
-            if (Armed && !Failed && source.Length == 512 && source[0] == 0xDA && source[1] == 0x7E)
+            if (Armed && !Failed && source.Length == 512)
             {
-                Failed = true;
-                Offset = offset;
-                base.Write(backing, offset, source[..256]);
-                throw new IOException("Injected a partial FFS sector write");
+                if (source[0] == 0xDA && source[1] == 0x7E)
+                {
+                    Offset = offset;
+                    firstCommand = WriteCommands;
+                    if (!aligned) FailSector(backing, offset, source);
+                }
+                else if (aligned && firstCommand != 0 && offset == Offset + 512)
+                {
+                    SameCommand = WriteCommands == firstCommand;
+                    FailSector(backing, offset, source);
+                }
+            }
+            base.Write(backing, offset, source);
+        }
+
+        private void FailSector(FileStream backing, long offset, ReadOnlySpan<byte> source)
+        {
+            Failed = true;
+            base.Write(backing, offset, source[..256]);
+            throw new IOException("Injected a partial FFS sector write");
+        }
+    }
+
+    private sealed class PartialOfsForwardLinkWrite : WritableHook
+    {
+        public bool Armed, Failed;
+        public long TailOffset;
+        public uint Successor;
+
+        public override void Write(FileStream backing, long offset, ReadOnlySpan<byte> source)
+        {
+            if (source.Length == 512 && System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(source) == 8)
+            {
+                var next = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(source[16..]);
+                if (!Armed && next == 0 && source[24] == 0x31 &&
+                    System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(source[8..]) == 4)
+                    TailOffset = offset;
+                if (Armed && !Failed && offset == TailOffset && next != 0)
+                {
+                    Successor = next;
+                    Failed = true;
+                    base.Write(backing, offset, source[..20]);
+                    throw new IOException("Injected a partial OFS forward-link write");
+                }
             }
             base.Write(backing, offset, source);
         }
@@ -122,17 +164,44 @@ public sealed partial class OriginalHandlerCorrectnessTests
     }
 
     [CorrectnessTheory]
-    [InlineData(false)] [InlineData(true)]
-    public async System.Threading.Tasks.Task PartialFfsSectorWriteFailsTheOpenGroup(bool cached)
+    [InlineData("ofs")]
+    public async System.Threading.Tasks.Task PartialOfsForwardLinkFailsTheOpenGroup(string profile)
+    {
+        var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
+        var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!;
+        var pair = manifest.Profiles.Single(p => p.Name == profile);
+        var initial = AutomaticImage(manifest, profile);
+        var root = Path.Combine(Path.GetDirectoryName(path)!, "partial-ofs-forward-link");
+        var storage = new PartialOfsForwardLinkWrite();
+        await Assert.ThrowsAsync<PowerCut>(() => Run(root, profile, "candidate", pair.Candidate, initial, true,
+            "ClassicGroupProbe::OfsForwardLinkFailure", storage: storage, observe: (mark, _, _, _, _) =>
+            {
+                if (mark == 227) storage.Armed = true;
+                if (mark == 228) throw new PowerCut();
+            }));
+        Assert.True(storage.Failed);
+        Assert.NotEqual(0, storage.TailOffset);
+        Assert.NotEqual(0u, storage.Successor);
+        var disk = File.ReadAllBytes(Path.Combine(root, "candidate", "disk.hdf"));
+        Assert.Equal(0u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan(initial.Length / 2 + 312)));
+        var successor = checked((int)storage.Successor * 512);
+        Assert.Equal(8u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan(successor)));
+        Assert.Equal(0x72, disk[successor + 24]);
+    }
+
+    [CorrectnessTheory]
+    [InlineData(false, false)] [InlineData(true, false)] [InlineData(false, true)]
+    public async System.Threading.Tasks.Task PartialFfsSectorWriteFailsTheOpenGroup(bool cached, bool aligned)
     {
         var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
         var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!;
         var pair = manifest.Profiles.Single(p => p.Name == "ffs");
         var initial = AutomaticImage(manifest, "ffs");
-        var root = Path.Combine(Path.GetDirectoryName(path)!, "partial-ffs-write", cached ? "cached" : "cold");
-        var storage = new PartialSectorWrite();
+        var variant = aligned ? "Aligned" : cached ? "Cached" : "Cold";
+        var root = Path.Combine(Path.GetDirectoryName(path)!, "partial-ffs-write", variant);
+        var storage = new PartialSectorWrite(aligned);
         await Assert.ThrowsAsync<PowerCut>(() => Run(root, "ffs", "candidate", pair.Candidate, initial, true,
-            cached ? "ClassicGroupProbe::CachedPatchFailure" : "ClassicGroupProbe::ColdPatchFailure", storage: storage,
+            "ClassicGroupProbe::" + variant + "PatchFailure", storage: storage,
             observe: (mark, _, _, _, _) =>
             {
                 if (mark == 227) storage.Armed = true;
@@ -142,7 +211,13 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var disk = File.ReadAllBytes(Path.Combine(root, "candidate", "disk.hdf"));
         Assert.Equal(0u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan(initial.Length / 2 + 312)));
         Assert.Equal(0xDA, disk[(int)storage.Offset]);
-        Assert.Equal(0x11, disk[(int)storage.Offset + 256]);
+        if (aligned)
+        {
+            Assert.True(storage.SameCommand);
+            Assert.Equal(0xEF, disk[(int)storage.Offset + 512]);
+            Assert.Equal(0x11, disk[(int)storage.Offset + 768]);
+        }
+        else Assert.Equal(0x11, disk[(int)storage.Offset + 256]);
     }
 
     [CorrectnessTheory]
@@ -255,11 +330,13 @@ public static class ClassicGroupProbe
 
     public static int CachedPatchFailure() => PatchFailure(true);
     public static int ColdPatchFailure() => PatchFailure(false);
+    public static int AlignedPatchFailure() => PatchFailure(false, true);
 
     public static int FfsAppendFailure() => AppendFailure(1);
     public static int OfsAppendFailure() => AppendFailure(0);
+    public static int OfsForwardLinkFailure() => AppendFailure(0, true);
 
-    private static int AppendFailure(uint kind)
+    private static int AppendFailure(uint kind, bool forwardLink = false)
     {
         var lib = Exec.OpenLibrary("dos.library", 37);
         if (!lib.HasValue) { CorrectnessProbe.Report(250); return 1; }
@@ -270,16 +347,27 @@ public static class ClassicGroupProbe
         CorrectnessProbe.Report(200);
         for (var shift = 24; shift >= 0; shift -= 8) CorrectnessProbe.Report((int)(control.Raw >> shift));
         if (CorrectnessProbe.Mount(control, kind) != 0) return CorrectnessProbe.Failed(control, 3);
-        var data = APTR.FromPointer(Exec.AllocMem(1024, Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear));
+        var count = forwardLink ? 4 * 488 : 1024;
+        var data = APTR.FromPointer(Exec.AllocMem((uint)count, Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear));
         if (data.IsNull) return CorrectnessProbe.Failed(control, 4);
+        if (forwardLink)
+            for (var i = 0; i < count; i++) APTR.WriteUInt8(data, i, 0x31);
         var port = DOS.DeviceProc("SEQ0:");
         var file = DOS.Open("SEQ0:Existing", DOS.FileMode.NewFile);
-        if (!file.HasValue || DOS.Write(file.Value, data, 1024) != 1024 || DOS.Close(file.Value) == 0 ||
-            DOS.DoPkt(port, (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) == 0) return CorrectnessProbe.Failed(control, 5);
-        file = DOS.Open("SEQ0:Existing", DOS.FileMode.ReadWrite);
-        if (!file.HasValue || DOS.Seek(file.Value, 0, 1) < 0) return CorrectnessProbe.Failed(control, 6);
+        if (!file.HasValue || DOS.Write(file.Value, data, count) != count) return CorrectnessProbe.Failed(control, 5);
+        if (forwardLink)
+        {
+            for (var i = 0; i < count; i++) APTR.WriteUInt8(data, i, 0x72);
+        }
+        else
+        {
+            if (DOS.Close(file.Value) == 0 ||
+                DOS.DoPkt(port, (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) == 0) return CorrectnessProbe.Failed(control, 5);
+            file = DOS.Open("SEQ0:Existing", DOS.FileMode.ReadWrite);
+            if (!file.HasValue || DOS.Seek(file.Value, 0, 1) < 0) return CorrectnessProbe.Failed(control, 6);
+        }
         CorrectnessProbe.Report(227);
-        if (DOS.Write(file.Value, data, 31) != -1 || DOS.IoErr() != DOS.Error.DiskNotValidated ||
+        if (DOS.Write(file.Value, data, forwardLink ? count : 31) != -1 || DOS.IoErr() != DOS.Error.DiskNotValidated ||
             DOS.Close(file.Value) != 0 ||
             DOS.DoPkt(port, (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) != 0) return CorrectnessProbe.Failed(control, 7);
         CorrectnessProbe.Report(228);
@@ -287,7 +375,7 @@ public static class ClassicGroupProbe
         return 0;
     }
 
-    private static int PatchFailure(bool cached)
+    private static int PatchFailure(bool cached, bool aligned = false)
     {
         var lib = Exec.OpenLibrary("dos.library", 37);
         if (!lib.HasValue) { CorrectnessProbe.Report(250); return 1; }
@@ -307,10 +395,13 @@ public static class ClassicGroupProbe
             return CorrectnessProbe.Failed(control, 5);
         if (DOS.Seek(file.Value, cached ? 0 : 4096, -1) < 0) return CorrectnessProbe.Failed(control, 6);
         APTR.WriteUInt8(data, 0, 0xDA); APTR.WriteUInt8(data, 1, 0x7E);
-        for (var i = 2; i < 511; i++) APTR.WriteUInt8(data, i, 0xEF);
+        var count = aligned ? 4096 : 511;
+        for (var i = 2; i < count; i++) APTR.WriteUInt8(data, i, 0xEF);
         CorrectnessProbe.Report(227);
-        if (DOS.Write(file.Value, data, 511) != -1 || DOS.IoErr() != DOS.Error.DiskNotValidated ||
+        if (DOS.Write(file.Value, data, count) != -1 || DOS.IoErr() != DOS.Error.DiskNotValidated ||
             DOS.Close(file.Value) != 0) return CorrectnessProbe.Failed(control, 7);
+        if (aligned && DOS.DoPkt(DOS.DeviceProc("SEQ0:"), (int)DosPacketAction.Flush, 0, 0, 0, 0, 0) != 0)
+            return CorrectnessProbe.Failed(control, 8);
         CorrectnessProbe.Report(228);
         CorrectnessProbe.Report(210);
         return 0;
