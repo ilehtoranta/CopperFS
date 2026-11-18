@@ -1,0 +1,1439 @@
+{
+  "allocatorTrace": {
+    "unaligned": {
+      "hint": 1394,
+      "byteReads": 4194,
+      "longReads": 6
+    },
+    "aligned": {
+      "hint": 1408,
+      "byteReads": 32,
+      "longReads": 128
+    }
+  },
+  "coverage": {
+    "suiteStatus": "in progress",
+    "includedAssemblies": 2,
+    "suitePassed": 788,
+    "suiteSkipped": 0,
+    "fullSuitePrototypeRevision": "32 tests before final attribute and alignment changes",
+    "finalPrototype": 38,
+    "unchangedLegacyHost": null,
+    "unchangedCompiledNative": null,
+    "replay": 169,
+    "physicalDevices": false
+  },
+  "hunkInspection": {
+    "HunkSha256": "ED341072FA04E4CD9FC90565CD49383D68B3BB353BCEE683D4A0862935BFEF7D",
+    "MapSha256": "57BA78701C17DBB3F0A6787FEE5395479A23C96518793AE3E7B002132D741A2B",
+    "CodeOffset": 32,
+    "CodeBytes": 40584,
+    "Methods": [
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::CompleteIo",
+        "Offset": 4500,
+        "Bytes": 138,
+        "CodeSha256": "28C4ED6998509F15A45B965B85EFB8BE19927DAD3E7F0C09BD7F16D73C2E26D6",
+        "CallSites": [],
+        "FirstBytes": "48E738202401220926002448",
+        "DecodedInstructions": 52,
+        "BranchTargets": [
+          4544,
+          4552,
+          4592,
+          4592,
+          4630
+        ],
+        "AllNonCallBranchesWithinMethod": true
+      },
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::BeginPacket",
+        "Offset": 4660,
+        "Bytes": 236,
+        "CodeSha256": "DCAA12411AE0A1773A1E6B78D0D4F1DE1F6EC507779FC39FFFBA130BD7D85C62",
+        "CallSites": [
+          {
+            "Offset": 4720,
+            "Target": 23452,
+            "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ExternalRange",
+            "Instruction": "bsr.w\tC68K_raw_00005B9C"
+          }
+        ],
+        "FirstBytes": "48E7302026002448242A0004",
+        "DecodedInstructions": 103,
+        "BranchTargets": [
+          4700,
+          4708,
+          4728,
+          4736,
+          4762
+        ],
+        "AllNonCallBranchesWithinMethod": true
+      },
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Finish",
+        "Offset": 17618,
+        "Bytes": 94,
+        "CodeSha256": "8E756DF48E693FCEAD4517FA9201901663CE84F8F7B0F1ED357A292013734AD7",
+        "CallSites": [],
+        "FirstBytes": "48E738002401260022482829",
+        "DecodedInstructions": 41,
+        "BranchTargets": [
+          17704
+        ],
+        "AllNonCallBranchesWithinMethod": true
+      },
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Issue",
+        "Offset": 26090,
+        "Bytes": 268,
+        "CodeSha256": "0774FE913FEE3D9D6D32B9E0C879F743C64AFEA7B62BE1DA2BCFF38D2046950F",
+        "CallSites": [],
+        "FirstBytes": "48E73F302C2F00282801262F",
+        "DecodedInstructions": 104,
+        "BranchTargets": [
+          26150,
+          26160,
+          5028,
+          26222,
+          26212,
+          26212,
+          26212,
+          26212,
+          26212,
+          26222,
+          5028
+        ],
+        "AllNonCallBranchesWithinMethod": false
+      },
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Find",
+        "Offset": 26760,
+        "Bytes": 152,
+        "CodeSha256": "FFB90266E56E931BB3175F1BE7B2377FF5580249D8C7CE852445C1FBDB959850",
+        "CallSites": [
+          {
+            "Offset": 26770,
+            "Target": 37056,
+            "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::HashHome",
+            "Instruction": "bsr.w\tC68K_raw_000090C0"
+          }
+        ],
+        "FirstBytes": "48E72F302800244820046100",
+        "DecodedInstructions": 64,
+        "BranchTargets": [
+          26878,
+          26894,
+          26876,
+          26876,
+          26902,
+          26804
+        ],
+        "AllNonCallBranchesWithinMethod": true
+      },
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Crc",
+        "Offset": 27538,
+        "Bytes": 370,
+        "CodeSha256": "A5A583C9336C12931E0D69E898017B79A28046C95A7162C2CFD5C09AE385E3CF",
+        "CallSites": [],
+        "FirstBytes": "48E73F382C0124002E092448",
+        "DecodedInstructions": 161,
+        "BranchTargets": [
+          27720,
+          27734,
+          27734,
+          27592,
+          27718
+        ],
+        "AllNonCallBranchesWithinMethod": true
+      },
+      {
+        "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Load",
+        "Offset": 28220,
+        "Bytes": 258,
+        "CodeSha256": "E6F0D1E8A70B33301FAD4B10FCCDAE9F744918770C4F25305A8D424BCCC2308B",
+        "CallSites": [
+          {
+            "Offset": 28246,
+            "Target": 26760,
+            "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Find",
+            "Instruction": "bsr.w\tC68K_raw_00006888"
+          },
+          {
+            "Offset": 28344,
+            "Target": 37296,
+            "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::ReserveSlot",
+            "Instruction": "bsr.w\tC68K_raw_000091B0"
+          },
+          {
+            "Offset": 28466,
+            "Target": 26090,
+            "Name": "CopperNova.Prototype.NovaEngine`1<CopperCPX.Amiga.NativeCpxMemory>::Issue",
+            "Instruction": "bsr.w\tC68K_raw_000065EA"
+          }
+        ],
+        "FirstBytes": "48E73E202801240024482C2A",
+        "DecodedInstructions": 100,
+        "BranchTargets": [
+          28340,
+          28364,
+          28820,
+          28430,
+          17606
+        ],
+        "AllNonCallBranchesWithinMethod": false
+      }
+    ]
+  },
+  "stressRom": {
+    "Passed": true,
+    "PartialPacketCoverage": true,
+    "Cpu": "MC68000",
+    "ChipRamBytes": 524288,
+    "FastRamBytes": 0,
+    "HandlerTaskStackBytes": 4096,
+    "Peak": 740,
+    "Lower": 156884,
+    "Upper": 160980,
+    "GuardIntact": true,
+    "StartupAllocations": 9,
+    "OperationAllocations": 0,
+    "CoreAndTransportArenaBytes": 98304,
+    "ShutdownBarriers": 2,
+    "Stage": 0,
+    "DosError": 0,
+    "Frames": 605,
+    "HostSeconds": 19.1634427,
+    "HandlerSha256": "ED341072FA04E4CD9FC90565CD49383D68B3BB353BCEE683D4A0862935BFEF7D",
+    "ProbeSha256": "6312663487BEA9B1F6DF335FC4326C42FD775E3C0E0FB5CC3AE9AB93E3AB05C1",
+    "SourceInputsMatched": true,
+    "ManagedAllocationSites": 0,
+    "IndependentOwnershipAndShutdownPayloadVerified": true
+  },
+  "schema": 1,
+  "units": "emulated 68020 bus cycles; lower is better",
+  "native": {
+    "bytes": 41136,
+    "manifest": {
+      "ManagedInputs": [
+        {
+          "Sha256": "71A022F644305D22EA75F5C333B7AE1874DE65DA9C992DC2567DF5B8CB5AB16B",
+          "Name": "CopperCPX.Core.dll"
+        },
+        {
+          "Sha256": "B4749EE59A95462E32020227A3DF8675BB449D3B04A321A79A3B15F7B9813A96",
+          "Name": "CopperNova.Prototype.Amiga.dll"
+        },
+        {
+          "Sha256": "0A9835D32A5D81B781D966C17BD265CDC316E577C6770090F33256AABB4592D4",
+          "Name": "CopperNova.Prototype.dll"
+        },
+        {
+          "Sha256": "6BEDE9408CF6D2CDD136FBE8DBEABC45FD830043EB86ADF3A1E18EC900D59378",
+          "Name": "CopperSharp.Compiler.dll"
+        },
+        {
+          "Sha256": "2F01BFE6CD46CCA67A1FEB16F858CC5AE111C6BAAE795D3C5CB5C83ACFD52812",
+          "Name": "CopperSharp.Sdk.Amiga.dll"
+        }
+      ],
+      "Sources": [
+        {
+          "Path": "prototypes\\CopperFS.Prototype\\WideMath32.cs",
+          "Sha256": "EF3A75FA2D07AF60A9D96E73D68D7DC9A1F5F8ADABAAF69DCE0FD71322A68106"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Native\\NativeNovaHandler.cs",
+          "Sha256": "83AD382EB6C538C657DEDA513F3B4173C16D1E3F0B56CBB4F73CB273453151C4"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Attributes.cs",
+          "Sha256": "6A6D608C9512398F9A8EC11AFBCFF38166F7E4D6E9BB8484E778184D915BAD98"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.cs",
+          "Sha256": "C8F9C5AEAD57C6A5B2FD06DEE27E0716832B8602DA677835CDF076330F2471F6"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Data.cs",
+          "Sha256": "77329EFF632A628D011817C84B3B897ECBB6A29A0E705706C0776352099DF431"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Packed.cs",
+          "Sha256": "EF91159F158A6FCF2B7FF30E8239D1081F31A69DBDDCFD21673887C8F00C08AC"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Packets.cs",
+          "Sha256": "4CAB72D9DFBC5025F0EAB9A5D30277706236617A4B1DBED932F4AE8CDE2D3FE0"
+        },
+        {
+          "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Persistence.cs",
+          "Sha256": "84DC6DDCF9B95B8D3E13DA32120652D68DA6BDF69F0878EE5E740C134B55D8AD"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxCheckpointCatalogue.cs",
+          "Sha256": "5C17B7375F6B109DCEAA91E6634789493F4F2D94CEB6484F99A32B7B3D88F94C"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.CachedSeek.cs",
+          "Sha256": "E8C7A95ED19B91EA27F81C5CC1E9DDB7A216773F5C4FB188A6D9FC9BAA3EF49F"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.CachedTransfer.cs",
+          "Sha256": "9516E15189700140FA351B48FE7C30545AFCD44F284985AB7EF04CBB746B4826"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.cs",
+          "Sha256": "156719E2692A44169BFD1811DC88CB3426595AFB5BB6E474D44ECF723231618D"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.ExAll.cs",
+          "Sha256": "924006D6CA9F921870415C410E151151D468217AB4EC79ED932EFC9395D12573"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Information.cs",
+          "Sha256": "B6A7D3F1E6302A69F3AFB3BE4CC966E0E8C8BE729A41A4513AA8EA66D9C06C8E"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Lifecycle.cs",
+          "Sha256": "F7243E34466C55FE33AB0F81F4BE990714B157003A16E3C84F3E8D8AA4A9E3A7"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Links.cs",
+          "Sha256": "F7FABEB95D57D132D2E200ACCBBC1E9819333478CF4815B1F4FBC8FB72097745"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Media.cs",
+          "Sha256": "6DACCD54DA80C6992F51D3D2BE3E5594AE05CB8857AA172C11CA940886F1E3A6"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.NewReadLink.cs",
+          "Sha256": "220802BAE972163DE92EEBD11063F942DDA9ABF869631B6B88708F67CD6EF84C"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Notifications.cs",
+          "Sha256": "F1168C09A60B001EAAF18B4354397220ECDA8A81E1933C3198F1ADDF9D491505"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Records.cs",
+          "Sha256": "621F7A8C82174B28CF9A71880F4C248BC80557FAAB51056C8F02093E9D73C2E7"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Trim.cs",
+          "Sha256": "852E16BEDBAF1891DAD7C3E618BA1B177F08F18DE9281E01E2F7E9784FB0ABD7"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxDosDispatcher.Volume.cs",
+          "Sha256": "492B787C66BEB9395E81976D69021F577E86DE0340665A476E6905060AC96059"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.AllocateWrite.cs",
+          "Sha256": "1E4432B447465F68FA7C93836932B035D23C346369B3CD73FAFAC78D03A8C7DA"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.AllocationGeometry.cs",
+          "Sha256": "9D9FD4FE0A852DBBCCC761E68C2E55CA41C68C224BA4DD67721612C9311A2CAF"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.AllocationHints.cs",
+          "Sha256": "27165ACCB167C654037732B4C8159E9AFD7C41D54B92593342776730CBFE561C"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.AppendCapability.cs",
+          "Sha256": "0F8958DA16D060E29650D5BEC4574867B45E344088A0C7FF93D4CC0075C631D9"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.AppendLease.cs",
+          "Sha256": "C2A29368EE63D3516DAF79104812F3A2193E2837FAF96C670915C718E54A795F"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.BitmapWords.cs",
+          "Sha256": "1EEAE80D90982B9ECA2491F6C4D3C921B201A557888318C846467D13D02B02B3"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Blobs.cs",
+          "Sha256": "BC0BE5D5D791FC7D09E50A0A636159F4079750C884C8FFD9AB316AFFE20AE623"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Buffered.cs",
+          "Sha256": "FB6117C05C6326D57D3C5F7C084C0B3C6FFA97A5CCF3CE2C451D4C2C787350A2"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.CachedObjects.cs",
+          "Sha256": "49EDE8F41471F3A86D807CFB54B3AD8B933385742E9D1F9E055513060032D552"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.CheckpointCatalogue.cs",
+          "Sha256": "7CEACCC7D2554CA0B8E85650A5F0A165B03596B23D709075D97E7F85FF99700D"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.CheckpointPolicy.cs",
+          "Sha256": "60CC1F85DC855B6906A1C7D4676CFF4248498F4B5BFD0BA35EC57D17F107F806"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.CheckpointValidation.cs",
+          "Sha256": "4F4B1E20849E943ED93D597961BFEF9D6BFE7EB64953FD7965D5D522F2044A79"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Comment.cs",
+          "Sha256": "BF038BF18E7E581E78378562642C343C3DC198BE195257792A13AB5BF74C35F2"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.ControlProof.cs",
+          "Sha256": "0F4D3A99F5EB08FFD758D41CC937F5BCC26660D346B27A326465E7475AF3441A"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.CrcKernel.cs",
+          "Sha256": "0E488A82D28F5C7CE4C6C1D43075A3753F641952D4D96E909180EC4FDA6CEAAA"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.CrcSetup.cs",
+          "Sha256": "15D2B6259FF186B722043FB6703F5A5B4741E90BFD7A49DF6DEBCE43B5DBD87F"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.cs",
+          "Sha256": "460D3C908251C9FF32025D7A129713759A55304BD88BED68FD49073F0B439C44"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.DirectInodes.cs",
+          "Sha256": "8896459004B4DDEE719BAC901B28C345BB05D4A61EB3D3ABEB2FC66007DC8F95"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FastCreatePlan.cs",
+          "Sha256": "EF7B3E7E05639169A3DEA82C32658E7DC8E95FFF44219DEFE80D5E8D040BDA53"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FastDirectCreate.cs",
+          "Sha256": "75A6F3F6269FBB0456FA759F255E48FE3076230623F28A87764747AD42BEEE87"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FastFileStep.cs",
+          "Sha256": "B356FD23205F33E068628D592C381B97C8ED557005D6C7D932EF9AB7400947C0"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FastNamespace.cs",
+          "Sha256": "737C1847FB2C745A1F1780E3B9AC2F456B5B72079FA581021203B0FA6039E37B"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FastShrink.cs",
+          "Sha256": "F585C18836AE731BC93BE5270C9AD7FC91C149A5AE9A82D2D06AE0B6E2AA612C"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FastWrite.cs",
+          "Sha256": "F1DB25D092C8337A18AB1C0D635B01517BBC658749F7064F25ACE5C9A0FD2FDF"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FileData.cs",
+          "Sha256": "844A99A352CB7CA11BF323D0CF8A37EDC0FFD164165142CB5891C9C783916876"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.FileMutations.cs",
+          "Sha256": "C3B037FDE857C9F2916A06E0D88644C4570F25DE7AF18DF6A6080B6A3B6A28DB"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Format.cs",
+          "Sha256": "0A00826CCE5674F0BF5892966A9DAD3C32862F64C161F84933422FA8D5C9CE49"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Information.cs",
+          "Sha256": "81DF698B1850B353B7995213DA39866C30BEA2DE717C6DEFC441290770044427"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Label.cs",
+          "Sha256": "85BA800D3178B7361DCB964CC4AB7F6EA3B781F3557FA0D73D36780F257D3ED6"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Links.cs",
+          "Sha256": "017743A5927E673EFAF10602EACC71930A2C2179D41E62F765E7EC4797A60747"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Lookup.cs",
+          "Sha256": "EF865D5D78754A486E9DA37DE1D055CE5055471924D66DA8810DC5A573272618"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.LookupObject.cs",
+          "Sha256": "ED2F31090069851E069363C1D34657476631335FB11438BD2236F9C4E12DE9FD"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.ManualTrim.cs",
+          "Sha256": "746A54824446725CF41540E369D07B028D2FA8828C3F714A403F1CAB9FD310F5"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.MetadataAllocation.cs",
+          "Sha256": "D4D296B8E7D2C55C976388A397424503F282031B1AD020D80D766E907762973E"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Namespace.cs",
+          "Sha256": "F1BB981BAC1586987B9A56974958B7CC391939A02BBBA8CD75B66EDC22B14821"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Objects.cs",
+          "Sha256": "CAF0A747E52C3DF10CFE8132CA1D235299C969FFA66B8037ABFC5859550AEACE"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.OwnedPublication.cs",
+          "Sha256": "987DEB87AA856421B240C40FD3CFFA424956B800E29D86987429722CF6AF69CB"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.PartialWriteWindow.cs",
+          "Sha256": "1377ABFF2331604FFFD37CBE4CC0A2AC5B8CFAC1CE26BA7A958395CD7876456F"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.PruneTree.cs",
+          "Sha256": "AB715549AB31BE6962F897987DE0FF34C11530551107C574FD81ADEAC63D603C"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.ReadCapability.cs",
+          "Sha256": "D0746BE7B889451427E70414F0DEDC57A0B1C142F49E5CA682651FC1B939922F"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Reclaim.cs",
+          "Sha256": "403DFAF3FCD331B7FD7B05F7E8C1A0593BB57D2AE7CEA6698E28CDDDC68C36B9"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Recovery.cs",
+          "Sha256": "5A5830C9CA5CFB91BC8472A1BBFFCC9B28D3AA521CDEC6DE4B296CD454AC4AA7"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.ReserveBatch.cs",
+          "Sha256": "9DC432EFF2E474405DB5D3CBC12415391B6A25E456CCB0B4F02F6747C5332766"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Resize.cs",
+          "Sha256": "0B0CF54F8605B6D25C9213077FA9395A293480AC990C264648B7259B546D6E34"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Shadow.cs",
+          "Sha256": "F2D28479C8A7CE3CA3416BEA6975BDCB93E7BA57844A16FD255FB73AA1638514"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Transaction.cs",
+          "Sha256": "E0C3B7AD8841CA93A6C779B5136504614123E571455D1B073627DCF96899CBED"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.TransferAdmission.cs",
+          "Sha256": "27522BA1497AE9A4F4F49FEC7BECC592658CABAE53102FB92DAF2B43E9485CF5"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.TreeCursor.cs",
+          "Sha256": "D7C01C420813B2429AA5B9351AA632F8CF739F1F6FF3C56A7E9FA08C6CBDA433"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.TreeMutation.cs",
+          "Sha256": "B35BEDF31053B39EE7931FA151F93F7D5EB9E338038D9C591D4C140EA535D4F2"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.Trim.cs",
+          "Sha256": "DB5B96C2AE040CE0324EE485778EE104E3574F13681245FE6CB8BAE93FA886BF"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxEngine.WriteGap.cs",
+          "Sha256": "88B6414891551CA802F6F991DB307756C2F88E7A3C450D1F39A21A5326151417"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxInodeIdentity.cs",
+          "Sha256": "BA8C55A7AB36ABF726CB6F5D326C517741C9293EEDCD3D7BAD699404D28E4B7E"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxMemoryCopy.cs",
+          "Sha256": "8EBF8A1A14681E6A350839D5CFE02C741ECF5C4833C7E312FDE8926D5A53CE02"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxShadowChecksums.cs",
+          "Sha256": "6534AE97DB55DC7037EB43C8876FC1AE95764A19EA5792E082631372B34F5EFB"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxShadowCommit.cs",
+          "Sha256": "7CA147A403053974C9D2AC90FD9EA8F652521D12BC6C1D9023AA71818A26FB13"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxShadowMapGeometry.cs",
+          "Sha256": "F7B199802D910243E0C7E8513D924C29607A272B30A9AF9BAE4693B033FB13F3"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxShadowMapReadCursor.cs",
+          "Sha256": "D79A7628002BCE300C2F643F55EC8C8EBFF17233BBBE314DA1884F3A9416411F"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\CpxShadowMapWriteCursor.cs",
+          "Sha256": "9429652028535C97D7FB7E44239F46B7DF5101BA4C3678FCF79A8973086F2DB9"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\FixedPools.cs",
+          "Sha256": "8A5A6B3EB755CA2A6A8F84247EA26E4218311538CEE1C38B94646648D5F2E711"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\Scalar64.cs",
+          "Sha256": "C5288A56D2214CF093A128D77613273C0B8D91614C1DFE590EBE39989CFC9478"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\Td64Transfer.cs",
+          "Sha256": "7E7BD239A9DFAA9447FC279EDFCD8015B78B6648567825124DA0614D34FA9E32"
+        },
+        {
+          "Path": "src\\CopperCPX.Core\\Wide.cs",
+          "Sha256": "1ED51D11BAE17988540181C16CA4F3D35790D8FD861A867F7449AA08AAFEB178"
+        },
+        {
+          "Path": "src\\CopperFS.Amiga\\Cpx4\\NativeCpxIo.cs",
+          "Sha256": "FF7778A82688020477EF47A4D95765A857837E3828F253FD48AB4FAC8A903D4A"
+        },
+        {
+          "Path": "src\\CopperFS.Amiga\\Cpx4\\NativeCpxMemory.cs",
+          "Sha256": "3295F1D77004613410AFFE81A7F512B9FAC2D4CE59AD3748A21EA8148E7F7FD2"
+        },
+        {
+          "Path": "src\\CopperFS.Amiga\\Cpx4\\NativeCpxTransport.cs",
+          "Sha256": "BB22E07DEDE2518C7244A89971F08A4E36CE2AC5167C22B99077CEA991FEA2C7"
+        },
+        {
+          "Path": "src\\CopperFS.Amiga\\Cpx4\\NativeCpxUnmap.cs",
+          "Sha256": "1658BADEFFEE1E1C22A7D98E0060B51984DD5B680CBE309030364D53C16D58A7"
+        }
+      ],
+      "ManagedAllocationSites": 0,
+      "CompilerSha256": "7B32D0B0C95F179DA708F7081BA8BD9ECA6253A3D1BFBF09D1FA643B0A148DB1",
+      "HunkSha256": "ED341072FA04E4CD9FC90565CD49383D68B3BB353BCEE683D4A0862935BFEF7D"
+    }
+  },
+  "rom": {
+    "Passed": true,
+    "PartialPacketCoverage": true,
+    "Cpu": "MC68000",
+    "ChipRamBytes": 524288,
+    "FastRamBytes": 0,
+    "HandlerTaskStackBytes": 4096,
+    "Peak": 740,
+    "Lower": 155804,
+    "Upper": 159900,
+    "GuardIntact": true,
+    "StartupAllocations": 9,
+    "OperationAllocations": 0,
+    "CoreAndTransportArenaBytes": 98304,
+    "ShutdownBarriers": 2,
+    "Stage": 0,
+    "DosError": 0,
+    "Frames": 566,
+    "HostSeconds": 36.5331737,
+    "HandlerSha256": "ED341072FA04E4CD9FC90565CD49383D68B3BB353BCEE683D4A0862935BFEF7D",
+    "ProbeSha256": "3D7ED95BC65F07EF220C7B89501D6BBC5DC455C2F58A1F1FE2DE6122EB5B5129",
+    "SourceInputsMatched": true,
+    "ManagedAllocationSites": 0,
+    "IndependentOwnershipAndShutdownPayloadVerified": true
+  },
+  "focused": [
+    {
+      "total": 38,
+      "passed": 38,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "replay": [
+    {
+      "total": 169,
+      "passed": 169,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "workloads": {
+    "mixed": {
+      "publishedPages": [
+        {
+          "sector": 1,
+          "type": 30
+        },
+        {
+          "sector": 3,
+          "type": 34
+        },
+        {
+          "sector": 195,
+          "type": 32
+        }
+      ],
+      "machine": "Kickstart 3.1, emulated 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+      "workload": "Create directory; write 8 KiB; two partial overwrites; truncate to 6003 twice; close and rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+      "inputs": {
+        "PrototypeHandlerSha256": "ED341072FA04E4CD9FC90565CD49383D68B3BB353BCEE683D4A0862935BFEF7D",
+        "BaselinePrototypeHandlerSha256": "61EFDFBF1A8EE50BF3625F0487B3514DA56C2C1F3F2299D5E4A053D5BE1DC339",
+        "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+        "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+        "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+        "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+        "ProbeSha256": "0984E37B49A652D20E62ED24A524713C228E1071B8422A5676A78E177C0AD5B1",
+        "DiskBytes": 16777216,
+        "SectorBytes": 512
+      },
+      "summary": [
+        {
+          "Name": "Current CopperNova prototype (execution core)",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 1958005,
+          "MutationCyclesRange": [
+            1958000,
+            1958010
+          ],
+          "FlushCyclesMedian": 637170,
+          "FlushCyclesRange": [
+            637040,
+            637300
+          ],
+          "RemountCyclesMedian": 349590,
+          "RemountCyclesRange": [
+            349590,
+            349590
+          ],
+          "VerifyCyclesMedian": 1095760,
+          "VerifyCyclesRange": [
+            1095610,
+            1095910
+          ],
+          "TotalMeasuredCyclesMedian": 4040525,
+          "TotalMeasuredCyclesRange": [
+            4040250,
+            4040800
+          ]
+        },
+        {
+          "Name": "CopperNova prototype",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 1923790,
+          "MutationCyclesRange": [
+            1923470,
+            1924110
+          ],
+          "FlushCyclesMedian": 230095,
+          "FlushCyclesRange": [
+            230040,
+            230150
+          ],
+          "RemountCyclesMedian": 199360,
+          "RemountCyclesRange": [
+            199340,
+            199380
+          ],
+          "VerifyCyclesMedian": 1020065,
+          "VerifyCyclesRange": [
+            1019990,
+            1020140
+          ],
+          "TotalMeasuredCyclesMedian": 3373310,
+          "TotalMeasuredCyclesRange": [
+            3372840,
+            3373780
+          ]
+        },
+        {
+          "Name": "Kickstart FFS 40.1",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 1683555,
+          "MutationCyclesRange": [
+            1683090,
+            1684020
+          ],
+          "FlushCyclesMedian": 20460,
+          "FlushCyclesRange": [
+            20440,
+            20480
+          ],
+          "RemountCyclesMedian": 108975,
+          "RemountCyclesRange": [
+            108970,
+            108980
+          ],
+          "VerifyCyclesMedian": 969780,
+          "VerifyCyclesRange": [
+            969670,
+            969890
+          ],
+          "TotalMeasuredCyclesMedian": 2782770,
+          "TotalMeasuredCyclesRange": [
+            2782180,
+            2783360
+          ]
+        },
+        {
+          "Name": "SmartFilesystem 1.279",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 2478900,
+          "MutationCyclesRange": [
+            2478900,
+            2478900
+          ],
+          "FlushCyclesMedian": 161210,
+          "FlushCyclesRange": [
+            161210,
+            161210
+          ],
+          "RemountCyclesMedian": 218760,
+          "RemountCyclesRange": [
+            218760,
+            218760
+          ],
+          "VerifyCyclesMedian": 1059610,
+          "VerifyCyclesRange": [
+            1059610,
+            1059610
+          ],
+          "TotalMeasuredCyclesMedian": 3918480,
+          "TotalMeasuredCyclesRange": [
+            3918480,
+            3918480
+          ]
+        }
+      ],
+      "trials": [
+        {
+          "Name": "Current CopperNova prototype (execution core)",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 435,
+          "CompletedFrames": 435,
+          "HostSeconds": 27.3138187,
+          "PhaseCycles": {
+            "mutationCycles": 1958000,
+            "flushCycles": 637300,
+            "remountCycles": 349590,
+            "verifyCycles": 1095910
+          },
+          "ReadCommands": 21,
+          "WriteCommands": 19,
+          "ReadRequests": 35,
+          "WriteRequests": 42,
+          "ReadBytes": 17920,
+          "WriteBytes": 21504,
+          "Flushes": 5,
+          "InitialMediaSha256": "87C94C8E8227C84EF9E79F469ED91286A7573C3705A6A114084D94B084A2E3BE",
+          "ResultMediaSha256": "C7DA47DF3C93151ADEBF4C17DC53D72BAC8B104E8240F0A47614A39770260363",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":14,\"FreeSectors\":31474,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":6003,\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        },
+        {
+          "Name": "CopperNova prototype",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 456,
+          "CompletedFrames": 456,
+          "HostSeconds": 28.8737607,
+          "PhaseCycles": {
+            "mutationCycles": 1923470,
+            "flushCycles": 230040,
+            "remountCycles": 199340,
+            "verifyCycles": 1019990
+          },
+          "ReadCommands": 11,
+          "WriteCommands": 11,
+          "ReadRequests": 23,
+          "WriteRequests": 27,
+          "ReadBytes": 11776,
+          "WriteBytes": 13824,
+          "Flushes": 3,
+          "InitialMediaSha256": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "ResultMediaSha256": "8F45AD83768A4C138F3570302CF4E1DB7B09C05540B6849FB89A95B2179EB423",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":14,\"FreeSectors\":31360,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":6003,\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        },
+        {
+          "Name": "Kickstart FFS 40.1",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 394,
+          "CompletedFrames": 394,
+          "HostSeconds": 24.6352585,
+          "PhaseCycles": {
+            "mutationCycles": 1684020,
+            "flushCycles": 20480,
+            "remountCycles": 108970,
+            "verifyCycles": 969890
+          },
+          "ReadCommands": 37,
+          "WriteCommands": 17,
+          "ReadRequests": 47,
+          "WriteRequests": 33,
+          "ReadBytes": 24064,
+          "WriteBytes": 16896,
+          "Flushes": 2,
+          "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "ResultMediaSha256": "59BD464F9C5C66849541666E386C58DE600284BAC09B79E26F2267730FF34FC5",
+          "IndependentCheck": "root=16384; fileBytes=6003; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515; headerChecksumValid=True",
+          "Detail": 0
+        },
+        {
+          "Name": "SmartFilesystem 1.279",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 598,
+          "CompletedFrames": 598,
+          "HostSeconds": 37.6267991,
+          "PhaseCycles": {
+            "mutationCycles": 2478900,
+            "flushCycles": 161210,
+            "remountCycles": 218760,
+            "verifyCycles": 1059610
+          },
+          "ReadCommands": 8,
+          "WriteCommands": 7,
+          "ReadRequests": 123,
+          "WriteRequests": 39,
+          "ReadBytes": 62976,
+          "WriteBytes": 19968,
+          "Flushes": 4,
+          "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "ResultMediaSha256": "01B14F4648D44DA9EF12E63706B8C038C880FFDA786FC959EE8BA99D4538F45A",
+          "IndependentCheck": "entries=5; fileBytes=7027; freeBlocks=32710; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542480309,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542480309,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":6003,\"Protection\":15,\"Modified\":1542480309,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542480309,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+          "Detail": 0
+        },
+        {
+          "Name": "SmartFilesystem 1.279",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 598,
+          "CompletedFrames": 598,
+          "HostSeconds": 36.8938834,
+          "PhaseCycles": {
+            "mutationCycles": 2478900,
+            "flushCycles": 161210,
+            "remountCycles": 218760,
+            "verifyCycles": 1059610
+          },
+          "ReadCommands": 8,
+          "WriteCommands": 7,
+          "ReadRequests": 123,
+          "WriteRequests": 39,
+          "ReadBytes": 62976,
+          "WriteBytes": 19968,
+          "Flushes": 4,
+          "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "ResultMediaSha256": "8CE23351C29474203C7E178EA7B53F4FFB734228D9F56163BD86C524834B957A",
+          "IndependentCheck": "entries=5; fileBytes=7027; freeBlocks=32710; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542480347,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542480347,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":6003,\"Protection\":15,\"Modified\":1542480347,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542480347,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+          "Detail": 0
+        },
+        {
+          "Name": "Kickstart FFS 40.1",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 394,
+          "CompletedFrames": 394,
+          "HostSeconds": 24.7995116,
+          "PhaseCycles": {
+            "mutationCycles": 1683090,
+            "flushCycles": 20440,
+            "remountCycles": 108980,
+            "verifyCycles": 969670
+          },
+          "ReadCommands": 37,
+          "WriteCommands": 17,
+          "ReadRequests": 47,
+          "WriteRequests": 33,
+          "ReadBytes": 24064,
+          "WriteBytes": 16896,
+          "Flushes": 2,
+          "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "ResultMediaSha256": "6D8A6A4CC0421C6B90C810C0057CAF03EFBDC54AAA27683776745328C09326DA",
+          "IndependentCheck": "root=16384; fileBytes=6003; payloadSha256=90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515; headerChecksumValid=True",
+          "Detail": 0
+        },
+        {
+          "Name": "CopperNova prototype",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 456,
+          "CompletedFrames": 456,
+          "HostSeconds": 33.6840877,
+          "PhaseCycles": {
+            "mutationCycles": 1924110,
+            "flushCycles": 230150,
+            "remountCycles": 199380,
+            "verifyCycles": 1020140
+          },
+          "ReadCommands": 11,
+          "WriteCommands": 11,
+          "ReadRequests": 23,
+          "WriteRequests": 27,
+          "ReadBytes": 11776,
+          "WriteBytes": 13824,
+          "Flushes": 3,
+          "InitialMediaSha256": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "ResultMediaSha256": "8F45AD83768A4C138F3570302CF4E1DB7B09C05540B6849FB89A95B2179EB423",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":14,\"FreeSectors\":31360,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":6003,\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        },
+        {
+          "Name": "Current CopperNova prototype (execution core)",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 435,
+          "CompletedFrames": 435,
+          "HostSeconds": 39.894558,
+          "PhaseCycles": {
+            "mutationCycles": 1958010,
+            "flushCycles": 637040,
+            "remountCycles": 349590,
+            "verifyCycles": 1095610
+          },
+          "ReadCommands": 21,
+          "WriteCommands": 19,
+          "ReadRequests": 35,
+          "WriteRequests": 42,
+          "ReadBytes": 17920,
+          "WriteBytes": 21504,
+          "Flushes": 5,
+          "InitialMediaSha256": "87C94C8E8227C84EF9E79F469ED91286A7573C3705A6A114084D94B084A2E3BE",
+          "ResultMediaSha256": "C7DA47DF3C93151ADEBF4C17DC53D72BAC8B104E8240F0A47614A39770260363",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":14,\"FreeSectors\":31474,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":6003,\"Sha256\":\"90F4D80F6B28280D88E17E142D9958B9EA7CE096D57BB90EC010AD21F4AC0515\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        }
+      ],
+      "selectedRoot": 1,
+      "leafSector": 195,
+      "leafBytesUsed": 240,
+      "records": [
+        {
+          "object": 1,
+          "type": 11,
+          "length": 56
+        },
+        {
+          "object": 2,
+          "type": 11,
+          "length": 96
+        },
+        {
+          "object": 3,
+          "type": 10,
+          "length": 24
+        },
+        {
+          "object": 4,
+          "type": 10,
+          "length": 24
+        }
+      ]
+    },
+    "stream": {
+      "publishedPages": [
+        {
+          "sector": 1,
+          "type": 30
+        },
+        {
+          "sector": 3,
+          "type": 34
+        },
+        {
+          "sector": 5,
+          "type": 34
+        },
+        {
+          "sector": 7,
+          "type": 34
+        },
+        {
+          "sector": 195,
+          "type": 32
+        }
+      ],
+      "machine": "Kickstart 3.1, emulated 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+      "workload": "32 writes of 64 KiB (2 MiB); two partial overwrites; no-op truncates; rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+      "inputs": {
+        "PrototypeHandlerSha256": "ED341072FA04E4CD9FC90565CD49383D68B3BB353BCEE683D4A0862935BFEF7D",
+        "BaselinePrototypeHandlerSha256": "61EFDFBF1A8EE50BF3625F0487B3514DA56C2C1F3F2299D5E4A053D5BE1DC339",
+        "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+        "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+        "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+        "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+        "ProbeSha256": "31AF34F1FF54A5AB4EBFF9D74C612C3BA00CB20C845DEB8947896E619656F906",
+        "DiskBytes": 16777216,
+        "SectorBytes": 512
+      },
+      "summary": [
+        {
+          "Name": "Current CopperNova prototype (execution core)",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 2244235,
+          "MutationCyclesRange": [
+            2244050,
+            2244420
+          ],
+          "FlushCyclesMedian": 713900,
+          "FlushCyclesRange": [
+            713900,
+            713900
+          ],
+          "RemountCyclesMedian": 364155,
+          "RemountCyclesRange": [
+            364030,
+            364280
+          ],
+          "VerifyCyclesMedian": 364825180,
+          "VerifyCyclesRange": [
+            364825120,
+            364825240
+          ],
+          "TotalMeasuredCyclesMedian": 368147470,
+          "TotalMeasuredCyclesRange": [
+            368147470,
+            368147470
+          ]
+        },
+        {
+          "Name": "CopperNova prototype",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 2186435,
+          "MutationCyclesRange": [
+            2186410,
+            2186460
+          ],
+          "FlushCyclesMedian": 324005,
+          "FlushCyclesRange": [
+            323940,
+            324070
+          ],
+          "RemountCyclesMedian": 214110,
+          "RemountCyclesRange": [
+            214100,
+            214120
+          ],
+          "VerifyCyclesMedian": 364700960,
+          "VerifyCyclesRange": [
+            364700870,
+            364701050
+          ],
+          "TotalMeasuredCyclesMedian": 367425510,
+          "TotalMeasuredCyclesRange": [
+            367425370,
+            367425650
+          ]
+        },
+        {
+          "Name": "Kickstart FFS 40.1",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 2110605,
+          "MutationCyclesRange": [
+            2110600,
+            2110610
+          ],
+          "FlushCyclesMedian": 20340,
+          "FlushCyclesRange": [
+            20340,
+            20340
+          ],
+          "RemountCyclesMedian": 114980,
+          "RemountCyclesRange": [
+            114970,
+            114990
+          ],
+          "VerifyCyclesMedian": 365196810,
+          "VerifyCyclesRange": [
+            365196720,
+            365196900
+          ],
+          "TotalMeasuredCyclesMedian": 367442735,
+          "TotalMeasuredCyclesRange": [
+            367442660,
+            367442810
+          ]
+        },
+        {
+          "Name": "SmartFilesystem 1.279",
+          "Trials": 2,
+          "AllPassed": true,
+          "MutationCyclesMedian": 4572765,
+          "MutationCyclesRange": [
+            4572750,
+            4572780
+          ],
+          "FlushCyclesMedian": 174265,
+          "FlushCyclesRange": [
+            174260,
+            174270
+          ],
+          "RemountCyclesMedian": 215025,
+          "RemountCyclesRange": [
+            215010,
+            215040
+          ],
+          "VerifyCyclesMedian": 364912070,
+          "VerifyCyclesRange": [
+            364912060,
+            364912080
+          ],
+          "TotalMeasuredCyclesMedian": 369874125,
+          "TotalMeasuredCyclesRange": [
+            369874120,
+            369874130
+          ]
+        }
+      ],
+      "trials": [
+        {
+          "Name": "Current CopperNova prototype (execution core)",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3057,
+          "CompletedFrames": 3057,
+          "HostSeconds": 196.3892859,
+          "PhaseCycles": {
+            "mutationCycles": 2244420,
+            "flushCycles": 713900,
+            "remountCycles": 364030,
+            "verifyCycles": 364825120
+          },
+          "ReadCommands": 53,
+          "WriteCommands": 52,
+          "ReadRequests": 4121,
+          "WriteRequests": 4126,
+          "ReadBytes": 2109952,
+          "WriteBytes": 2112512,
+          "Flushes": 5,
+          "InitialMediaSha256": "87C94C8E8227C84EF9E79F469ED91286A7573C3705A6A114084D94B084A2E3BE",
+          "ResultMediaSha256": "02A4D5613CFD2FA50F3F20F04B608326C0458D83422538A9F7A9BD2236E1DCF1",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":4098,\"FreeSectors\":27390,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":2097152,\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        },
+        {
+          "Name": "CopperNova prototype",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3079,
+          "CompletedFrames": 3079,
+          "HostSeconds": 256.7025791,
+          "PhaseCycles": {
+            "mutationCycles": 2186410,
+            "flushCycles": 324070,
+            "remountCycles": 214120,
+            "verifyCycles": 364701050
+          },
+          "ReadCommands": 43,
+          "WriteCommands": 44,
+          "ReadRequests": 4109,
+          "WriteRequests": 4109,
+          "ReadBytes": 2103808,
+          "WriteBytes": 2103808,
+          "Flushes": 3,
+          "InitialMediaSha256": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "ResultMediaSha256": "951BE2B2014574BCD3884181A53B011B8A628D1A3AB87993D950B5C237AF80B4",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":4098,\"FreeSectors\":27276,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":2097152,\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        },
+        {
+          "Name": "Kickstart FFS 40.1",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3021,
+          "CompletedFrames": 3021,
+          "HostSeconds": 228.0415708,
+          "PhaseCycles": {
+            "mutationCycles": 2110600,
+            "flushCycles": 20340,
+            "remountCycles": 114970,
+            "verifyCycles": 365196900
+          },
+          "ReadCommands": 155,
+          "WriteCommands": 136,
+          "ReadRequests": 4190,
+          "WriteRequests": 4172,
+          "ReadBytes": 2145280,
+          "WriteBytes": 2136064,
+          "Flushes": 34,
+          "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "ResultMediaSha256": "182F7B6324BBD1FCF653FD13FAB78DB562A87507E6484D3AD5D05FE581FA6F10",
+          "IndependentCheck": "root=16384; fileBytes=2097152; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733; headerChecksumValid=True",
+          "Detail": 0
+        },
+        {
+          "Name": "SmartFilesystem 1.279",
+          "Trial": 1,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3236,
+          "CompletedFrames": 3236,
+          "HostSeconds": 221.5383019,
+          "PhaseCycles": {
+            "mutationCycles": 4572750,
+            "flushCycles": 174260,
+            "remountCycles": 215040,
+            "verifyCycles": 364912080
+          },
+          "ReadCommands": 38,
+          "WriteCommands": 38,
+          "ReadRequests": 4192,
+          "WriteRequests": 4120,
+          "ReadBytes": 2146304,
+          "WriteBytes": 2109440,
+          "Flushes": 4,
+          "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "ResultMediaSha256": "2CFB97D5280EE9FA3B00838597EA46D1D199AB60EE8604B0D997F32EF353EFF6",
+          "IndependentCheck": "entries=5; fileBytes=2098176; freeBlocks=28626; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542480908,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542480909,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":2097152,\"Protection\":15,\"Modified\":1542480909,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542480909,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+          "Detail": 0
+        },
+        {
+          "Name": "SmartFilesystem 1.279",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3236,
+          "CompletedFrames": 3236,
+          "HostSeconds": 221.8915114,
+          "PhaseCycles": {
+            "mutationCycles": 4572780,
+            "flushCycles": 174270,
+            "remountCycles": 215010,
+            "verifyCycles": 364912060
+          },
+          "ReadCommands": 38,
+          "WriteCommands": 38,
+          "ReadRequests": 4192,
+          "WriteRequests": 4120,
+          "ReadBytes": 2146304,
+          "WriteBytes": 2109440,
+          "Flushes": 4,
+          "InitialMediaSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "ResultMediaSha256": "6CD4F1DFE9D2C500AC835B5F8A8C941B0C417EB040B7CF151FDDAD2249B74443",
+          "IndependentCheck": "entries=5; fileBytes=2098176; freeBlocks=28626; files=[{\"Path\":\"/\",\"Node\":1,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542481130,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/.recycled\",\"Node\":2,\"Directory\":true,\"Size\":0,\"Protection\":3,\"Modified\":1541454121,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":134,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench\",\"Node\":3,\"Directory\":true,\"Size\":0,\"Protection\":15,\"Modified\":1542481131,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":128,\"Comment\":\"\",\"Sha256\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Node\":4,\"Directory\":false,\"Size\":2097152,\"Protection\":15,\"Modified\":1542481131,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\"},{\"Path\":\"/Bench/Temp.bin\",\"Node\":5,\"Directory\":false,\"Size\":1024,\"Protection\":15,\"Modified\":1542481131,\"OwnerUid\":0,\"OwnerGid\":0,\"Flags\":0,\"Comment\":\"\",\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\"}]",
+          "Detail": 0
+        },
+        {
+          "Name": "Kickstart FFS 40.1",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3021,
+          "CompletedFrames": 3021,
+          "HostSeconds": 200.1839199,
+          "PhaseCycles": {
+            "mutationCycles": 2110610,
+            "flushCycles": 20340,
+            "remountCycles": 114990,
+            "verifyCycles": 365196720
+          },
+          "ReadCommands": 155,
+          "WriteCommands": 136,
+          "ReadRequests": 4190,
+          "WriteRequests": 4172,
+          "ReadBytes": 2145280,
+          "WriteBytes": 2136064,
+          "Flushes": 34,
+          "InitialMediaSha256": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "ResultMediaSha256": "916A1B353ACFB562CEC82B43520B36C1A778639A3B87017CF3764A970871737E",
+          "IndependentCheck": "root=16384; fileBytes=2097152; payloadSha256=29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733; headerChecksumValid=True",
+          "Detail": 0
+        },
+        {
+          "Name": "CopperNova prototype",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3079,
+          "CompletedFrames": 3079,
+          "HostSeconds": 177.1132712,
+          "PhaseCycles": {
+            "mutationCycles": 2186460,
+            "flushCycles": 323940,
+            "remountCycles": 214100,
+            "verifyCycles": 364700870
+          },
+          "ReadCommands": 43,
+          "WriteCommands": 44,
+          "ReadRequests": 4109,
+          "WriteRequests": 4109,
+          "ReadBytes": 2103808,
+          "WriteBytes": 2103808,
+          "Flushes": 3,
+          "InitialMediaSha256": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "ResultMediaSha256": "951BE2B2014574BCD3884181A53B011B8A628D1A3AB87993D950B5C237AF80B4",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":4098,\"FreeSectors\":27276,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":2097152,\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        },
+        {
+          "Name": "Current CopperNova prototype (execution core)",
+          "Trial": 2,
+          "Passed": true,
+          "Stage": 0,
+          "IoErr": 0,
+          "LoopFrames": 3057,
+          "CompletedFrames": 3057,
+          "HostSeconds": 174.050184,
+          "PhaseCycles": {
+            "mutationCycles": 2244050,
+            "flushCycles": 713900,
+            "remountCycles": 364280,
+            "verifyCycles": 364825240
+          },
+          "ReadCommands": 53,
+          "WriteCommands": 52,
+          "ReadRequests": 4121,
+          "WriteRequests": 4126,
+          "ReadBytes": 2109952,
+          "WriteBytes": 2112512,
+          "Flushes": 5,
+          "InitialMediaSha256": "87C94C8E8227C84EF9E79F469ED91286A7573C3705A6A114084D94B084A2E3BE",
+          "ResultMediaSha256": "02A4D5613CFD2FA50F3F20F04B608326C0458D83422538A9F7A9BD2236E1DCF1",
+          "IndependentCheck": "{\"Generation\":1,\"AllocatedInodes\":4,\"DataSectors\":4098,\"FreeSectors\":27390,\"Entries\":[{\"Path\":\"/Bench\",\"Directory\":true,\"Slot\":2,\"Size\":0,\"Sha256\":null,\"Comment\":null},{\"Path\":\"/Bench/Renamed.bin\",\"Directory\":false,\"Slot\":3,\"Size\":2097152,\"Sha256\":\"29C2795B52B9E1C0798F3EADDDBFBA07D804E794F223FC9F844AF3B761EFD733\",\"Comment\":null},{\"Path\":\"/Bench/Temp.bin\",\"Directory\":false,\"Slot\":4,\"Size\":1024,\"Sha256\":\"E8FB68CE4D4D002DBA40C0A459D96807C96DED1C2FDEFAE3F56F8A0C06A4FECF\",\"Comment\":null}]}",
+          "Detail": 0
+        }
+      ],
+      "selectedRoot": 1,
+      "leafSector": 195,
+      "leafBytesUsed": 240,
+      "records": [
+        {
+          "object": 1,
+          "type": 11,
+          "length": 56
+        },
+        {
+          "object": 2,
+          "type": 11,
+          "length": 96
+        },
+        {
+          "object": 3,
+          "type": 10,
+          "length": 24
+        },
+        {
+          "object": 4,
+          "type": 10,
+          "length": 24
+        }
+      ]
+    }
+  }
+}
