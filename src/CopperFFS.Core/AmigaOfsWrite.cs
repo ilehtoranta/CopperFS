@@ -25,7 +25,7 @@ public static partial class AmigaFfsWriteCore
         lastData = 0;
         var remaining = size;
         var payload = g.BlockBytes - 24;
-        if (!release && w.LayoutKnown && AmigaFfsMountIndex.Matches(ref p, w.Index, header, size))
+        if (MountIndexEnabled && !release && w.LayoutKnown && AmigaFfsMountIndex.Matches(ref p, w.Index, header, size))
         {
             var length = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBlocks);
             if (length != 0) lastData = p.ReadUInt32(AmigaFfsMountIndex.DataKeys(ref p, w.Index), (int)(length - 1) * 4);
@@ -33,11 +33,11 @@ public static partial class AmigaFfsWriteCore
         }
         var blocks = remaining == 0 ? 0 : AmigaGeometryMath.Divide(remaining - 1, payload) + 1;
         if (blocks > g.BlockCount - g.ReservedBlocks) return Fail(ref w, DOS.Error.DiskNotValidated);
-        var indexed = !release && w.LayoutKnown && AmigaFfsMountIndex.FitsFile(ref p, w.Index, blocks, g.TableEntries);
+        var indexed = MountIndexEnabled && !release && w.LayoutKnown && AmigaFfsMountIndex.FitsFile(ref p, w.Index, blocks, g.TableEntries);
         var dataKeys = APTR.Null; var tables = APTR.Null;
         var stage = APTR.Null;
         var stageBlocks = 0u;
-        if (indexed)
+        if (MountIndexEnabled && indexed)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Header, 0);
             dataKeys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
@@ -60,7 +60,7 @@ public static partial class AmigaFfsWriteCore
                 p.ReadUInt32(w.Meta, g.Tail + 508) != 0xFFFFFFFD ||
                 (guard != 0 && p.ReadUInt32(w.Meta, g.Tail + 500) != header))
                 return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (indexed) p.WriteUInt32(tables, (int)guard * 4, table);
+            if (MountIndexEnabled && indexed) p.WriteUInt32(tables, (int)guard * 4, table);
             var count = blocks - index; if (count > g.TableEntries) count = g.TableEntries;
             if (p.ReadUInt32(w.Meta, 8) != count) return Fail(ref w, DOS.Error.DiskNotValidated);
             var staged = 0u;
@@ -74,9 +74,9 @@ public static partial class AmigaFfsWriteCore
                 if (staged == 0)
                 {
                     var run = 1u;
-                    while (run < stageBlocks && run < count - i &&
+                    while (MountIndexEnabled && run < stageBlocks && run < count - i &&
                         p.ReadUInt32(w.Meta, g.Tail + 308 - (int)(i + run) * 4) == key + run) run++;
-                    if (run > 1)
+                    if (MountIndexEnabled && run > 1)
                     {
                         if (!AllocatedRun(ref p, ref w, in g, key, run) || p.ReadDataBlocks(key, run, stage, false) != run)
                             return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -105,10 +105,10 @@ public static partial class AmigaFfsWriteCore
                 // The absolute sequence previously proved uniqueness. For a
                 // restarted sequence, check earlier pointers explicitly, using
                 // only the metadata scratch and restoring its current table.
-                if (indexed) p.WriteUInt32(dataKeys, (int)index * 4, key);
+                if (MountIndexEnabled && indexed) p.WriteUInt32(dataKeys, (int)index * 4, key);
                 else if (sequence != index + 1 && !OfsUniquePrefix(ref p, ref w, header, table, index, key)) return false;
                 expected = p.ReadUInt32(image, 16); lastData = key;
-                if (staged != 0)
+                if (MountIndexEnabled && staged != 0)
                 {
                     staged--;
                     image = APTR.FromPointer(image.Raw + g.BlockBytes);
@@ -121,7 +121,7 @@ public static partial class AmigaFfsWriteCore
             if (guard != 0 && release) Bit(ref p, ref w, table, true);
             if (w.Error != DOS.Error.None) return false;
             if (index == blocks)
-                return (headFound && next == 0 && expected == 0 && (!indexed ||
+                return (headFound && next == 0 && expected == 0 && (!MountIndexEnabled || !indexed ||
                     AmigaFfsMountIndex.SealFile(ref p, w.Index, header, size, blocks, guard + 1))) || Fail(ref w, DOS.Error.DiskNotValidated);
             if (next == 0 || next == header) return Fail(ref w, DOS.Error.DiskNotValidated);
             table = next;
@@ -287,7 +287,7 @@ public static partial class AmigaFfsWriteCore
         var end = r.Position + r.Length; var newSize = end > size ? end : size;
         var oldBlocks = size == 0 ? 0 : AmigaGeometryMath.Divide(size - 1, payload) + 1;
         if (end > size && !PrepareGrowthIndex(ref p, ref w, in g)) return false;
-        if (w.LayoutKnown) AmigaFfsMountIndex.ResumeFile(ref p, w.Index, r.Header, size);
+        if (MountIndexEnabled && w.LayoutKnown) AmigaFfsMountIndex.ResumeFile(ref p, w.Index, r.Header, size);
         if (!OfsChain(ref p, ref w, in g, r.Header, size, firstData, false, out var previousData)) return false;
         var newBlocks = oldBlocks;
         if (end > size)
@@ -299,14 +299,14 @@ public static partial class AmigaFfsWriteCore
         }
         var stage = APTR.Null;
         uint stageBlocks = 0;
-        if (fixedHardDisk && w.LayoutKnown)
+        if (MountIndexEnabled && fixedHardDisk && w.LayoutKnown)
         {
             stage = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.Stage));
             stageBlocks = p.ReadUInt32(w.Index, AmigaFfsMountIndex.StageBytes) / g.BlockBytes;
         }
         var fileKeys = APTR.Null;
         var fileTables = APTR.Null;
-        if (w.LayoutKnown && AmigaFfsMountIndex.FitsFile(ref p, w.Index, newBlocks, g.TableEntries) &&
+        if (MountIndexEnabled && w.LayoutKnown && AmigaFfsMountIndex.FitsFile(ref p, w.Index, newBlocks, g.TableEntries) &&
             (oldBlocks == 0 || AmigaFfsMountIndex.Matches(ref p, w.Index, r.Header, size)))
         {
             fileKeys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
@@ -316,7 +316,7 @@ public static partial class AmigaFfsWriteCore
             if (w.GroupFileWrites && w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0)
                 w.GroupHeader = r.Header;
         }
-        if (w.BufferSmallAppends && TryStartBufferedAppend(ref p, ref w, ref r, in g, size, out actual))
+        if (MountIndexEnabled && w.BufferSmallAppends && TryStartBufferedAppend(ref p, ref w, ref r, in g, size, out actual))
             return w.Error == DOS.Error.None;
         if (!Begin(ref p, ref w, in g)) return false;
         if (fixedHardDisk && g.BlockBytes == 512 && r.Position == 0 && r.Length == size &&
@@ -334,7 +334,7 @@ public static partial class AmigaFfsWriteCore
             var position = r.Position + actual; var index = AmigaGeometryMath.DivRem(position, payload, out var withinRemainder);
             var targetTable = AmigaGeometryMath.DivRem(index, g.TableEntries, out var slotRemainder);
             var slot = slotRemainder;
-            if (fileTables.IsNotNull && targetTable != tableIndex && oldBlocks != 0 &&
+            if (MountIndexEnabled && fileTables.IsNotNull && targetTable != tableIndex && oldBlocks != 0 &&
                 targetTable <= (oldBlocks - 1) / g.TableEntries)
             {
                 table = p.ReadUInt32(fileTables, (int)targetTable * 4);
@@ -356,7 +356,7 @@ public static partial class AmigaFfsWriteCore
                     if (!Put(ref p, ref w, table, w.Meta, 20)) return false;
                 }
                 table = next; tableIndex++;
-                if (fileTables.IsNotNull) p.WriteUInt32(fileTables, (int)tableIndex * 4, table);
+                if (MountIndexEnabled && fileTables.IsNotNull) p.WriteUInt32(fileTables, (int)tableIndex * 4, table);
             }
             if (!ReadWriteTable(ref p, ref w, table)) return Fail(ref w, DOS.Error.DiskNotValidated);
             var at = g.Tail + 308 - (int)slot * 4;
@@ -369,7 +369,7 @@ public static partial class AmigaFfsWriteCore
                 key = AllocateData(ref p, ref w, in g, (previousData == 0 ? r.Header : previousData) + 1,
                     wanted, ref runFirst, ref runCount);
                 if (key == 0) return false;
-                if (fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)index * 4, key);
+                if (MountIndexEnabled && fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)index * 4, key);
                 if (withinRemainder == 0 && runCount != 0)
                 {
                     // Allocate a verified contiguous run before constructing its
@@ -393,7 +393,7 @@ public static partial class AmigaFfsWriteCore
                         CopyAndSealOfs(ref p, input, image, bytes);
                         if (!staged && !Put(ref p, ref w, key + n, image, -1)) return false;
                         p.WriteUInt32(w.Meta, at - (int)n * 4, key + n);
-                        if (fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)(index + n) * 4, key + n);
+                        if (MountIndexEnabled && fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)(index + n) * 4, key + n);
                         remaining -= bytes;
                         input = APTR.FromPointer(input.Raw + bytes);
                         if (staged) image = APTR.FromPointer(image.Raw + g.BlockBytes);
@@ -420,7 +420,7 @@ public static partial class AmigaFfsWriteCore
             else
             {
                 var left = r.Length - actual;
-                if (fileKeys.IsNotNull && stageBlocks >= 2 && withinRemainder == 0 && left >= payload * 2)
+                if (MountIndexEnabled && fileKeys.IsNotNull && stageBlocks >= 2 && withinRemainder == 0 && left >= payload * 2)
                 {
                     var blocks = left / payload;
                     if (blocks > stageBlocks) blocks = stageBlocks;
@@ -465,7 +465,7 @@ public static partial class AmigaFfsWriteCore
             }
             actual += count;
         }
-        if (w.RestoreFile != 0)
+        if (MountIndexEnabled && w.RestoreFile != 0)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.FileBlocks, newBlocks);
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Tables, (newBlocks - 1) / g.TableEntries + 1);

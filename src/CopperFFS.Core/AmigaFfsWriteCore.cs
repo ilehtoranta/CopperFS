@@ -9,6 +9,8 @@ namespace CopperStart.Dos;
 // write leaves it invalid so a host checkpoint cannot publish a partial image.
 public static partial class AmigaFfsWriteCore
 {
+    private const bool MountIndexEnabled = AmigaFfsMountIndex.Enabled;
+
     public struct Work
     {
         public APTR Meta, Data, Bitmap;
@@ -67,14 +69,14 @@ public static partial class AmigaFfsWriteCore
     private static APTR InspectHeader<T>(ref T p, ref Work w, in AmigaFfsGeometry g, uint key)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (key == w.RootKey && w.LayoutKnown && w.RootImage.IsNotNull && w.Index.IsNotNull &&
+        if (MountIndexEnabled && key == w.RootKey && w.LayoutKnown && w.RootImage.IsNotNull && w.Index.IsNotNull &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Updating)
             return w.RootImage;
-        if (w.ReadsGroupedDirectories && w.LayoutKnown && w.GroupMetadata && key != 0 &&
+        if (MountIndexEnabled && w.ReadsGroupedDirectories && w.LayoutKnown && w.GroupMetadata && key != 0 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingParent) == key &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Updating)
             return APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
-        if (w.GroupFileWrites && w.LayoutKnown && key != 0 &&
+        if (MountIndexEnabled && w.GroupFileWrites && w.LayoutKnown && key != 0 &&
             (w.GroupHeader == key || HasFileWriteGroup(ref p, w.Index)) &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) == key)
             return APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
@@ -113,7 +115,7 @@ public static partial class AmigaFfsWriteCore
     private static bool Put<T>(ref T p, ref Work w, uint key, APTR buffer, int checksum) where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (w.Error != DOS.Error.None) return false;
-        if (w.GroupHeader != 0 && key == w.GroupHeader)
+        if (MountIndexEnabled && w.GroupHeader != 0 && key == w.GroupHeader)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.FreshHeaderImage, 0);
             var owned = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
@@ -121,7 +123,7 @@ public static partial class AmigaFfsWriteCore
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, key);
             return true;
         }
-        if (w.GroupHeader != 0 && checksum == 20 && buffer == w.Meta && p.ReadUInt32(buffer) == 16 &&
+        if (MountIndexEnabled && w.GroupHeader != 0 && checksum == 20 && buffer == w.Meta && p.ReadUInt32(buffer) == 16 &&
             p.ReadUInt32(buffer, 4) == key && p.ReadUInt32(w.Index, AmigaFfsMountIndex.TableImage) != 0)
         {
             if (p.ReadUInt32(w.Index, AmigaFfsMountIndex.FirstExtension) == key)
@@ -141,7 +143,7 @@ public static partial class AmigaFfsWriteCore
         // The validity writes already use the mount's private root image.
         // Bypass the duplicate retained copy. The platform invalidates the
         // old physical cache entry even if the device completes only a prefix.
-        if (key == w.RootKey && buffer == w.RootImage && w.LayoutKnown)
+        if (MountIndexEnabled && key == w.RootKey && buffer == w.RootImage && w.LayoutKnown)
             return p.WriteDataBlocks(key, 1, buffer) || Fail(ref w, DOS.Error.DiskNotValidated);
         // A write-through retained image avoids immediately rereading the same
         // root, pointer table or OFS chain page. Failed writes must invalidate
@@ -172,6 +174,10 @@ public static partial class AmigaFfsWriteCore
         w.RootKey = geometry.RootBlock;
         w.RootImage = APTR.Null;
         w.BitmapBlock = 0; w.BitmapDirty = 0; w.BitmapChecksumDelta = 0; w.NextKey = geometry.ReservedBlocks;
+#if COPPERFS_NO_FFS_MOUNT_INDEX
+        w.LayoutKnown = false;
+        return PrepareUnindexed(ref p, ref w, in geometry, needed, scan);
+#else
         var status = w.Index.IsNull ? 0u : p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status);
         w.LayoutKnown = status == AmigaFfsMountIndex.Clean ||
             (w.GroupMetadata && status == AmigaFfsMountIndex.MetadataOpen) ||
@@ -201,6 +207,7 @@ public static partial class AmigaFfsWriteCore
             }
         }
         return geometry.BlockCount - w.IndexedUsed >= needed || Fail(ref w, DOS.Error.DiskFull);
+#endif
     }
 
     // Only a cold or unindexed mount needs validation and bitmap traversal
@@ -212,7 +219,7 @@ public static partial class AmigaFfsWriteCore
         if (!LoadDosType(ref p, ref w)) return false;
         if (!Header(ref p, ref w, geometry.RootBlock) || p.ReadUInt32(w.Meta, geometry.Tail + 312) != uint.MaxValue)
             return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (scan && w.Index.IsNotNull)
+        if (MountIndexEnabled && scan && w.Index.IsNotNull)
         {
             if (!AmigaFfsMountIndex.Build(ref p, w.Index, w.Meta, w.Bitmap, in geometry, w.DosType))
                 return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -259,9 +266,11 @@ public static partial class AmigaFfsWriteCore
     // The retained file's allocation and logical block order survive the commit.
     private static void KeepFile<T>(ref T p, ref Work w) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (!w.LayoutKnown) return;
-        w.RestoreFile = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Header);
-        w.RestoreSize = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBytes);
+        if (MountIndexEnabled && w.LayoutKnown)
+        {
+            w.RestoreFile = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Header);
+            w.RestoreSize = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBytes);
+        }
     }
 
     // Growth needs a verified free count. When a workspace is available,
@@ -269,16 +278,16 @@ public static partial class AmigaFfsWriteCore
     // also populate its logical block map.
     private static bool PrepareGrowthIndex<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry)
         where T : struct, IAmigaWritableFileSystemPlatform =>
-        w.LayoutKnown || w.Index.IsNull || Prepare(ref p, ref w, in geometry, 0);
+        !MountIndexEnabled || w.LayoutKnown || w.Index.IsNull || Prepare(ref p, ref w, in geometry, 0);
 
     private static bool CanGrow<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint blocks)
         where T : struct, IAmigaWritableFileSystemPlatform =>
-        w.LayoutKnown || w.FreeCountKnown ? blocks <= geometry.BlockCount - w.IndexedUsed || Fail(ref w, DOS.Error.DiskFull) :
+        (MountIndexEnabled && w.LayoutKnown) || w.FreeCountKnown ? blocks <= geometry.BlockCount - w.IndexedUsed || Fail(ref w, DOS.Error.DiskFull) :
         Prepare(ref p, ref w, in geometry, blocks);
 
     private static bool Begin<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint valid = 0, bool keepRuns = false) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (valid == 0 && w.LayoutKnown)
+        if (MountIndexEnabled && valid == 0 && w.LayoutKnown)
         {
             if (p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.MetadataOpen)
             {
@@ -299,8 +308,8 @@ public static partial class AmigaFfsWriteCore
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Header, 0);
             if (continuing) return true;
         }
-        var image = w.RootImage;
-        if (image.IsNull)
+        var image = MountIndexEnabled ? w.RootImage : APTR.Null;
+        if (!MountIndexEnabled || image.IsNull)
         {
             if (!Header(ref p, ref w, geometry.RootBlock)) return false;
             image = w.Meta;
@@ -316,9 +325,9 @@ public static partial class AmigaFfsWriteCore
         if (w.DosType >= 0x444F5304 &&
             (!RebuildCache(ref p, ref w, w.CacheNew) || !RebuildCache(ref p, ref w, w.CacheParent) ||
              (w.CacheOther != w.CacheParent && !RebuildCache(ref p, ref w, w.CacheOther)))) return false;
-        var keepOpen = w.WritingIndexedFile && w.GroupFileWrites && w.LayoutKnown && w.RootImage.IsNotNull && w.RestoreFile != 0;
-        var keepMetadata = w.GroupMetadata && !keepOpen && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304;
-        if ((keepOpen || keepMetadata) && p.ReadUInt32(w.Index, AmigaFfsMountIndex.BitmapImage) != 0)
+        var keepOpen = MountIndexEnabled && w.WritingIndexedFile && w.GroupFileWrites && w.LayoutKnown && w.RootImage.IsNotNull && w.RestoreFile != 0;
+        var keepMetadata = MountIndexEnabled && w.GroupMetadata && !keepOpen && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304;
+        if (MountIndexEnabled && (keepOpen || keepMetadata) && p.ReadUInt32(w.Index, AmigaFfsMountIndex.BitmapImage) != 0)
         {
             if (w.BitmapDirty != 0)
             {
@@ -335,15 +344,16 @@ public static partial class AmigaFfsWriteCore
             }
         }
         else if (!FlushBitmap(ref p, ref w)) return false;
-        if (keepMetadata)
+        if (MountIndexEnabled && keepMetadata)
         {
             // A reader sharing this mount sees the owned root in HeaderView.
             // Other callers still need the changed hash link on the device.
             if (w.RootLinkChanged && !w.ReadsGroupedRoot &&
                 !Put(ref p, ref w, w.RootKey, w.RootImage, -1)) return false;
         }
-        else if (!keepOpen && (!PublishGroupHeader(ref p, ref w) || !Begin(ref p, ref w, in geometry, uint.MaxValue))) return false;
-        if (w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Updating)
+        else if ((!MountIndexEnabled || !keepOpen) &&
+            ((MountIndexEnabled && !PublishGroupHeader(ref p, ref w)) || !Begin(ref p, ref w, in geometry, uint.MaxValue))) return false;
+        if (MountIndexEnabled && w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Updating)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Used, w.IndexedUsed);
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.NextCandidate, w.NextKey);
@@ -372,20 +382,20 @@ public static partial class AmigaFfsWriteCore
             if (!PublishBitmap(ref p, ref w, w.BitmapBlock, w.ActiveBitmap)) return false;
             w.BitmapDirty = 0;
         }
-        else if (w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata))
+        else if (MountIndexEnabled && w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata))
         {
             var key = p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingBitmap);
             if (key == 0) return true;
             var image = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingBitmapImage));
             if (!PublishBitmap(ref p, ref w, key, image)) return false;
         }
-        if (w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata)) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingBitmap, 0);
+        if (MountIndexEnabled && w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata)) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingBitmap, 0);
         return true;
     }
 
     private static bool PublishBitmap<T>(ref T p, ref Work w, uint key, APTR image) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (!w.LayoutKnown) return Put(ref p, ref w, key, image, -1);
+        if (!MountIndexEnabled || !w.LayoutKnown) return Put(ref p, ref w, key, image, -1);
         // Preflight may switch pages before Begin. An owned pending bitmap
         // write is part of the open transaction even on that path.
         var status = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status);
@@ -418,15 +428,15 @@ public static partial class AmigaFfsWriteCore
         var index = AmigaGeometryMath.Divide(key - reservedBlocks, bitmapBits);
         if (w.BitmapDirty != 0 && !FlushBitmap(ref p, ref w)) return false;
         uint block;
-        if (w.LayoutKnown) block = AmigaFfsMountIndex.Map(ref p, w.Index, index);
+        if (MountIndexEnabled && w.LayoutKnown) block = AmigaFfsMountIndex.Map(ref p, w.Index, index);
         else if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref cursor, index, w.Data, out block))
             return Fail(ref w, DOS.Error.DiskNotValidated);
-        var pending = w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata) ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingBitmap) : 0;
-        if (pending != 0 && pending != block && !FlushBitmap(ref p, ref w)) return false;
-        var pages = w.LayoutKnown ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.BitmapPages) : 0;
+        var pending = MountIndexEnabled && w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata) ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingBitmap) : 0;
+        if (MountIndexEnabled && pending != 0 && pending != block && !FlushBitmap(ref p, ref w)) return false;
+        var pages = MountIndexEnabled && w.LayoutKnown ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.BitmapPages) : 0;
         w.ActiveBitmap = w.Bitmap;
-        if (pages != 0) w.ActiveBitmap = APTR.FromPointer(pages + index * p.BlockBytes);
-        else if (pending != 0 && pending == block)
+        if (MountIndexEnabled && pages != 0) w.ActiveBitmap = APTR.FromPointer(pages + index * p.BlockBytes);
+        else if (MountIndexEnabled && pending != 0 && pending == block)
         {
             var image = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingBitmapImage));
             if (w.Bitmap != image) p.Copy(image, w.Bitmap, p.BlockBytes);
@@ -725,7 +735,8 @@ public static partial class AmigaFfsWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         parent = APTR.Null;
-        if (w.Index.IsNotNull && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.MetadataOpen)
+        if (MountIndexEnabled && w.Index.IsNotNull &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.MetadataOpen)
             w.DosType = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Type);
         else if (!LoadDosType(ref p, ref w)) return false;
         var geometry = AmigaFfsGeometry.Read(ref p);
@@ -737,14 +748,14 @@ public static partial class AmigaFfsWriteCore
             var parentLength = start;
             if (p.ReadUInt8(r.Name, (int)start - 1) == '/') parentLength--;
             r.Directory = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, parentLength, w.DosType, w.Meta,
-                out var error, out parent, w.ReadsGroupedRoot ? w.Index : APTR.Null);
+                out var error, out parent, MountIndexEnabled && w.ReadsGroupedRoot ? w.Index : APTR.Null);
             if (r.Directory == 0) return Fail(ref w, error);
         }
         r.Name = APTR.FromPointer(r.Name.Raw + start); r.Length -= start;
         if (r.Length == 0 || r.Length > 30) return Fail(ref w, DOS.Error.InvalidComponentName);
-        if (parent.IsNull && w.ReadsGroupedRoot && r.Directory == geometry.RootBlock)
+        if (MountIndexEnabled && parent.IsNull && w.ReadsGroupedRoot && r.Directory == geometry.RootBlock)
             parent = AmigaFfsMountIndex.NamespaceRoot(ref p, w.Index);
-        if (parent.IsNull && w.ReadsGroupedDirectories)
+        if (MountIndexEnabled && parent.IsNull && w.ReadsGroupedDirectories)
             parent = AmigaFfsMountIndex.NamespaceDirectory(ref p, w.Index, r.Directory);
         if (parent.IsNull) parent = InspectHeader(ref p, ref w, in geometry, r.Directory);
         if (parent.IsNull) return false;
@@ -762,7 +773,7 @@ public static partial class AmigaFfsWriteCore
         // destination is available without reading and hashing its parent again.
         if (p.ReadUInt32(parent, slot) == 0) return true;
         found = AmigaDiskFileSystemCore.ResolveForOpen(ref p, r.Directory, r.Name, r.Length,
-            w.DosType, w.Meta, out var error, out matched, out _, w.ReadsGroupedRoot ? w.Index : APTR.Null);
+            w.DosType, w.Meta, out var error, out matched, out _, MountIndexEnabled && w.ReadsGroupedRoot ? w.Index : APTR.Null);
         return found != 0 || error == DOS.Error.ObjectNotFound || Fail(ref w, error);
     }
     private static bool Unlink<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry,
@@ -781,7 +792,7 @@ public static partial class AmigaFfsWriteCore
             if (current == key)
             {
                 w.UnlinkedOwner = owner;
-                if (owner == w.RootKey && w.RootImage.IsNotNull && w.DosType < 0x444F5304)
+                if (MountIndexEnabled && owner == w.RootKey && w.RootImage.IsNotNull && w.DosType < 0x444F5304)
                 {
                     var sum = p.ReadUInt32(w.RootImage, 20);
                     p.WriteUInt32(w.RootImage, at, successor);
@@ -816,60 +827,60 @@ public static partial class AmigaFfsWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
-        if (!Prepare(ref p, ref w, in geometry, 1, keepDirectory: w.ReadsGroupedDirectories ? r.Directory : 0)) return false;
+        if (!Prepare(ref p, ref w, in geometry, 1, keepDirectory: MountIndexEnabled && w.ReadsGroupedDirectories ? r.Directory : 0)) return false;
         KeepFile(ref p, ref w);
         // The last closed file remains checked while its new sibling grows.
         // Park it before the empty file replaces the active table identity.
-        var parked = openForWriting && !directory && w.RestoreFile != 0 && w.DosType < 0x444F5304 &&
+        var parked = MountIndexEnabled && openForWriting && !directory && w.RestoreFile != 0 && w.DosType < 0x444F5304 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean
             ? AmigaFfsMountIndex.ParkFile(ref p, w.Index) : 0;
         // Begin expires clean readers. The creating packet can still adopt
         // this private parent: invalidating the root and claiming a free bit
         // cannot change the parent's directory links.
-        var publishedParent = w.LayoutKnown && w.ReadsGroupedDirectories && r.Directory != geometry.RootBlock &&
+        var publishedParent = MountIndexEnabled && w.LayoutKnown && w.ReadsGroupedDirectories && r.Directory != geometry.RootBlock &&
             r.Directory != 0 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedParent) == r.Directory;
         if (!Begin(ref p, ref w, in geometry)) return false;
         var key = Allocate(ref p, ref w, in geometry); if (key == 0) return false;
         w.CacheParent = r.Directory; if (directory) w.CacheNew = key;
         var parent = w.RootImage;
-        if (r.Directory != geometry.RootBlock || parent.IsNull)
+        if (!MountIndexEnabled || r.Directory != geometry.RootBlock || parent.IsNull)
         {
-            parent = publishedParent ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage)) :
+            parent = MountIndexEnabled && publishedParent ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage)) :
                 InspectHeader(ref p, ref w, in geometry, r.Directory);
             if (parent.IsNull) return false;
         }
         var successor = p.ReadUInt32(parent, slot);
-        var groupDirectory = w.ReadsGroupedDirectories && w.GroupMetadata && w.LayoutKnown && w.ReadsGroupedRoot &&
+        var groupDirectory = MountIndexEnabled && w.ReadsGroupedDirectories && w.GroupMetadata && w.LayoutKnown && w.ReadsGroupedRoot &&
             w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage) != 0;
         // An open-for-write packet can carry its new file straight into the
         // first write. Keep the directory link private until the new header
         // and allocation have both reached the device.
-        if (openForWriting && !directory && w.RootImage.IsNotNull &&
+        if (MountIndexEnabled && openForWriting && !directory && w.RootImage.IsNotNull &&
             w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0 &&
             (r.Directory == w.RootKey || p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage) != 0) &&
             AmigaFfsMountIndex.FitsFile(ref p, w.Index, 0, geometry.TableEntries))
         {
             StartEmptyFileGroup(ref p, ref w, key);
         }
-        if (r.Directory != w.RootKey && (w.GroupHeader != 0 || groupDirectory))
+        if (MountIndexEnabled && r.Directory != w.RootKey && (w.GroupHeader != 0 || groupDirectory))
         {
             var image = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
             if (parent != image) p.Copy(parent, image, geometry.BlockBytes);
             parent = image;
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingParent, r.Directory);
         }
-        var header = w.GroupHeader == key ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage)) : w.Meta;
+        var header = MountIndexEnabled && w.GroupHeader == key ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage)) : w.Meta;
         // When the root link itself is private, a newly created directory can
         // receive its first children before either sector is published.
         var newDirectory = groupDirectory && directory && r.Directory == w.RootKey;
-        if (newDirectory) header = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
+        if (MountIndexEnabled && newDirectory) header = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
         p.Clear(header, geometry.BlockBytes); p.WriteUInt32(header, 0, 2); p.WriteUInt32(header, 4, key);
         p.WriteUInt32(header, geometry.Tail + 496, successor); p.WriteUInt32(header, geometry.Tail + 500, r.Directory);
         p.WriteUInt32(header, 12, directory || (w.DosType & 1) != 0 ? geometry.TableEntries : 0);
         p.WriteUInt32(header, geometry.Tail + 508, directory ? 2u : 0xFFFFFFFD);
         p.WriteUInt8(header, geometry.Tail + 432, (byte)r.Length);
         for (var i = 0u; i < r.Length; i++) p.WriteUInt8(header, geometry.Tail + 433 + (int)i, p.ReadUInt8(r.Name, (int)i));
-        if (w.GroupHeader == key)
+        if (MountIndexEnabled && w.GroupHeader == key)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, key);
             if ((w.DosType & 1) != 0)
@@ -879,7 +890,7 @@ public static partial class AmigaFfsWriteCore
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.FreshHeaderPointerSum, 0);
             }
         }
-        else if (newDirectory)
+        else if (MountIndexEnabled && newDirectory)
         {
             Seal(ref p, header, 20);
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingParent, key);
@@ -902,9 +913,9 @@ public static partial class AmigaFfsWriteCore
             if (!Put(ref p, ref w, r.Directory, w.Meta, SealedHeader)) return false;
         }
         if (!Finish(ref p, ref w, in geometry)) return false;
-        if (w.LayoutKnown && w.ReadsGroupedRoot && r.Directory == geometry.RootBlock && successor == 0)
+        if (MountIndexEnabled && w.LayoutKnown && w.ReadsGroupedRoot && r.Directory == geometry.RootBlock && successor == 0)
             AmigaFfsMountIndex.RecordRootChild(ref p, w.Index, slot, key, r.Length);
-        if (parked != 0 && w.GroupHeader == key)
+        if (MountIndexEnabled && parked != 0 && w.GroupHeader == key)
         {
             AmigaFfsMountIndex.SwapDataKeys(ref p, w.Index);
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Companion, key);
@@ -928,7 +939,7 @@ public static partial class AmigaFfsWriteCore
     {
         if (key < geometry.ReservedBlocks || key >= geometry.BlockCount || key == geometry.RootBlock ||
             IsFree(ref p, ref w, key) || key == w.BitmapBlock || w.Error != DOS.Error.None ||
-            (w.LayoutKnown && AmigaFfsMountIndex.Intersects(ref p, w.Index, key, 1)))
+            (MountIndexEnabled && w.LayoutKnown && AmigaFfsMountIndex.Intersects(ref p, w.Index, key, 1)))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         return true;
     }
@@ -938,7 +949,7 @@ public static partial class AmigaFfsWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (first < g.ReservedBlocks || first >= g.BlockCount || count > g.BlockCount - first ||
-            AmigaFfsMountIndex.Intersects(ref p, w.Index, first, count))
+            (MountIndexEnabled && AmigaFfsMountIndex.Intersects(ref p, w.Index, first, count)))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         while (count != 0)
         {
@@ -980,14 +991,14 @@ public static partial class AmigaFfsWriteCore
                 size = p.ReadUInt32(w.Meta, geometry.Tail + 324);
                 blocks = size == 0 ? 0 : AmigaGeometryMath.Divide(size - 1, geometry.BlockBytes) + 1;
             }
-            if (guard == 0 && w.LayoutKnown && !release && limit == uint.MaxValue &&
+            if (MountIndexEnabled && guard == 0 && w.LayoutKnown && !release && limit == uint.MaxValue &&
                 AmigaFfsMountIndex.FitsFile(ref p, w.Index, blocks, geometry.TableEntries))
             {
                 p.WriteUInt32(w.Index, AmigaFfsMountIndex.Header, 0);
                 keys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
                 tables = AmigaFfsMountIndex.TableKeys(ref p, w.Index);
             }
-            if (keys.IsNotNull)
+            if (MountIndexEnabled && keys.IsNotNull)
             {
                 var remaining = blocks - logical;
                 if (logical > blocks || count != (remaining < geometry.TableEntries ? remaining : geometry.TableEntries))
@@ -996,7 +1007,7 @@ public static partial class AmigaFfsWriteCore
             }
             if (limit != uint.MaxValue && count < geometry.TableEntries && count < limit)
                 return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (keys.IsNotNull)
+            if (MountIndexEnabled && keys.IsNotNull)
             {
                 uint start = 0, length = 0;
                 for (var i = 0u; i < count; i++)
@@ -1030,9 +1041,10 @@ public static partial class AmigaFfsWriteCore
             if (table != header && release) Bit(ref p, ref w, table, true);
             if (limit <= geometry.TableEntries) return w.Error == DOS.Error.None;
             if (next == 0) return limit == uint.MaxValue && w.Error == DOS.Error.None &&
-                (keys.IsNull || (logical + count == blocks && AmigaFfsMountIndex.SealFile(ref p, w.Index, header, size, blocks, guard + 1))) ||
+                (!MountIndexEnabled || keys.IsNull ||
+                 (logical + count == blocks && AmigaFfsMountIndex.SealFile(ref p, w.Index, header, size, blocks, guard + 1))) ||
                 Fail(ref w, DOS.Error.DiskNotValidated);
-            if (keys.IsNotNull && logical + count >= blocks) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (MountIndexEnabled && keys.IsNotNull && logical + count >= blocks) return Fail(ref w, DOS.Error.DiskNotValidated);
             first = first > geometry.TableEntries ? first - geometry.TableEntries : 0;
             if (limit != uint.MaxValue) limit -= geometry.TableEntries;
             logical += geometry.TableEntries;
@@ -1059,7 +1071,7 @@ public static partial class AmigaFfsWriteCore
         w.CacheParent = p.ReadUInt32(header, geometry.Tail + 500);
         if ((p.ReadUInt32(header, geometry.Tail + 320) & (truncate ? 4u : 1u)) != 0) return Fail(ref w, truncate ? DOS.Error.WriteProtected : DOS.Error.DeleteProtected);
         var saved = new AmigaFfsMountIndex.SavedFile();
-        if (type < 0 && w.LayoutKnown && w.DosType < 0x444F5304)
+        if (MountIndexEnabled && type < 0 && w.LayoutKnown && w.DosType < 0x444F5304)
         {
             var size = p.ReadUInt32(header, geometry.Tail + 324);
             var payload = (w.DosType & 1) == 0 ? geometry.BlockBytes - 24 : geometry.BlockBytes;
@@ -1068,8 +1080,10 @@ public static partial class AmigaFfsWriteCore
         }
         w.UnlinkedOwner = 0;
         var ok = RemoveEntry(ref p, ref w, key, truncate, type, header, in geometry, in saved, retained);
+#if !COPPERFS_NO_FFS_MOUNT_INDEX
         AmigaFfsMountIndex.RestoreRemovalSpace(ref p, w.Index, in saved, ok);
-        if (ok && !truncate && saved.Key != 0)
+#endif
+        if (MountIndexEnabled && ok && !truncate && saved.Key != 0)
         {
             // The checked disjoint file kept its header and tail sector in
             // private RAM. Unlink can change a hash predecessor in that file.
@@ -1091,7 +1105,7 @@ public static partial class AmigaFfsWriteCore
         {
             slot = StoredNameSlot(ref p, header, in geometry, w.DosType);
             if (slot == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (w.LayoutKnown && w.CacheParent == geometry.RootBlock)
+            if (MountIndexEnabled && w.LayoutKnown && w.CacheParent == geometry.RootBlock)
                 AmigaFfsMountIndex.RecordRootChild(ref p, w.Index, slot, 0, 0);
             successor = p.ReadUInt32(header, geometry.Tail + 496);
         }
@@ -1100,12 +1114,14 @@ public static partial class AmigaFfsWriteCore
             if (truncate) return Fail(ref w, DOS.Error.ObjectWrongType);
             for (var at = 24; at < geometry.Tail + 312; at += 4) if (p.ReadUInt32(header, at) != 0) return Fail(ref w, DOS.Error.DirectoryNotEmpty);
         }
-        else if (!(w.LayoutKnown && AmigaFfsMountIndex.Matches(ref p, w.Index, key, p.ReadUInt32(header, geometry.Tail + 324))) &&
+        else if (!(MountIndexEnabled && w.LayoutKnown &&
+            AmigaFfsMountIndex.Matches(ref p, w.Index, key, p.ReadUInt32(header, geometry.Tail + 324))) &&
             !Chain(ref p, ref w, key, false)) return false;
-        if (!AmigaFfsMountIndex.RemovalIsDisjoint(ref p, w.Index, in saved)) return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (type > 0 && w.LayoutKnown) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
-        var indexedRelease = type < 0 && w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Header) == key;
-        if (truncate && w.GroupFileWrites && indexedRelease && w.DosType < 0x444F5304 &&
+        if (MountIndexEnabled && !AmigaFfsMountIndex.RemovalIsDisjoint(ref p, w.Index, in saved))
+            return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (MountIndexEnabled && type > 0 && w.LayoutKnown) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
+        var indexedRelease = MountIndexEnabled && type < 0 && w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Header) == key;
+        if (MountIndexEnabled && truncate && w.GroupFileWrites && indexedRelease && w.DosType < 0x444F5304 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBytes) == 0)
         {
             if (retained.IsNull && !Header(ref p, ref w, key)) return false;
@@ -1119,12 +1135,12 @@ public static partial class AmigaFfsWriteCore
         }
         // Begin expires physical-run identities. Capture a complete mapping
         // while the preflight still owns it, then apply it to the bitmap.
-        var contiguous = indexedRelease && p.ReadUInt32(w.Index, AmigaFfsMountIndex.RunHeader) == key &&
+        var contiguous = MountIndexEnabled && indexedRelease && p.ReadUInt32(w.Index, AmigaFfsMountIndex.RunHeader) == key &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.RunLogical) == 0 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.RunLength) == p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBlocks)
             ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.RunPhysical) : 0;
         uint bodyBlocks = 0;
-        var body = indexedRelease ? AmigaFfsMountIndex.ContiguousBody(ref p, w.Index, key, out bodyBlocks) : 0;
+        var body = MountIndexEnabled && indexedRelease ? AmigaFfsMountIndex.ContiguousBody(ref p, w.Index, key, out bodyBlocks) : 0;
         // Keep the checked parent through the invalid-root write. Releasing
         // allocation bits cannot change its directory links.
         var retainedDirectory = APTR.Null;
@@ -1133,11 +1149,11 @@ public static partial class AmigaFfsWriteCore
             retainedDirectory = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
         if (!Begin(ref p, ref w, in geometry)) return false;
         if (type > 0 && w.DosType >= 0x444F5304 && !ReleaseCache(ref p, ref w, key)) return false;
-        if (body != 0)
+        if (MountIndexEnabled && body != 0)
         {
             if (!FreeRun(ref p, ref w, body, bodyBlocks)) return false;
         }
-        else if (indexedRelease)
+        else if (MountIndexEnabled && indexedRelease)
         {
             var keys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
             var tables = AmigaFfsMountIndex.TableKeys(ref p, w.Index);
@@ -1167,7 +1183,7 @@ public static partial class AmigaFfsWriteCore
             if (retained.IsNull && !Header(ref p, ref w, key)) return false;
             // The old chain has been checked and released. Let the first write
             // replace this empty header before publishing the retained bitmap.
-            if (w.GroupFileWrites && indexedRelease && saved.Key == 0 && w.RootImage.IsNotNull &&
+            if (MountIndexEnabled && w.GroupFileWrites && indexedRelease && saved.Key == 0 && w.RootImage.IsNotNull &&
                 w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0)
                 StartEmptyFileGroup(ref p, ref w, key);
             var image = w.Meta;
@@ -1214,13 +1230,13 @@ public static partial class AmigaFfsWriteCore
         if ((p.ReadUInt32(source, geometry.Tail + 320) & 1) != 0) return Fail(ref w, DOS.Error.DeleteProtected);
         var sourceSlot = StoredNameSlot(ref p, source, in geometry, w.DosType);
         if (sourceSlot == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (w.LayoutKnown && w.CacheParent == geometry.RootBlock)
+        if (MountIndexEnabled && w.LayoutKnown && w.CacheParent == geometry.RootBlock)
             AmigaFfsMountIndex.RecordRootChild(ref p, w.Index, sourceSlot, 0, 0);
         var oldSuccessor = p.ReadUInt32(source, geometry.Tail + 496);
-        var oldSlot = w.LayoutKnown && w.CacheParent == r.Directory && r.Directory != geometry.RootBlock &&
+        var oldSlot = MountIndexEnabled && w.LayoutKnown && w.CacheParent == r.Directory && r.Directory != geometry.RootBlock &&
             w.DosType < 0x444F5304 ? sourceSlot : 0;
         uint successor = 0;
-        var privateSource = w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedHeader) == r.Header &&
+        var privateSource = MountIndexEnabled && w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedHeader) == r.Header &&
             source.Raw == p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage);
         var ancestor = r.Directory;
         for (var guard = 0u; ancestor != geometry.RootBlock && guard < geometry.BlockCount; guard++)
@@ -1228,7 +1244,7 @@ public static partial class AmigaFfsWriteCore
             if (ancestor == r.Header) return Fail(ref w, DOS.Error.ObjectInUse);
             var ancestorImage = InspectHeader(ref p, ref w, in geometry, ancestor);
             if (ancestorImage.IsNull) return false;
-            if (ancestor == r.Directory && oldSlot != 0)
+            if (MountIndexEnabled && ancestor == r.Directory && oldSlot != 0)
             {
                 if (p.ReadUInt32(ancestorImage, oldSlot) != r.Header) oldSlot = 0;
                 else successor = slot == oldSlot ? oldSuccessor : p.ReadUInt32(ancestorImage, slot);
@@ -1244,12 +1260,12 @@ public static partial class AmigaFfsWriteCore
         if (oldSlot != 0 && w.ReadsGroupedDirectories &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedParent) == r.Directory)
             retainedDirectory = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
-        if (w.LayoutKnown && movesDirectory) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
+        if (MountIndexEnabled && w.LayoutKnown && movesDirectory) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
         if (!Begin(ref p, ref w, in geometry)) return false;
         // The destination directory also owns the source bucket head. Patch
         // both links in its final sector write after the renamed header succeeds.
         // A non-head source still needs its predecessor checked and rewritten.
-        if (oldSlot == 0)
+        if (!MountIndexEnabled || oldSlot == 0)
         {
             if (!Unlink(ref p, ref w, in geometry, r.Header, w.CacheParent, sourceSlot, oldSuccessor)) return false;
             var parent = InspectHeader(ref p, ref w, in geometry, r.Directory);
@@ -1257,7 +1273,7 @@ public static partial class AmigaFfsWriteCore
             successor = p.ReadUInt32(parent, slot);
         }
         var renamed = w.Meta;
-        if (oldSlot != 0 && privateSource) renamed = source;
+        if (MountIndexEnabled && oldSlot != 0 && privateSource) renamed = source;
         else if (!Header(ref p, ref w, r.Header)) return false;
         // Only the 32-byte stored name and the parent/hash links change.
         // Include any old padding bytes when replacing an original's name.
@@ -1272,7 +1288,7 @@ public static partial class AmigaFfsWriteCore
         p.WriteUInt32(renamed, geometry.Tail + 500, r.Directory);
         p.WriteUInt32(renamed, 20, checksum);
         if (!Put(ref p, ref w, r.Header, renamed, SealedHeader)) return false;
-        if (r.Directory == w.RootKey && w.RootImage.IsNotNull && w.DosType < 0x444F5304)
+        if (MountIndexEnabled && r.Directory == w.RootKey && w.RootImage.IsNotNull && w.DosType < 0x444F5304)
         {
             var sum = p.ReadUInt32(w.RootImage, 20);
             p.WriteUInt32(w.RootImage, slot, r.Header);
@@ -1287,7 +1303,7 @@ public static partial class AmigaFfsWriteCore
             var target = EditDirectoryLinks(ref p, ref w, r.Directory, current, true);
             if (target.IsNull) return false;
             var sum = p.ReadUInt32(target, 20);
-            if (oldSlot != 0)
+            if (MountIndexEnabled && oldSlot != 0)
             {
                 sum = unchecked(sum + p.ReadUInt32(target, oldSlot) - oldSuccessor);
                 p.WriteUInt32(target, oldSlot, oldSuccessor);
@@ -1308,7 +1324,7 @@ public static partial class AmigaFfsWriteCore
         var image = directory && w.ReadsGroupedDirectories && w.GroupMetadata && w.LayoutKnown &&
             key != w.RootKey && w.DosType < 0x444F5304
             ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage)) : APTR.Null;
-        if (image.IsNull)
+        if (!MountIndexEnabled || image.IsNull)
         {
             if (current != w.Meta) p.Copy(current, w.Meta, p.BlockBytes);
             return w.Meta;
@@ -1349,9 +1365,9 @@ public static partial class AmigaFfsWriteCore
         }
         if (!Prepare(ref p, ref w, in geometry, 0, attributeHeader: r.Header)) return false;
         var image = w.Meta;
-        var staged = w.GroupMetadata && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304 &&
+        var staged = MountIndexEnabled && w.GroupMetadata && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0;
-        if (staged)
+        if (MountIndexEnabled && staged)
         {
             image = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
             if (p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) != r.Header)
@@ -1367,7 +1383,7 @@ public static partial class AmigaFfsWriteCore
         if (!Begin(ref p, ref w, in geometry) || (w.RootImage.IsNull && !Header(ref p, ref w, r.Header))) return false;
         w.CacheParent = p.ReadUInt32(image, geometry.Tail + 500);
         EditAttribute(ref p, image, geometry.Tail, ref r, action);
-        if (staged)
+        if (MountIndexEnabled && staged)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, r.Header);
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.SealedAttributeHeader, r.Header);
@@ -1443,7 +1459,7 @@ public static partial class AmigaFfsWriteCore
     public static bool Write<T>(ref T p, ref Work w, ref Request r, out uint actual, bool fixedHardDisk) where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0;
-        if (HasFileWriteGroup(ref p, w.Index))
+        if (MountIndexEnabled && HasFileWriteGroup(ref p, w.Index))
         {
             if (w.BufferSmallAppends && w.GroupFileWrites && fixedHardDisk &&
                 TryBufferAppend(ref p, w.Index, ref r, out w.Error))
@@ -1482,7 +1498,7 @@ public static partial class AmigaFfsWriteCore
         var blockBytes = geometry.BlockBytes; var tableEntries = geometry.TableEntries;
         if (blockBytes == 0 || tableEntries == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
         if (r.Length > int.MaxValue || !p.IsMapped(r.Buffer, r.Length)) return Fail(ref w, DOS.Error.BadNumber);
-        if (HasFileWriteGroup(ref p, w.Index))
+        if (MountIndexEnabled && HasFileWriteGroup(ref p, w.Index))
         {
             var sizeInGroup = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBytes);
             var sameFile = w.GroupFileWrites && fixedHardDisk && r.Header == p.ReadUInt32(w.Index, AmigaFfsMountIndex.Header);
@@ -1526,7 +1542,9 @@ public static partial class AmigaFfsWriteCore
             }
             if (!sameFile && !FinishFileWriteGroup(ref p, ref w)) return false;
         }
+#if !COPPERFS_NO_FFS_MOUNT_INDEX
         w.GroupFileWrites &= fixedHardDisk;
+#endif
         // A write does not edit directory links. Its group can carry the
         // preceding namespace update through the same publication boundary.
         var keepDirectory = w.GroupMetadata && w.Index.IsNotNull ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingParent) : 0;
@@ -1534,9 +1552,9 @@ public static partial class AmigaFfsWriteCore
         if ((w.DosType & 1) == 0) return WriteOfs(ref p, ref w, ref r, in geometry, out actual, fixedHardDisk);
         // The first writer's sealed header survives a sibling close in its
         // own mount page. Only the unchanged, parked mapping can use it.
-        var parked = w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean &&
+        var parked = MountIndexEnabled && w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParkedHeader) == r.Header && r.Header != 0;
-        var header = parked && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedPreviousHeader) == r.Header
+        var header = MountIndexEnabled && parked && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedPreviousHeader) == r.Header
             ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.PreviousHeaderImage))
             : InspectHeader(ref p, ref w, in geometry, r.Header);
         if (header.IsNull) return false;
@@ -1551,21 +1569,21 @@ public static partial class AmigaFfsWriteCore
         if (oldBlocks == 0 && (p.ReadUInt32(header, 8) != 0 || p.ReadUInt32(header, geometry.Tail + 504) != 0))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         var first = 0u; var limit = uint.MaxValue;
-        if (end > size && !PrepareGrowthIndex(ref p, ref w, in geometry)) return false;
-        var resumed = parked && AmigaFfsMountIndex.ResumeFile(ref p, w.Index, r.Header, size);
+        if (MountIndexEnabled && end > size && !PrepareGrowthIndex(ref p, ref w, in geometry)) return false;
+        var resumed = MountIndexEnabled && parked && AmigaFfsMountIndex.ResumeFile(ref p, w.Index, r.Header, size);
         if (end <= size)
         {
             first = AmigaGeometryMath.Divide(r.Position, blockBytes);
             limit = AmigaGeometryMath.Divide(end - 1, blockBytes) + 1;
         }
         uint lastData = 0;
-        if (w.LayoutKnown && AmigaFfsMountIndex.Matches(ref p, w.Index, r.Header, size))
+        if (MountIndexEnabled && w.LayoutKnown && AmigaFfsMountIndex.Matches(ref p, w.Index, r.Header, size))
         {
             if (oldBlocks != 0) lastData = p.ReadUInt32(AmigaFfsMountIndex.DataKeys(ref p, w.Index), (int)(oldBlocks - 1) * 4);
         }
         else
         {
-            var whole = w.LayoutKnown && first == 0 && AmigaFfsMountIndex.FitsFile(ref p, w.Index, oldBlocks, tableEntries);
+            var whole = MountIndexEnabled && w.LayoutKnown && first == 0 && AmigaFfsMountIndex.FitsFile(ref p, w.Index, oldBlocks, tableEntries);
             if (!Chain(ref p, ref w, r.Header, false, out lastData, first, whole ? uint.MaxValue : limit)) return false;
         }
         var newBlocks = oldBlocks;
@@ -1579,7 +1597,7 @@ public static partial class AmigaFfsWriteCore
         }
         var fileKeys = APTR.Null;
         var fileTables = APTR.Null;
-        if (w.LayoutKnown && AmigaFfsMountIndex.FitsFile(ref p, w.Index, newBlocks, geometry.TableEntries) &&
+        if (MountIndexEnabled && w.LayoutKnown && AmigaFfsMountIndex.FitsFile(ref p, w.Index, newBlocks, geometry.TableEntries) &&
             (oldBlocks == 0 || AmigaFfsMountIndex.Matches(ref p, w.Index, r.Header, size)))
         {
             fileKeys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
@@ -1589,14 +1607,14 @@ public static partial class AmigaFfsWriteCore
             if (w.GroupFileWrites && w.DosType < 0x444F5304 && p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0)
                 w.GroupHeader = r.Header;
         }
-        if (w.BufferSmallAppends && TryStartBufferedAppend(ref p, ref w, ref r, in geometry, size, out actual))
+        if (MountIndexEnabled && w.BufferSmallAppends && TryStartBufferedAppend(ref p, ref w, ref r, in geometry, size, out actual))
             return w.Error == DOS.Error.None;
-        if (fileKeys.IsNotNull && w.GroupHeader != 0 && w.GroupFileWrites && w.DosType < 0x444F5304 && r.Position == size)
+        if (MountIndexEnabled && fileKeys.IsNotNull && w.GroupHeader != 0 && w.GroupFileWrites && w.DosType < 0x444F5304 && r.Position == size)
             return AppendFfsBlocks(ref p, ref w, ref r, in geometry, fileKeys, fileTables, oldBlocks, newBlocks,
                 oldExt, newExt, lastData, out actual, resumed);
         // A single verified physical run cannot benefit from relocation.
         // Its data fits one logical transfer even across pointer-table boundaries.
-        if (fileKeys.IsNotNull && fixedHardDisk && end <= size &&
+        if (MountIndexEnabled && fileKeys.IsNotNull && fixedHardDisk && end <= size &&
             ((r.Position | r.Length) & (blockBytes - 1)) == 0)
         {
             var count = limit - first;
@@ -1628,7 +1646,7 @@ public static partial class AmigaFfsWriteCore
             var targetTable = AmigaGeometryMath.DivRem(index, tableEntries, out var slotRemainder);
             var slot = slotRemainder;
             // Walk/extend pointer tables sequentially, retaining only their key.
-            if (fileTables.IsNotNull && targetTable != tableIndex && oldBlocks != 0 &&
+            if (MountIndexEnabled && fileTables.IsNotNull && targetTable != tableIndex && oldBlocks != 0 &&
                 targetTable <= (oldBlocks - 1) / geometry.TableEntries)
             {
                 table = p.ReadUInt32(fileTables, (int)targetTable * 4);
@@ -1650,7 +1668,7 @@ public static partial class AmigaFfsWriteCore
                     if (!Put(ref p, ref w, table, w.Meta, 20)) return false;
                 }
                 table = next; tableIndex++;
-                if (fileTables.IsNotNull) p.WriteUInt32(fileTables, (int)tableIndex * 4, table);
+                if (MountIndexEnabled && fileTables.IsNotNull) p.WriteUInt32(fileTables, (int)tableIndex * 4, table);
             }
             if (!ReadWriteTable(ref p, ref w, table)) return Fail(ref w, DOS.Error.DiskNotValidated);
             var at = geometry.Tail + 308 - (int)slot * 4; var key = p.ReadUInt32(w.Meta, at);
@@ -1675,7 +1693,7 @@ public static partial class AmigaFfsWriteCore
                 key = AllocateData(ref p, ref w, in geometry, (lastData == 0 ? r.Header : lastData) + 1,
                     wanted, ref runFirst, ref runCount);
                 if (key == 0) return false;
-                if (fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)index * 4, key);
+                if (MountIndexEnabled && fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)index * 4, key);
                 // Consume the already-proved, request-local contiguous hint in
                 // one transfer. Stay within this table/map, allocate every bit,
                 // and write data before publishing the complete pointer prefix.
@@ -1691,7 +1709,7 @@ public static partial class AmigaFfsWriteCore
                     for (var i = 0u; i < blocks; i++)
                     {
                         p.WriteUInt32(w.Meta, at - (int)i * 4, key + i);
-                        if (fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)(index + i) * 4, key + i);
+                        if (MountIndexEnabled && fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)(index + i) * 4, key + i);
                     }
                     p.WriteUInt32(w.Meta, 8, slot + blocks);
                     if (index == 0) p.WriteUInt32(w.Meta, 16, key);
@@ -1746,7 +1764,7 @@ public static partial class AmigaFfsWriteCore
             }
             actual += count;
         }
-        if (w.RestoreFile != 0)
+        if (MountIndexEnabled && w.RestoreFile != 0)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.FileBlocks, newBlocks);
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Tables, (newBlocks - 1) / geometry.TableEntries + 1);

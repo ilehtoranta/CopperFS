@@ -1,11 +1,23 @@
 using Amiga;
 
+#if COPPERFS_NO_FFS_MOUNT_INDEX && COPPERFS_FFS_HANDLER
+#error The native indexed FFS handler requires its mount index.
+#endif
+
 namespace CopperStart.Dos;
 
 // Private RAM owned by one mount. Zero status is the stateless path. During a
 // mutation the old free count is unpublished until the valid root write succeeds.
 public static class AmigaFfsMountIndex
 {
+    // A scratch-only mount never takes ownership of an index. Expose that
+    // choice to the compiler so it can discard private indexed paths.
+#if COPPERFS_NO_FFS_MOUNT_INDEX
+    internal const bool Enabled = false;
+#else
+    internal const bool Enabled = true;
+#endif
+
     internal const int Status = 0, Bytes = 4, Used = 8, Maps = 12, Keys = 16,
         Sorted = 20, Chain = 24, Capacity = 28, Header = 32, FileBytes = 36,
         FileBlocks = 40, Tables = 44, Stage = 48, StageBytes = 52, Type = 56, RootImage = 60;

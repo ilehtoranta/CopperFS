@@ -27,7 +27,7 @@ public static partial class AmigaFfsWriteCore
             if (!p.ReadBlock(0, w.Meta) || p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301) ||
                 !Header(ref p, ref w, g.RootBlock) || p.ReadUInt32(w.Meta, g.Tail + 312) != uint.MaxValue || !p.Flush())
             {
-                AmigaFfsMountIndex.Forget(ref p, w.Index);
+                if (MountIndexEnabled) AmigaFfsMountIndex.Forget(ref p, w.Index);
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             }
             uint used = 0, previous = uint.MaxValue, total = 0;
@@ -53,7 +53,8 @@ public static partial class AmigaFfsWriteCore
             p.WriteUInt32(batch, AmigaAutomaticTrimBatch.MapCount, used);
             p.WriteUInt32(batch, AmigaAutomaticTrimBatch.WalkBlock, g.RootBlock);
             var directory = w.Index;
-            if (directory.IsNotNull && p.ReadUInt32(directory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean)
+            if (MountIndexEnabled && directory.IsNotNull &&
+                p.ReadUInt32(directory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean)
             {
                 for (var i = 0u; i < p.ReadUInt32(batch, AmigaAutomaticTrimBatch.Inputs); i++)
                 {

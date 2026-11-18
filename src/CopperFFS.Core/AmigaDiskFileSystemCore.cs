@@ -166,7 +166,7 @@ public static class AmigaDiskFileSystemCore
         var rootStart = offset;
         var prefixIndex = APTR.Null;
         var view = APTR.Null;
-        if (directory == geometry.RootBlock && mountIndex.IsNotNull &&
+        if (AmigaFfsMountIndex.Enabled && directory == geometry.RootBlock && mountIndex.IsNotNull &&
             p.ReadUInt32(mountIndex, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.MetadataOpen &&
             p.ReadUInt32(mountIndex, AmigaFfsMountIndex.Type) == dosType)
         {
@@ -223,7 +223,7 @@ public static class AmigaDiskFileSystemCore
             if (count == 0 || count > 30) { error = DOS.Error.InvalidComponentName; return 0; }
             var slot = 24 + (int)NameBucket(ref p, APTR.FromPointer(name.Raw + start), count, dosType, tableEntries) * 4;
             var entry = p.ReadUInt32(view, slot);
-            if (entry != 0 && directory == geometry.RootBlock && prefixIndex.IsNotNull &&
+            if (AmigaFfsMountIndex.Enabled && entry != 0 && directory == geometry.RootBlock && prefixIndex.IsNotNull &&
                 AmigaFfsMountIndex.SoleRootChildDiffers(ref p, prefixIndex, slot, entry, count))
                 entry = 0;
             var found = false;
@@ -260,7 +260,7 @@ public static class AmigaDiskFileSystemCore
                 var prefix = offset - rootStart;
                 // A checked directory survives file writes and sibling creates.
                 // Rename and directory removal expire this root-relative path.
-                if (prefixIndex.IsNotNull && prefix <= AmigaFfsMountIndex.PrefixCapacity &&
+                if (AmigaFfsMountIndex.Enabled && prefixIndex.IsNotNull && prefix <= AmigaFfsMountIndex.PrefixCapacity &&
                     p.ReadUInt32(view, geometry.Tail + 508) == 2)
                 {
                     p.Copy(APTR.FromPointer(name.Raw + rootStart),
@@ -514,7 +514,7 @@ public static class AmigaDiskFileSystemCore
         { error = DOS.Error.DiskNotValidated; return -1; }
         // The single-owner mount verified the file type, length and complete
         // pointer chain together. Its clean proof expires on every untracked write.
-        var indexed = directory.IsNotNull && (dosType & 1) == 0 && header != 0 &&
+        var indexed = AmigaFfsMountIndex.Enabled && directory.IsNotNull && (dosType & 1) == 0 && header != 0 &&
             p.ReadUInt32(directory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean &&
             p.ReadUInt32(directory, AmigaFfsMountIndex.Type) == dosType &&
             p.ReadUInt32(directory, AmigaFfsMountIndex.Header) == header &&
@@ -534,9 +534,9 @@ public static class AmigaDiskFileSystemCore
         var staged = directory.IsNotNull && p.ReadUInt32(directory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean &&
             (dosType & 1) == 0 && !Overlaps(destination, length, metadata, geometry.BlockBytes) &&
             !Overlaps(destination, length, data, geometry.BlockBytes);
-        var fileKeys = indexed ? AmigaFfsMountIndex.DataKeys(ref p, directory) : APTR.Null;
-        var window = staged ? APTR.FromPointer(p.ReadUInt32(directory, AmigaFfsMountIndex.Stage)) : APTR.Null;
-        var capacity = staged ? p.ReadUInt32(directory, AmigaFfsMountIndex.StageBytes) / geometry.BlockBytes : 0;
+        var fileKeys = AmigaFfsMountIndex.Enabled && indexed ? AmigaFfsMountIndex.DataKeys(ref p, directory) : APTR.Null;
+        var window = AmigaFfsMountIndex.Enabled && staged ? APTR.FromPointer(p.ReadUInt32(directory, AmigaFfsMountIndex.Stage)) : APTR.Null;
+        var capacity = AmigaFfsMountIndex.Enabled && staged ? p.ReadUInt32(directory, AmigaFfsMountIndex.StageBytes) / geometry.BlockBytes : 0;
         uint windowBlock = 0, windowCount = 0, failedBlock = uint.MaxValue;
         var copied = 0u;
         var table = header;
@@ -562,11 +562,11 @@ public static class AmigaDiskFileSystemCore
                     unchecked((int)p.ReadUInt32(metadata, geometry.Tail + 508)) != -3) { valid = false; break; }
             }
             if (fileKeys.IsNull && (!valid || p.ReadUInt32(metadata, 8) > tableEntries || slot >= p.ReadUInt32(metadata, 8))) break;
-            var block = fileKeys.IsNotNull ? p.ReadUInt32(fileKeys, (int)index * 4) :
+            var block = AmigaFfsMountIndex.Enabled && fileKeys.IsNotNull ? p.ReadUInt32(fileKeys, (int)index * 4) :
                 p.ReadUInt32(metadata, geometry.Tail + 308 - (int)slot * 4);
             if (block < geometry.ReservedBlocks || block >= geometry.BlockCount || block == failedBlock) break;
             var image = data;
-            if (block - windowBlock >= windowCount && capacity >= 2 && length - copied >= payload * 2)
+            if (AmigaFfsMountIndex.Enabled && block - windowBlock >= windowCount && capacity >= 2 && length - copied >= payload * 2)
             {
                 var wanted = (length - copied - 1) / payload + 1;
                 if (wanted > capacity) wanted = capacity;
@@ -588,7 +588,7 @@ public static class AmigaDiskFileSystemCore
             if (block - windowBlock < windowCount) image = APTR.FromPointer(window.Raw + (block - windowBlock) * geometry.BlockBytes);
             else
             {
-                var retained = indexed ? p.ReadRetainedBlock(block) : APTR.Null;
+                var retained = AmigaFfsMountIndex.Enabled && indexed ? p.ReadRetainedBlock(block) : APTR.Null;
                 if (retained.IsNotNull && !Overlaps(destination, length, retained, geometry.BlockBytes)) image = retained;
                 else if (!p.ReadBlock(block, data)) break;
             }

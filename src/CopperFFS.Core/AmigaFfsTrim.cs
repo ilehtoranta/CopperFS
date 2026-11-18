@@ -72,7 +72,7 @@ public static partial class AmigaFfsWriteCore
         }
         if (flags == AmigaSmartFileSystemTrimPacket.QueryOnly) return true;
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
-        if (w.Index.IsNotNull &&
+        if (MountIndexEnabled && w.Index.IsNotNull &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.GroupOpen or AmigaFfsMountIndex.MetadataOpen &&
             !FinishFileWriteGroup(ref p, ref w)) return false;
 
@@ -82,9 +82,12 @@ public static partial class AmigaFfsWriteCore
         var validated = AmigaTrimValidation.Current(ref p, validation);
         if (!committed && !validated && !p.Flush())
         {
+#if !COPPERFS_NO_FFS_MOUNT_INDEX
             AmigaFfsMountIndex.Forget(ref p, w.Index);
+#endif
             return Fail(ref w, DOS.Error.DiskNotValidated);
         }
+#if !COPPERFS_NO_FFS_MOUNT_INDEX
         var directory = w.Index;
         if (!validated && !tracked && directory.IsNotNull)
         {
@@ -95,6 +98,7 @@ public static partial class AmigaFfsWriteCore
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             validated = p.ReadUInt32(directory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean;
         }
+#endif
         if (!validated && !tracked && !TrimLayout(ref p, ref w)) return false;
         if (tracked && !TrimTrackedLayout(ref p, ref w, startBlock, blockCount)) return false;
         var g = AmigaFfsGeometry.Read(ref p);
