@@ -1,19 +1,26 @@
 # CopperFFS mount index and AutoTrim qualification
 
-**November 18 qualification.** The 256 KiB standalone profile built with
-`-Ffs -FfsTrimLayoutControl -CilicaInlining` passed all 36 AutoTrim comparisons
-at the 0.5% limit. Add `-AutoTrim` to enable discard at mount reset. The two
-155,228-byte handlers use the same native layout and differ in three bytes
-that encode the mount-reset policy. The compact build remains available
-through the ordinary `-Ffs` profile. The full FFS 40.1 suite passed twice
-at the 0.1% limit. Earlier qualification runs below used several
-profiles, including the earlier 0.1% AutoTrim limit.
+**November 18 qualification.** The 256 KiB standalone `-Ffs` profile
+defaults to matched layout and CILica inlining. Add `-AutoTrim` to enable
+discard at mount reset. The two 155,228-byte handlers use the same native
+layout and differ in three bytes that encode the mount-reset policy. The
+default build commands reproduced the previously qualified binaries byte
+for byte and passed all 36 AutoTrim comparisons at the 0.5% limit.
 
 | Device | AutoTrim cases | Largest measured slowdown |
 | --- | ---: | ---: |
-| Unsupported | 12/12 | 0.05% |
-| Cold supported | 12/12 | 0.05% |
-| Warm supported | 12/12 | 0.106% |
+| Unsupported | 12/12 | 0.045% |
+| Cold supported | 12/12 | 0.044% |
+| Warm supported | 12/12 | 0.104% |
+
+The plain `-Ffs` build passed all 16 FFS 40.1 comparisons at the 0.1% limit
+and issued zero SCSI commands in all 36 warm-device runs. With `-AutoTrim`,
+each warm run issued one UNMAP during warmup. The enabled build passed
+14 of 16 FFS 40.1 comparisons on this recheck. FFS mixed mutation measured
++0.10028% in Fast RAM and +0.10138% in Chip RAM. A focused repeat measured
++0.08912% and +0.10119%, respectively. The same enabled binary passed both
+earlier full runs. Earlier qualification runs used several profiles,
+including the earlier 0.1% AutoTrim limit.
 
 The OFS writer stages up to one 512-byte-sector pointer table per transfer
 and advances its source and output pointers through the run. FFS reuses the
@@ -804,11 +811,11 @@ link and checksum.
 
 ### Isolating the effect of handler layout
 
-For a matched-layout experiment build both specialized FFS handlers with
+The original matched-layout experiments used
 `-Ffs -FfsTrimLayoutControl -CilicaInlining`, adding `-AutoTrim` to the
-enabled build. The control carries the same maintenance code and mount state.
-Its disabled policy prevents hint capture and device discovery. The ordinary
-disabled build continues to omit the maintenance code.
+enabled build. Both policies carry the same maintenance code and mount state.
+The disabled policy prevents hint capture and device discovery. Passing
+`-FfsTrimLayoutControl:$false` without `-AutoTrim` omits the maintenance code.
 
 Two experimental 146,532-byte handlers differed in three bytes, all copies
 of the mount policy immediate. Their SHA-256 hashes were
@@ -1039,10 +1046,11 @@ Each comparison uses identical media, guest code and payload placement and
 alternates the order of the two handlers over three trials. Keep the real
 FFS 40.1 binary in the correctness manifest for original-created append tests.
 
-To compare restricted CILica inlining, pass `-CilicaInlining` to
-`build/Build-Handler.ps1` for the inlined build. Keep CPU, index size and
-AutoTrim setting the same across the two arms. The CILica report in each
-artifact directory records the input SHA-256, inlining flag and scalar
+To compare restricted CILica inlining on standalone OFS/FFS, build with
+`-Ffs` and use `-CilicaInlining:$false` for the scalar-replacement-only
+build. Keep CPU, index size and AutoTrim setting the same across the two
+arms. The CILica report in each artifact directory records the input
+SHA-256, inlining flag and scalar
 replacement flag. Compare the guest timings only after verifying matching
 input hashes and checking original-handler readback.
 

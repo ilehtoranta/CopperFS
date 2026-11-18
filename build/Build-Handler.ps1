@@ -72,6 +72,12 @@ $useSfs2Trst = $Sfs2 -and !$Sfs2CsunWrites -and ($Sfs2TrstWrites -or !$PSBoundPa
 # combinations retain their existing combined handler until qualified.
 $useFfsOnly = $FfsOnly -or ($Ffs -and !$Sfs2 -and !$NoSpecialization -and !$StrictWrites -and !$LegacyCsUn)
 $useSmartOnly = $SmartOnly -or (!$Ffs -and !$NoSpecialization -and !$Sfs2CsunWrites -and !$StrictWrites -and !$LegacyCsUn)
+# Match the qualified standalone FFS layout in both AutoTrim policies.
+# The -AutoTrim switch alone still enables discard.
+if ($useFfsOnly) {
+    if (!$PSBoundParameters.ContainsKey('FfsTrimLayoutControl')) { $FfsTrimLayoutControl = [switch]::new($true) }
+    if (!$SkipCilica -and !$PSBoundParameters.ContainsKey('CilicaInlining')) { $CilicaInlining = [switch]::new($true) }
+}
 New-Item -ItemType Directory -Force -Path $inputRoot | Out-Null
 $cliProject = Join-Path $CopperSharpRoot 'Compiler.Cli/CopperSharp.Compiler.Cli.csproj'
 $dosProject = Join-Path $repositoryRoot 'src/CopperFS.Amiga/CopperFS.Amiga.csproj'
