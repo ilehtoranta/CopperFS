@@ -29,6 +29,38 @@ public class ExecutionCoreTests
         }
     }
 
+    [Fact]
+    public void PublishedLeafChecksumCoversEveryLengthAndValidatesPaddingOnRead()
+    {
+        var h=new Harness(CopperNova.Reference.NovaImage.FormatPacked());
+        h.Mount();
+        var engine=typeof(NovaEngine<Ram>);
+        var stamp=engine.GetMethod("Stamp",BindingFlags.NonPublic|BindingFlags.Instance)!;
+        var validate=engine.GetMethod("CheckPageCrc",BindingFlags.NonPublic|BindingFlags.Instance)!;
+        var random=new Random(0x434E5032);
+        const uint page=Harness.Data;
+        for(int used=40;used<=512;used+=4)
+        {
+            var bytes=h.Memory.Bytes.AsSpan((int)page,512);
+            bytes.Clear();
+            random.NextBytes(bytes[..used]);
+            bytes.Slice(8,4).Clear();
+            h.Memory.Write16(page+32,(uint)used);
+            stamp.Invoke(h.Engine,new object[] { page,32u,195u,0u,1u });
+
+            uint crc=uint.MaxValue;
+            for(int i=0;i<bytes.Length;i++) {
+                if(i<8||i>=12) crc^=bytes[i];
+                for(int bit=0;bit<8;bit++) crc=(crc>>1)^((crc&1)!=0?0x82F63B78u:0);
+            }
+            Assert.Equal(~crc,h.Memory.Read32(page+8));
+            if(used<512) {
+                bytes[used]^=1;
+                Assert.False((bool)validate.Invoke(h.Engine,new object[] { page,32u,195u })!);
+            }
+        }
+    }
+
     [Theory] [InlineData(false)] [InlineData(true)]
     public void RetirementAcrossWindowsDefersReuseUntilFlushAndSurvivesEpochWrap(bool wrap)
     {

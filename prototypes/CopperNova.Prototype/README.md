@@ -1,7 +1,6 @@
 # CopperNova direct-metadata prototype
 
-For the latest packed-handler profiles, qualification and comparison, see
-[the packet-handling results](../../docs/coppernova-packet-handling-2026-11-18.md).
+The [packed leaf CRC and encoder results](../../docs/coppernova-packed-leaf-2026-11-18.md) give the current benchmark and qualification. The [packet-handling profile](../../docs/coppernova-packet-handling-2026-11-18.md) records the preceding build.
 
 This isolated experiment implements the next-format metadata study. It is not a
 CPX4 upgrade and cannot mount CPX4 or CPX5 media. It recognizes the experimental `CNM1` (`0x434E4D31`) and

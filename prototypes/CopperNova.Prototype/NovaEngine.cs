@@ -224,12 +224,20 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private const uint WordTable=98304, OnesTable=WordTable+16384;
     private uint SectorCrc(uint page)
     {
-        uint a=0,b=0,c=0,d=0,normal=Arena+CrcTable,table=Arena+WordTable,ones=Arena+OnesTable;
-        uint end=page+512,check=page+8;
+        uint end=page+512;
         // Most metadata has a zero suffix. Each discarded word is checked;
         // the position tables already include its zero-byte advancement.
         while(end-page>=32&&(m.Read32(end-4)|m.Read32(end-8)|m.Read32(end-12)|m.Read32(end-16)|
             m.Read32(end-20)|m.Read32(end-24)|m.Read32(end-28)|m.Read32(end-32))==0) end-=32;
+        return PositionCrc(page,end);
+    }
+
+    // Positions are relative to a full 512-byte sector. A caller may omit a
+    // suffix only after physically zeroing it or verifying it is all zero.
+    private uint PositionCrc(uint page,uint end)
+    {
+        uint a=0,b=0,c=0,d=0,normal=Arena+CrcTable,table=Arena+WordTable,ones=Arena+OnesTable;
+        uint check=page+8;
         for(uint src=page;src<end;src+=4,table+=128,ones+=4) {
             uint w=m.Read32(src);
             if(w==0||src==check) continue;
@@ -291,7 +299,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             m.Read32(p+40)==R(IdentityHi)&&m.Read32(p+44)==R(IdentityLo)&&m.Read32(p+8)==Crc(p,512,true);
     }
     private bool MetadataHome(uint home)=>home is >=128 and <=161 or >=256 and <1280;
-    private bool ValidInode(uint p,uint slot)=>slot is >0 and <1024&&m.Read32(p+24)==1&&m.Read32(p+28)==slot&&m.Read16(p+6) is 10 or 11&&m.Read32(p+96)<=8&&m.Read32(p+64)==0;
+    private bool ValidInodeIdentity(uint p,uint slot)=>slot is >0 and <1024&&m.Read32(p+24)==1&&m.Read32(p+28)==slot&&m.Read32(p+64)==0;
+    private bool ValidInode(uint p,uint slot)=>ValidInodeIdentity(p,slot)&&m.Read16(p+6) is 10 or 11&&m.Read32(p+96)<=8;
     private uint NameHash(uint p,uint bytes) { uint value=0,end=p+bytes; while(p<end) { uint c=m.Read8(p++); if(c is >=97 and <=122)c-=32; value=unchecked((value<<5|value>>27)+c); } return value; }
     private bool NameEqual(uint a,uint b,uint bytes) { uint end=a+bytes; while(a<end) { uint x=m.Read8(a++),y=m.Read8(b++); if(x==y)continue; if(x is >=97 and <=122)x-=32; if(y is >=97 and <=122)y-=32; if(x!=y)return false; } return true; }
     private bool Bit(uint p,uint bit)=> (m.Read8(p+(bit>>3))&(1u<<(int)(bit&7)))!=0;

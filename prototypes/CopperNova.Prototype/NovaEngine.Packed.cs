@@ -88,7 +88,9 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         uint prior=0,mask=0;
         if(type==30&&(R(ProofMask)&(1u<<(int)(1-sector)))!=0) { prior=Arena+ProofImages+((1-sector)<<9); mask=5|R(RootChanges); }
         if(type==34&&R(BitmapProof)==owner+1) { prior=Arena+BitmapImage; mask=7|R(BitmapChanges); }
-        if(prior!=0) m.Write32(p+8,PatchedCrc(p,prior,mask)); else Seal(p);
+        if(prior!=0) m.Write32(p+8,PatchedCrc(p,prior,mask));
+        else if(type==32) m.Write32(p+8,PositionCrc(p,p+m.Read16(p+32)));
+        else Seal(p);
         if(type==30) W(RootChanges,0);
         if(type==34) { W(BitmapChanges,0); m.Copy(Arena+BitmapImage,p,512); W(BitmapProof,owner+1); }
         if(type==30||type==32) RememberPage(p,type==30?sector:2u);
@@ -191,10 +193,15 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
     private void EncodeRow(uint rec,uint p,uint id)
     {
         uint kind=m.Read16(p+6),bytes=kind==11?m.Read32(p+100):0,count=m.Read32(p+96);
-        m.Write16(rec,id); m.Write8(rec+2,(byte)kind); m.Write8(rec+3,(byte)count); m.Write16(rec+4,24+bytes); m.Write16(rec+6,m.Read32(p+108));
-        m.Write32(rec+8,m.Read32(p+68)); m.Write32(rec+12,m.Read32(p+116)); m.Write32(rec+16,0); m.Write32(rec+20,0);
+        EncodeRow(rec,p,id,kind,count,bytes);
+    }
+    private void EncodeRow(uint rec,uint p,uint id,uint kind,uint count,uint bytes)
+    {
+        m.Write16(rec,id); m.Write16(rec+2,(kind<<8)|(byte)count); m.Write16(rec+4,24+bytes); m.Write16(rec+6,m.Read16(p+110));
+        m.Write32(rec+8,m.Read32(p+68)); m.Write32(rec+12,m.Read32(p+116)); m.Write32(rec+20,0);
+        if(kind==10&&count!=0) { m.Write16(rec+16,m.Read16(p+334)); m.Write16(rec+18,m.Read16(p+338)); }
+        else m.Write32(rec+16,0);
         if(kind==11) m.Copy(rec+24,p+320,bytes);
-        else if(count!=0) { m.Write16(rec+16,m.Read32(p+332)); m.Write16(rec+18,m.Read32(p+336)); }
     }
     private bool EncodeResidentLeaf(uint group,uint output)
     {
@@ -204,11 +211,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(end<first) return false;
         for(uint id=first;id<=end;id++) {
             int slot=Find(256+id); if(slot<0) return false;
-            uint inode=Image((uint)slot),type=m.Read16(inode+6);
-            if(!ValidInode(inode,id)||(type==10&&m.Read32(inode+96)>1)) return false;
+            uint inode=Image((uint)slot),type=m.Read16(inode+6),count=m.Read32(inode+96);
+            if(!ValidInodeIdentity(inode,id)||type is not (10 or 11)||count>8||(type==10&&count>1)) return false;
             uint bytes=type==11?m.Read32(inode+100):0;
             if(bytes>192||24+bytes>512-at) return false;
-            EncodeRow(output+at,inode,id); at+=24+bytes;
+            EncodeRow(output+at,inode,id,type,count,bytes); at+=24+bytes;
         }
         Zero(output,40); Zero(output+at,512-at); m.Write16(output+32,at); return true;
     }
