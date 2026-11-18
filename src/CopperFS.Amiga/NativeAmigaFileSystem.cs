@@ -3251,9 +3251,6 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         {
 #if COPPERFS_AUTOTRIM && COPPERFS_FFS_HANDLER
             return
-#if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
-                NativeAutomaticTrim.MountEnabled(state) &&
-#endif
                 APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is 0x444F5300 or 0x444F5301 &&
                 APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
 #elif COPPERFS_AUTOTRIM
@@ -3274,7 +3271,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         {
             APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, 1);
 #if COPPERFS_FFS_HANDLER
-            if (pending == 0)
+            if (pending != 1)
             {
                 if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) == 0)
 #if COPPERFS_NATIVE_FFS_READAHEAD

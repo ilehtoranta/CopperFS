@@ -177,7 +177,8 @@ public static partial class AmigaFfsWriteCore
     // physical run even when it crosses an FFS pointer-table boundary, then
     // publish the newly populated tables from the end back to the header.
     private static bool AppendFfsBlocks<T>(ref T p, ref Work w, ref Request r, in AmigaFfsGeometry g,
-        APTR keys, APTR tables, uint oldBlocks, uint newBlocks, uint lastData, out uint actual, bool resumed = false)
+        APTR keys, APTR tables, uint oldBlocks, uint newBlocks, uint oldTail, uint tail, uint lastData,
+        out uint actual, bool resumed = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0;
@@ -196,10 +197,11 @@ public static partial class AmigaFfsWriteCore
             else
             {
                 newBlocks--;
+                // The deferred block may have been the only one in its table.
+                if (tail != 0 && newBlocks == tail * g.TableEntries) tail--;
                 w.RestoreSize -= buffered;
             }
         }
-        var oldTail = oldBlocks == 0 ? 0 : AmigaGeometryMath.Divide(oldBlocks - 1, g.TableEntries);
         var committedHeader = p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedHeader);
         var committedTable = p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedTable);
         if (!Begin(ref p, ref w, in g, keepRuns: true)) return false;
@@ -275,7 +277,6 @@ public static partial class AmigaFfsWriteCore
             logical += count;
             preferred = first + count;
         }
-        var tail = AmigaGeometryMath.Divide(newBlocks - 1, g.TableEntries);
         // Only the first two extensions can share the two retained sectors
         // at publication. Allocate that pair child-first when both are new.
         // Keep later extension allocations in their ordinary physical order.
@@ -419,6 +420,17 @@ public static partial class AmigaFfsWriteCore
         }
         actual = r.Length;
         return true;
+    }
+
+    // Small extensions can find their last pointer table without a native
+    // software division. Larger files retain the general calculation.
+    private static uint AppendTailTable(uint blocks, uint entries)
+    {
+        if (blocks <= entries) return 0;
+        var beyondFirst = blocks - entries;
+        if (beyondFirst <= entries) return 1;
+        if (beyondFirst - entries <= entries) return 2;
+        return AmigaGeometryMath.Divide(blocks - 1, entries);
     }
 
     private static uint AllocateFfsRun<T>(ref T p, ref Work w, in AmigaFfsGeometry g,

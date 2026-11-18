@@ -661,7 +661,11 @@ public static class AmigaFfsMountIndex
         if (permanent != keys) return false;
         p.WriteUInt32(memory, RootImage, rootImage.Raw);
         var staging = available / 4;
-        if (staging > 32768) staging = 32768;
+        // An OFS table can describe 72 sectors on 512-byte media. A full
+        // table in one stage avoids an extra tail relink and table update.
+        var tableBytes = (type & 1) == 0 ? g.BlockBytes * g.TableEntries : 0u;
+        var stageLimit = tableBytes < 32768 ? 32768u : tableBytes > 65536 ? 65536u : tableBytes;
+        if (staging > stageLimit) staging = stageLimit;
         staging &= ~3u;
         p.WriteUInt32(memory, Type, type);
         p.WriteUInt32(memory, Used, used);

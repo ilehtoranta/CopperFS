@@ -12,15 +12,14 @@ internal static class NativeAutomaticTrim
         DiscoveryCount = 44, Dropped = 48, Commands = 52, Blocks = 56;
     internal const int Eligible = 28;
 #if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
-    // The paired control keeps the same handler and state layout. Only the
-    // mount policy immediate changes between its enabled and disabled builds.
-    private const int Policy = 60;
+    // Reset admits the first hint with an empty queue or leaves discard
+    // suspended for this attachment. Both policies use the same foreground
+    // checks and native layout.
 #if COPPERFS_FFS_TRIM_POLICY_OFF
-    private const uint MountPolicy = 2;
+    private const uint ResetPendingState = 2;
 #else
-    private const uint MountPolicy = 1;
+    private const uint ResetPendingState = 3;
 #endif
-    internal static bool MountEnabled(APTR state) => APTR.ReadUInt32(Record(state), Policy) == 1;
 #endif
     private static APTR Record(APTR state) => APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimRecordOffset);
 #if COPPERFS_FFS_HANDLER
@@ -84,7 +83,7 @@ internal static class NativeAutomaticTrim
         // every validation record belong to the old media attachment.
         p.Clear(APTR.FromPointer(Record(state).Raw + 4), 60);
 #if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
-        APTR.WriteUInt32(Record(state), Policy, MountPolicy);
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, ResetPendingState);
 #endif
         ClearStaging(state);
     }
@@ -164,9 +163,7 @@ internal static class NativeAutomaticTrim
     // eligibility before an idle classic mount publishes pending metadata.
     internal static APTR DiscardControl(APTR state)
     {
-#if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
-        if (!MountEnabled(state)) return APTR.Null;
-#endif
+        // The caller holds a ready idle turn.
         var record = Record(state);
 #if COPPERFS_FFS_HANDLER
         if (APTR.ReadUInt32(record, Control) == 0) Initialize(state);

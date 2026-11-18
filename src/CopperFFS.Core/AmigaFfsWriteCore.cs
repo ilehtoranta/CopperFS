@@ -1507,7 +1507,8 @@ public static partial class AmigaFfsWriteCore
                     // additional blocks and tables need admission.
                     var existing = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBlocks);
                     var oldTables = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Tables);
-                    var tablesNeeded = AmigaGeometryMath.Divide(blocks - 1, tableEntries) + 1;
+                    var newTail = AppendTailTable(blocks, tableEntries);
+                    var tablesNeeded = newTail + 1;
                     if (!Prepare(ref p, ref w, in geometry, blocks - existing + tablesNeeded - oldTables)) return false;
                     w.RestoreFile = r.Header;
                     w.GroupHeader = r.Header;
@@ -1516,7 +1517,8 @@ public static partial class AmigaFfsWriteCore
                     var keys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
                     var tables = AmigaFfsMountIndex.TableKeys(ref p, w.Index);
                     var last = existing == 0 ? 0 : p.ReadUInt32(keys, (int)(existing - 1) * 4);
-                    return AppendFfsBlocks(ref p, ref w, ref r, in geometry, keys, tables, existing, blocks, last, out actual);
+                    return AppendFfsBlocks(ref p, ref w, ref r, in geometry, keys, tables, existing, blocks,
+                        existing == 0 ? 0 : oldTables - 1, newTail, last, out actual);
                 }
             }
             if (!sameFile && !FinishFileWriteGroup(ref p, ref w)) return false;
@@ -1564,11 +1566,12 @@ public static partial class AmigaFfsWriteCore
             if (!Chain(ref p, ref w, r.Header, false, out lastData, first, whole ? uint.MaxValue : limit)) return false;
         }
         var newBlocks = oldBlocks;
+        uint oldExt = 0, newExt = 0;
         if (end > size)
         {
             newBlocks = AmigaGeometryMath.Divide(end - 1, blockBytes) + 1;
-            var oldExt = oldBlocks == 0 ? 0 : AmigaGeometryMath.Divide(oldBlocks - 1, tableEntries);
-            var newExt = AmigaGeometryMath.Divide(newBlocks - 1, tableEntries);
+            oldExt = AppendTailTable(oldBlocks, tableEntries);
+            newExt = AppendTailTable(newBlocks, tableEntries);
             if (!CanGrow(ref p, ref w, in geometry, newBlocks - oldBlocks + newExt - oldExt)) return false;
         }
         var fileKeys = APTR.Null;
@@ -1586,7 +1589,8 @@ public static partial class AmigaFfsWriteCore
         if (w.BufferSmallAppends && TryStartBufferedAppend(ref p, ref w, ref r, in geometry, size, out actual))
             return w.Error == DOS.Error.None;
         if (fileKeys.IsNotNull && w.GroupHeader != 0 && w.GroupFileWrites && w.DosType < 0x444F5304 && r.Position == size)
-            return AppendFfsBlocks(ref p, ref w, ref r, in geometry, fileKeys, fileTables, oldBlocks, newBlocks, lastData, out actual, resumed);
+            return AppendFfsBlocks(ref p, ref w, ref r, in geometry, fileKeys, fileTables, oldBlocks, newBlocks,
+                oldExt, newExt, lastData, out actual, resumed);
         // A single verified physical run cannot benefit from relocation.
         // Its data fits one logical transfer even across pointer-table boundaries.
         if (fileKeys.IsNotNull && fixedHardDisk && end <= size &&

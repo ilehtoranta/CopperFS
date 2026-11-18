@@ -377,28 +377,32 @@ public static partial class AmigaFfsWriteCore
                     // its pointer prefix only after every data write succeeds;
                     // every failure after Begin still leaves the root invalid.
                     var blocks = runCount + 1;
-                    if (stageBlocks >= 2 && blocks > stageBlocks) blocks = stageBlocks;
+                    var staged = stageBlocks >= 2;
+                    if (staged && blocks > stageBlocks) blocks = stageBlocks;
                     if (!ClaimRun(ref p, ref w, key + 1, blocks - 1)) return false;
-                    uint stagedBytes = 0;
+                    var remaining = r.Length - actual;
+                    var input = APTR.FromPointer(r.Buffer.Raw + actual);
+                    var image = staged ? stage : w.Data;
                     for (var n = 0u; n < blocks; n++)
                     {
-                        var image = stageBlocks >= 2 ? APTR.FromPointer(stage.Raw + n * g.BlockBytes) : w.Data;
-                        var bytes = r.Length - actual - stagedBytes; if (bytes > payload) bytes = payload;
+                        var bytes = remaining > payload ? payload : remaining;
                         if (bytes != payload) p.Clear(image, g.BlockBytes);
                         p.WriteUInt32(image, 0, 8); p.WriteUInt32(image, 4, r.Header);
                         p.WriteUInt32(image, 8, index + n + 1); p.WriteUInt32(image, 12, bytes);
                         p.WriteUInt32(image, 16, n + 1 == blocks ? 0 : key + n + 1);
-                        CopyAndSealOfs(ref p, APTR.FromPointer(r.Buffer.Raw + actual + stagedBytes), image, bytes);
-                        if (stageBlocks < 2 && !Put(ref p, ref w, key + n, image, -1)) return false;
+                        CopyAndSealOfs(ref p, input, image, bytes);
+                        if (!staged && !Put(ref p, ref w, key + n, image, -1)) return false;
                         p.WriteUInt32(w.Meta, at - (int)n * 4, key + n);
                         if (fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)(index + n) * 4, key + n);
-                        if (stageBlocks < 2) actual += bytes;
-                        else stagedBytes += bytes;
+                        remaining -= bytes;
+                        input = APTR.FromPointer(input.Raw + bytes);
+                        if (staged) image = APTR.FromPointer(image.Raw + g.BlockBytes);
+                        else actual += bytes;
                     }
-                    if (stagedBytes != 0)
+                    if (staged)
                     {
                         if (!p.WriteDataBlocksRetainingLast(key, blocks, stage)) return Fail(ref w, DOS.Error.DiskNotValidated);
-                        actual += stagedBytes;
+                        actual = r.Length - remaining;
                     }
                     if (previousData != 0 && !SetOfsForwardLink(ref p, ref w, previousData, key)) return false;
                     previousData = key + blocks - 1;

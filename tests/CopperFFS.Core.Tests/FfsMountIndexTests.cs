@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Amiga;
 using CopperSFS;
 using CopperStart.Dos;
@@ -74,6 +75,35 @@ public sealed partial class VolumeGeometryTests
         Assert.Equal((byte)1, p.ReadUInt8(Meta, g.Tail + 328));
         Assert.Equal((byte)'X', p.ReadUInt8(Meta, g.Tail + 329));
         Assert.Equal(123u, p.ReadUInt32(Meta, g.Tail + 420));
+    }
+
+    [Fact]
+    public void BufferedAppendDefersAnExtensionUntilItsFirstBlockIsWritten()
+    {
+        var (storage, platform, geometry, file) = AllocationFixture(false);
+        var work = Work();
+        work.Index = APTR.FromPointer(0x100000);
+        work.GroupFileWrites = true;
+        AmigaFfsMountIndex.Initialize(ref platform, work.Index, 65536);
+        var initial = (geometry.TableEntries - 1) * geometry.BlockBytes;
+        var content = new byte[initial + geometry.BlockBytes + 1];
+        new Random(38).NextBytes(content);
+        content.CopyTo(storage.Ram, (int)Payload.Raw);
+        file.Buffer = Payload;
+        file.Length = initial;
+        Assert.True(AmigaFfsWriteCore.Write(ref platform, ref work, ref file, out _, true));
+
+        work.BufferSmallAppends = true;
+        file.Position = initial;
+        file.Buffer = APTR.FromPointer(Payload.Raw + initial);
+        file.Length = geometry.BlockBytes + 1;
+        Assert.True(AmigaFfsWriteCore.Write(ref platform, ref work, ref file, out var written, true));
+        Assert.Equal(file.Length, written);
+        Assert.DoesNotContain(storage.Sectors.Values, sector =>
+            BinaryPrimitives.ReadUInt32BigEndian(sector) == 16 &&
+            BinaryPrimitives.ReadUInt32BigEndian(sector.AsSpan(geometry.Tail + 500)) == file.Header);
+        Assert.True(AmigaFfsWriteCore.FinishFileWriteGroup(ref platform, ref work));
+        InspectAllocation(storage, geometry, file.Header, false, content);
     }
 
     [Fact]
@@ -214,6 +244,29 @@ public sealed partial class VolumeGeometryTests
         Assert.NotEqual(0u, s.LastBulkWriteBuffer);
         Assert.Equal(0u, s.LastBulkWriteBuffer % g.BlockBytes);
         InspectAllocation(s, g, file.Header, false, expected);
+    }
+
+    [Theory]
+    [InlineData(64 * 1024u, false)]
+    [InlineData(256 * 1024u, true)]
+    public void OfsGrowthStagesAWholeTableWhenTheMountWorkspaceAllows(uint workspaceBytes, bool wholeTable)
+    {
+        var (storage, platform, geometry, file) = AllocationFixture(true);
+        var work = Work();
+        work.Index = storage.FfsIndex = APTR.FromPointer(0x100000);
+        AmigaFfsMountIndex.Initialize(ref platform, work.Index, workspaceBytes);
+        storage.BulkTransfers = true;
+        var payload = new byte[(geometry.BlockBytes - 24) * geometry.TableEntries];
+        new Random(34).NextBytes(payload);
+        payload.CopyTo(storage.Ram, (int)Payload.Raw);
+        file.Buffer = Payload;
+        file.Length = (uint)payload.Length;
+
+        Assert.True(AmigaFfsWriteCore.Write(ref platform, ref work, ref file, out var written, true), work.Error.ToString());
+        Assert.Equal(file.Length, written);
+        Assert.Equal(wholeTable, storage.Transfers.Any(transfer =>
+            transfer.Command == 3 && transfer.Bytes == geometry.BlockBytes * geometry.TableEntries));
+        InspectAllocation(storage, geometry, file.Header, true, payload);
     }
 
     [Theory]

@@ -27,6 +27,7 @@ internal sealed class ReadCpuProfile
     private readonly List<object> ioRequests = [];
     private readonly List<object> deviceCalls = [];
     private readonly List<object> copyEntries = [];
+    private readonly List<object> interruptEntries = [];
     private uint copyEntry;
     private uint blockCopyEntry, blockCopyBytes, blockCopyCaller;
     private readonly Dictionary<uint, (long Cycles, long Calls)> blockCopyCallers = [];
@@ -118,7 +119,7 @@ internal sealed class ReadCpuProfile
         var blockCopy = symbols.FirstOrDefault(s => s.Name.EndsWith("::CopyBlock", StringComparison.Ordinal));
         blockCopyEntry = codeBase + blockCopy.Offset; blockCopyBytes = blockCopy.Size;
         blockCopyCallers.Clear();
-        transactionCalls.Clear(); blockTransfers.Clear(); deviceCalls.Clear();
+        transactionCalls.Clear(); blockTransfers.Clear(); deviceCalls.Clear(); interruptEntries.Clear();
         cacheReturn = cacheReturnStack = 0; cacheHits = cacheLookups = 0;
         uint Entry(string method) => codeBase + symbols.FirstOrDefault(s => s.Name.Contains("::" + method + "<") ||
             s.Name.EndsWith("::" + method, StringComparison.Ordinal)).Offset;
@@ -141,6 +142,7 @@ internal sealed class ReadCpuProfile
         File.WriteAllText(Path.Combine(directory, phase + "-profile.json"), JsonSerializer.Serialize(new
         {
             CodeBase = codeBase, CodeBytes = codeBytes, GuestCycles = cycle - start, AttributedCycles = rows.Sum(r => r.Cycles),
+            StartCycle = start, EndCycle = cycle, InterruptEntries = interruptEntries,
             Attribution = "Exclusive instruction cycles; interrupt dispatch, STOP waits and boundary markers are residual.",
             ScopeStart = snapshotStart, ScopeEnd = callSnapshot?.Invoke(),
             InclusiveMethods = inclusiveCalls.Select(p => new { Name = p.Key, p.Value.Cycles, p.Value.Calls }).OrderByDescending(p => p.Cycles),
@@ -252,6 +254,16 @@ internal sealed class ReadCpuProfile
     internal void ExecuteFrame()
     {
         var target = machine.CompletedFrames + 1; var cpu = machine.Cpu;
+        bool DispatchInterrupt()
+        {
+            if (phase == null) return dispatch();
+            var interrupted = cpu.ProgramCounter;
+            var cycle = cpu.Cycles;
+            if (!dispatch()) return false;
+            interruptEntries.Add(new { Cycle = cycle, Frame = machine.CompletedFrames, BeforePc = interrupted,
+                EntryPc = cpu.ProgramCounter, Level = (cpu.StatusRegister >> 8) & 7, Cycles = cpu.Cycles - cycle });
+            return true;
+        }
         while (machine.CompletedFrames < target)
         {
             var end = boundary();
@@ -259,12 +271,12 @@ internal sealed class ReadCpuProfile
             if (cpu.Stopped)
             {
                 var wake = ((cpu.StatusRegister >> 8) & 7) >= 6 ? end : clamp(end);
-                advance(wake); cpu.Cycles = Math.Max(cpu.Cycles, wake); dispatch(); continue;
+                advance(wake); cpu.Cycles = Math.Max(cpu.Cycles, wake); DispatchInterrupt(); continue;
             }
-            if (dispatch()) continue;
+            if (DispatchInterrupt()) continue;
             while (cpu.Cycles < end)
             {
-                if (dispatch()) continue;
+                if (DispatchInterrupt()) continue;
                 if (cpu.Halted || cpu.Stopped) break;
                 var pc = cpu.ProgramCounter; var before = cpu.Cycles;
                 if (callDirectory != null)
