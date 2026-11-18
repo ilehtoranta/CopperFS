@@ -1,6 +1,9 @@
 #if !COPPERFS_SFS2_OWNED && (COPPERFS_FFS_HANDLER || (COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2))
 #define COPPERFS_CACHE_PAGE_MASK
 #endif
+#if COPPERSTART_FULL_FILESYSTEM_EXTENSION && !COPPERSTART_PACKED_EXTENSION && !COPPERSTART_SFS_STANDALONE
+#define COPPERSTART_CLASSIC_REMOVABLE
+#endif
 using Amiga;
 #if !COPPERSTART_SFS_STANDALONE
 using CopperStart.Exec;
@@ -458,7 +461,16 @@ public static partial class NativeAmigaFileSystem
             // Sixteen blocks cover the full disk Shell's extension chain;
             // memory never grows with read or file length. Allocation failure
             // rolls back this optional cache and keeps ordinary track reads.
-            MoreCache(s, 16, out _);
+#if !COPPERSTART_SFS_STANDALONE
+            var bootstrap = APTR.FromPointer(0x200);
+            // Leave the optional headers out of the boot floppy's Chip RAM
+            // budget when there is no expansion RAM to hold them.
+            if (APTR.ReadUInt32(bootstrap, BootstrapAbi.ChipSizeOffset) != 0x100000 ||
+                APTR.ReadUInt32(bootstrap, BootstrapAbi.BoardCountOffset) != 0 ||
+                APTR.ReadUInt32(bootstrap, BootstrapAbi.PseudoFastSizeOffset) != 0 ||
+                !DeviceNamed(deviceName, "trackdisk.device"))
+#endif
+                MoreCache(s, 16, out _);
 #if COPPERFS_FFS_HANDLER
             var workspace = APTR.FromPointer(global::Amiga.Exec.AllocMem(FfsIndexBytes, global::Amiga.Exec.MemoryFlags.Public));
             if (workspace.IsNotNull)
@@ -489,6 +501,10 @@ public static partial class NativeAmigaFileSystem
 #endif
         }
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
+#if COPPERSTART_CLASSIC_REMOVABLE
+        if (unit == 0 && (type & 0xFFFFFF00) == 0x444F5300 && DeviceNamed(deviceName, "trackdisk.device"))
+            APTR.WriteUInt32(s, DosNativeMediaStateCodec.MediaSignalOffset, 1);
+#endif
 
         return s;
     }
@@ -913,11 +929,32 @@ public static partial class NativeAmigaFileSystem
         return NativeRecordLockCore.TimerReply(ref platform, state, message);
     }
 
+#if COPPERSTART_CLASSIC_REMOVABLE
+    private static bool WatchesRemovableBootMedia(APTR state) =>
+        state.IsNotNull &&
+        (APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) & 0xFFFFFF00) == 0x444F5300 &&
+        APTR.ReadUInt32(state, DosNativeMediaStateCodec.MediaSignalOffset) != 0;
+
+    public static void WakeRemovableBootFileSystem(APTR state)
+    {
+        if (!WatchesRemovableBootMedia(state)) return;
+        var port = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.PortOffset));
+        if (port.IsNull) return;
+        global::Amiga.Exec.Signal(
+            APTR.FromPointer(APTR.ReadUInt32(port, ExecLayout.MsgPort.SignalTask)),
+            1u << APTR.ReadUInt8(port, ExecLayout.MsgPort.SignalBit));
+    }
+#endif
     public static uint Run(APTR state)
     {
         var task = global::Amiga.Exec.FindTask(CString.FromPointer(0));
         var port = DosProcessCodec.MessagePortAddress(task);
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.PortOffset, port.Raw);
+#if COPPERSTART_CLASSIC_REMOVABLE
+        var watchesMedia = WatchesRemovableBootMedia(state);
+        var portSignal = 1u << APTR.ReadUInt8(port, ExecLayout.MsgPort.SignalBit);
+        if (watchesMedia) NativeRemovableMedia.StartWatching(state);
+#endif
 #if COPPERSTART_PACKED_EXTENSION
         var mediaSignal = NativeRemovableMedia.Start(state);
 #endif
@@ -999,6 +1036,15 @@ public static partial class NativeAmigaFileSystem
                 message = APTR.FromPointer(global::Amiga.Exec.GetMsg(port.Raw));
             }
             if (mediaSignal != 0) NativeRemovableMedia.Refresh(state);
+#elif COPPERSTART_CLASSIC_REMOVABLE
+            var message = APTR.FromPointer(global::Amiga.Exec.GetMsg(port.Raw));
+            if (message.IsNull)
+            {
+                if (watchesMedia) global::Amiga.Exec.Wait(portSignal);
+                else global::Amiga.Exec.WaitPort(port.Raw);
+                message = APTR.FromPointer(global::Amiga.Exec.GetMsg(port.Raw));
+            }
+            if (watchesMedia) NativeRemovableMedia.Refresh(state);
 #else
             global::Amiga.Exec.WaitPort(port.Raw);
             var message = APTR.FromPointer(global::Amiga.Exec.GetMsg(port.Raw));
@@ -2751,14 +2797,15 @@ public static partial class NativeAmigaFileSystem
         var error = DOS.Error.None;
         var file = Object(state, a, true);
         var locked = Object(state, a, false);
-#if COPPERSTART_PACKED_EXTENSION
+#if COPPERSTART_PACKED_EXTENSION || COPPERSTART_CLASSIC_REMOVABLE
         // Handles keep their original public volume identity across removal.
         // Cleanup remains legal, but an old handle must not read a new disk.
-        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && APTR.ReadUInt32(state, 60) != 0 && SmartMediaAccess(action))
+        if (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && APTR.ReadUInt32(state, DosNativeMediaStateCodec.MediaSignalOffset) != 0 && SmartMediaAccess(action))
         {
             var volume = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.VolumeOffset));
-            // FINDINPUT carries its base lock in Arg2; Arg1 is the new FH.
-            var owned = action == DosPacketAction.FindInput ? Object(state, b, false) : file.IsNotNull ? file : locked;
+            // Open packets carry the base lock in Arg2 and the new FH in Arg1.
+            var owned = action is DosPacketAction.FindInput or DosPacketAction.FindOutput or DosPacketAction.FindUpdate
+                ? Object(state, b, false) : file.IsNotNull ? file : locked;
             if (APTR.ReadUInt32(volume, 8) == 0 ||
                 (owned.IsNotNull && APTR.ReadUInt32(owned, 36) != volume.Raw >> 2))
             {
