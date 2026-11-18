@@ -157,7 +157,8 @@ public static partial class AmigaFfsWriteCore
             return Fail(ref w, DOS.Error.DiskNotValidated);
         // Link, unlink and directory-cache operations can edit the root between
         // the two validity writes. Keep the private image current in that case.
-        if (key == w.RootKey && w.RootImage.IsNotNull && buffer != w.RootImage) p.Copy(buffer, w.RootImage, p.BlockBytes);
+        if (MountIndexEnabled && key == w.RootKey && w.RootImage.IsNotNull && buffer != w.RootImage)
+            p.Copy(buffer, w.RootImage, p.BlockBytes);
         return true;
     }
     private static bool Prepare<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint needed, bool scan = true, uint attributeHeader = 0,
@@ -842,7 +843,7 @@ public static partial class AmigaFfsWriteCore
         if (!Begin(ref p, ref w, in geometry)) return false;
         var key = Allocate(ref p, ref w, in geometry); if (key == 0) return false;
         w.CacheParent = r.Directory; if (directory) w.CacheNew = key;
-        var parent = w.RootImage;
+        var parent = MountIndexEnabled ? w.RootImage : APTR.Null;
         if (!MountIndexEnabled || r.Directory != geometry.RootBlock || parent.IsNull)
         {
             parent = MountIndexEnabled && publishedParent ? APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage)) :
@@ -896,7 +897,8 @@ public static partial class AmigaFfsWriteCore
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingParent, key);
         }
         else if (!Put(ref p, ref w, key, header, 20)) return false;
-        if (w.GroupHeader != 0 || groupDirectory || (r.Directory == geometry.RootBlock && w.RootImage.IsNotNull && w.DosType < 0x444F5304))
+        if (MountIndexEnabled && (w.GroupHeader != 0 || groupDirectory ||
+            (r.Directory == geometry.RootBlock && w.RootImage.IsNotNull && w.DosType < 0x444F5304)))
         {
             // Finish writes this exact root after the bitmap. The previous root
             // on disk remains invalid until that write publishes the directory link.
@@ -1061,7 +1063,7 @@ public static partial class AmigaFfsWriteCore
         // write. It can carry either staged attributes or the last close's
         // sealed header. A borrowed physical cache view can expire sooner.
         var retained = APTR.Null;
-        if (truncate && key != 0 && w.LayoutKnown &&
+        if (MountIndexEnabled && truncate && key != 0 && w.LayoutKnown &&
             ((w.GroupMetadata && p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) == key) ||
              p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedHeader) == key))
             retained = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
@@ -1144,7 +1146,7 @@ public static partial class AmigaFfsWriteCore
         // Keep the checked parent through the invalid-root write. Releasing
         // allocation bits cannot change its directory links.
         var retainedDirectory = APTR.Null;
-        if (!truncate && w.LayoutKnown && w.ReadsGroupedDirectories && w.CacheParent != 0 &&
+        if (MountIndexEnabled && !truncate && w.LayoutKnown && w.ReadsGroupedDirectories && w.CacheParent != 0 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedParent) == w.CacheParent)
             retainedDirectory = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
         if (!Begin(ref p, ref w, in geometry)) return false;
@@ -1257,7 +1259,7 @@ public static partial class AmigaFfsWriteCore
         // Begin withdraws its read proof. Neither the invalid-root write nor
         // the renamed child's write can change this directory sector.
         var retainedDirectory = APTR.Null;
-        if (oldSlot != 0 && w.ReadsGroupedDirectories &&
+        if (MountIndexEnabled && oldSlot != 0 && w.ReadsGroupedDirectories &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedParent) == r.Directory)
             retainedDirectory = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
         if (MountIndexEnabled && w.LayoutKnown && movesDirectory) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
@@ -1380,7 +1382,8 @@ public static partial class AmigaFfsWriteCore
         }
         else if (!Header(ref p, ref w, r.Header)) return false;
         KeepFile(ref p, ref w);
-        if (!Begin(ref p, ref w, in geometry) || (w.RootImage.IsNull && !Header(ref p, ref w, r.Header))) return false;
+        if (!Begin(ref p, ref w, in geometry) ||
+            ((!MountIndexEnabled || w.RootImage.IsNull) && !Header(ref p, ref w, r.Header))) return false;
         w.CacheParent = p.ReadUInt32(image, geometry.Tail + 500);
         EditAttribute(ref p, image, geometry.Tail, ref r, action);
         if (MountIndexEnabled && staged)
@@ -1547,7 +1550,8 @@ public static partial class AmigaFfsWriteCore
 #endif
         // A write does not edit directory links. Its group can carry the
         // preceding namespace update through the same publication boundary.
-        var keepDirectory = w.GroupMetadata && w.Index.IsNotNull ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingParent) : 0;
+        var keepDirectory = MountIndexEnabled && w.GroupMetadata && w.Index.IsNotNull
+            ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingParent) : 0;
         if (!Prepare(ref p, ref w, in geometry, 0, false, keepDirectory: keepDirectory)) return false;
         if ((w.DosType & 1) == 0) return WriteOfs(ref p, ref w, ref r, in geometry, out actual, fixedHardDisk);
         // The first writer's sealed header survives a sibling close in its
@@ -2293,7 +2297,8 @@ public static partial class AmigaFfsWriteCore
         }
 
         // Keep the invalid marker durable while the two sets of blocks coexist.
-        if (!FlushBitmap(ref p, ref w) || !PublishGroupHeader(ref p, ref w) || !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (!FlushBitmap(ref p, ref w) || (MountIndexEnabled && !PublishGroupHeader(ref p, ref w)) || !p.Flush())
+            return Fail(ref w, DOS.Error.DiskNotValidated);
         w.GroupHeader = 0;
         for (var i = 0u; i < count; i++) Bit(ref p, ref w, destination + i, false);
         if (!FlushBitmap(ref p, ref w)) return false;
