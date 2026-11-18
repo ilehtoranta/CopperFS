@@ -2,25 +2,30 @@
 
 **November 18 qualification.** The 256 KiB standalone `-Ffs` profile
 defaults to matched layout and CILica inlining. Add `-AutoTrim` to enable
-discard at mount reset. The two 155,228-byte handlers use the same native
-layout and differ in three bytes that encode the mount-reset policy. The
-default build commands reproduced the previously qualified binaries byte
-for byte and passed all 36 AutoTrim comparisons at the 0.5% limit.
+discard at mount reset. Both 155,240-byte handlers share the same native
+layout and differ in three bytes that encode the mount-reset policy.
 
-| Device | AutoTrim cases | Largest measured slowdown |
-| --- | ---: | ---: |
-| Unsupported | 12/12 | 0.045% |
-| Cold supported | 12/12 | 0.044% |
-| Warm supported | 12/12 | 0.104% |
+Each cell shows the largest change in mean guest cycles among gated phases.
+Positive values are slower than the reference.
 
-The plain `-Ffs` build passed all 16 FFS 40.1 comparisons at the 0.1% limit
-and issued zero SCSI commands in all 36 warm-device runs. With `-AutoTrim`,
-each warm run issued one UNMAP during warmup. The enabled build passed
-14 of 16 FFS 40.1 comparisons on this recheck. FFS mixed mutation measured
-+0.10028% in Fast RAM and +0.10138% in Chip RAM. A focused repeat measured
-+0.08912% and +0.10119%, respectively. The same enabled binary passed both
-earlier full runs. Earlier qualification runs used several profiles,
-including the earlier 0.1% AutoTrim limit.
+| Comparison | Limit | FFS Fast | FFS Chip | OFS Fast | OFS Chip | Passed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| AutoTrim on vs. off, unsupported device | +0.5% | +0.0443% | +0.0615% | +0.0398% | +0.0398% | 12/12 |
+| AutoTrim on vs. off, cold supported device | +0.5% | +0.0441% | +0.0581% | +0.0423% | +0.0409% | 12/12 |
+| AutoTrim on vs. off, warm supported device | +0.5% | +0.0508% | +0.0519% | +0.0433% | +0.0440% | 12/12 |
+| vs. FFS 40.1, AutoTrim off | +0.1% | +0.0502% | +0.0411% | −2.3185% | −2.3004% | 16/16 |
+| vs. FFS 40.1, AutoTrim on | +0.1% | +0.0849% | +0.0973% | −2.3149% | −2.2962% | 16/16 |
+
+Updating a comment includes only its length byte and payload in the new
+checksum contribution, rounded to a whole word. The rest of the field is
+cleared, and the checksum still removes every word of the old field.
+With AutoTrim enabled, the FFS mixed-mutation mean fell by about 500 guest
+cycles in both memory placements from the previous defaults recheck.
+Each placement still used 10 reads, 50 writes and one flush. The previous
+recheck measured +0.1003% and +0.1014% against FFS 40.1. An independent repeat
+of the new build measured +0.0856% in Fast RAM and +0.0942% in Chip RAM.
+The plain `-Ffs` build issued zero SCSI commands in all 36 warm-device runs.
+Each enabled warm run completed one UNMAP during warmup.
 
 The OFS writer stages up to one 512-byte-sector pointer table per transfer
 and advances its source and output pointers through the run. FFS reuses the
@@ -29,8 +34,9 @@ the first sector of a new extension. The disabled handler starts with AutoTrim
 suspended on each attachment. Capability discovery remains on the eligible
 idle path.
 
-In the repeat against FFS 40.1, FFS mixed mutation was 0.084–0.089% slower
-and OFS mixed mutation was 9.190–9.322% faster. The Fast RAM FFS mixed
+In the preceding qualification repeat, FFS mixed mutation was 0.084–0.089%
+slower than FFS 40.1 and OFS mixed mutation was 9.190–9.322% faster.
+The Fast RAM FFS mixed
 mutation issued 50 writes, 10 reads and one flush. FFS 40.1 issued 47
 writes, 20 reads and three flushes, and the initial CopperFFS audit
 recorded 160 writes. The 96 KiB growth and overwrite
@@ -64,7 +70,7 @@ cycles earlier and finished 16,290 cycles earlier on the guest clock. That
 window included one additional level-3 interrupt. The qualification uses
 the unchanged guest workload and its individual phase boundaries.
 
-All 43 selected full-ROM correctness cases passed, including inhibit,
+All 41 selected full-ROM correctness cases passed, including inhibit,
 remount and power cuts during discard. The cold supported
 32 KiB deletion produced the following timings, with two UNMAPs per format.
 Each foreground reply used one write and issued no SCSI commands. Deferred
@@ -72,20 +78,20 @@ service used one read, two writes, one flush and five SCSI commands.
 
 | Format | Foreground cycles | Service cycles | Longest turn | Reclaimed bytes |
 | --- | ---: | ---: | ---: | ---: |
-| FFS | 62,650 | 118,178 | 62,983 | 33,280 |
-| OFS | 58,420 | 120,284 | 63,138 | 35,328 |
+| FFS | 62,620 | 118,178 | 62,983 | 33,280 |
+| OFS | 58,400 | 120,284 | 63,138 | 35,328 |
 
-Combined foreground and service took 180,828 cycles on FFS and 178,704 on
+Combined foreground and service took 180,798 cycles on FFS and 178,684 on
 OFS, down from 666,069 and 2,471,083 in the initial audit. With capabilities
 already cached, service took 98,005 cycles on FFS and 101,344 on OFS.
 Original-handler readback passed after discarded sectors were poisoned.
 Physical controller and SSD latency remain unmeasured.
 
-The Release solution build passed and its tests recorded 2,521 passes
-and nine skips, including all 445 OFS/FFS core cases. The standalone
+The Release solution build passed and its tests recorded 2,901 passes
+and ten skips, including all 445 OFS/FFS core cases. The standalone
 build reproduced both qualified 68000 binaries and reported zero reachable
-managed allocation sites. The owned SFS2 standalone build passed the same
-allocation check. The selected CopperStart native replay recorded 220
+managed allocation sites. The earlier owned SFS2 standalone build passed
+the same allocation check. The selected CopperStart native replay recorded 220
 passes and the four SFS2 failures reproduced on the published baseline.
 
 Set `ClassicAutoTrimComparison` to `true` in the benchmark manifest for a

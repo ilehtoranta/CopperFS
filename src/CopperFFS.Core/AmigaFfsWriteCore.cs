@@ -1406,7 +1406,10 @@ public static partial class AmigaFfsWriteCore
             p.WriteUInt8(comment, 0, (byte)r.Length);
             for (var index = 0u; index < r.Length; index++)
                 p.WriteUInt8(comment, 1 + (int)index, p.ReadUInt8(r.Buffer, (int)index));
-            for (var offset = 0; offset < 80; offset += 4)
+            // The length byte and payload occupy this rounded prefix. The
+            // padding bytes are already clear and add nothing to the sum.
+            var prefix = ((int)r.Length + 4) & ~3;
+            for (var offset = 0; offset < prefix; offset += 4)
                 checksum = unchecked(checksum - p.ReadUInt32(comment, offset));
         }
         p.WriteUInt32(image, 20, checksum);
