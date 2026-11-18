@@ -1,8 +1,8 @@
 # CopperFFS mount index and AutoTrim qualification
 
-**November 18 qualification.** The 256 KiB standalone `-Ffs` profile
+**Qualification on `bab0c20`.** The 256 KiB standalone `-Ffs` profile
 defaults to matched layout and CILica inlining. Add `-AutoTrim` to enable
-discard at mount reset. Both 155,240-byte handlers share the same native
+discard at mount reset. Both 155,460-byte handlers share the same native
 layout and differ in three bytes that encode the mount-reset policy.
 
 Each cell shows the largest change in mean guest cycles among gated phases.
@@ -10,20 +10,27 @@ Positive values are slower than the reference.
 
 | Comparison | Limit | FFS Fast | FFS Chip | OFS Fast | OFS Chip | Passed |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| AutoTrim on vs. off, unsupported device | +0.5% | +0.0443% | +0.0615% | +0.0398% | +0.0398% | 12/12 |
-| AutoTrim on vs. off, cold supported device | +0.5% | +0.0441% | +0.0581% | +0.0423% | +0.0409% | 12/12 |
-| AutoTrim on vs. off, warm supported device | +0.5% | +0.0508% | +0.0519% | +0.0433% | +0.0440% | 12/12 |
-| vs. FFS 40.1, AutoTrim off | +0.1% | +0.0502% | +0.0411% | −2.3185% | −2.3004% | 16/16 |
-| vs. FFS 40.1, AutoTrim on | +0.1% | +0.0849% | +0.0973% | −2.3149% | −2.2962% | 16/16 |
+| AutoTrim on vs. off, unsupported device | +0.5% | +0.0460% | +0.0663% | +0.0389% | +0.0424% | 12/12 |
+| AutoTrim on vs. off, cold supported device | +0.5% | +0.0466% | +0.0534% | +0.0385% | +0.0420% | 12/12 |
+| AutoTrim on vs. off, warm supported device | +0.5% | +0.0480% | +0.0549% | +0.0426% | +0.0418% | 12/12 |
+| vs. FFS 40.1, AutoTrim off | +0.1% | −0.0058% | −0.0095% | −2.3593% | −2.3240% | 16/16 |
+| vs. FFS 40.1, AutoTrim on | +0.1% | +0.0446% | +0.0468% | −2.3562% | −2.3299% | 16/16 |
 
-Updating a comment includes only its length byte and payload in the new
-checksum contribution, rounded to a whole word. The rest of the field is
-cleared, and the checksum still removes every word of the old field.
-With AutoTrim enabled, the FFS mixed-mutation mean fell by about 500 guest
-cycles in both memory placements from the previous defaults recheck.
-Each placement still used 10 reads, 50 writes and one flush. The previous
-recheck measured +0.1003% and +0.1014% against FFS 40.1. An independent repeat
-of the new build measured +0.0856% in Fast RAM and +0.0942% in Chip RAM.
+The standalone handler loads and stores the 32-bit file size directly.
+Supported wide seek packets still use the quadword packet ABI. With AutoTrim
+enabled, FFS mixed mutation used about 6,600 fewer guest cycles in each
+placement than the run for commit `e34398f`. Both builds issued 10 reads,
+50 writes and one flush in each placement. Chip RAM headroom against the
++0.1% limit grew from 0.0027 to 0.0532 percentage points. The integrated
+builds reproduced the previously qualified binaries byte for byte. A
+preceding focused check on those binaries measured +0.0463% in Fast RAM
+and +0.0370% in Chip RAM.
+
+The preceding comment-checksum change limits the new checksum contribution
+to the length byte and payload, rounded to a whole word. It reduced mixed
+mutation by about 500 cycles in each placement and passed at +0.0849% in
+Fast RAM and +0.0973% in Chip RAM.
+
 The plain `-Ffs` build issued zero SCSI commands in all 36 warm-device runs.
 Each enabled warm run completed one UNMAP during warmup.
 
@@ -78,16 +85,16 @@ service used one read, two writes, one flush and five SCSI commands.
 
 | Format | Foreground cycles | Service cycles | Longest turn | Reclaimed bytes |
 | --- | ---: | ---: | ---: | ---: |
-| FFS | 62,620 | 118,178 | 62,983 | 33,280 |
-| OFS | 58,400 | 120,284 | 63,138 | 35,328 |
+| FFS | 58,110 | 117,076 | 61,805 | 33,280 |
+| OFS | 58,460 | 120,414 | 63,183 | 35,328 |
 
-Combined foreground and service took 180,798 cycles on FFS and 178,684 on
+Combined foreground and service took 175,186 cycles on FFS and 178,874 on
 OFS, down from 666,069 and 2,471,083 in the initial audit. With capabilities
-already cached, service took 98,005 cycles on FFS and 101,344 on OFS.
+already cached, service took 98,018 cycles on FFS and 101,347 on OFS.
 Original-handler readback passed after discarded sectors were poisoned.
 Physical controller and SSD latency remain unmeasured.
 
-The Release solution build passed and its tests recorded 2,901 passes
+The Release solution build passed and its tests recorded 2,902 passes
 and ten skips, including all 445 OFS/FFS core cases. The standalone
 build reproduced both qualified 68000 binaries and reported zero reachable
 managed allocation sites. The earlier owned SFS2 standalone build passed

@@ -1220,10 +1220,17 @@ public static partial class NativeAmigaFileSystem
     // File-only high words reuse space occupied by directory-lock enumeration.
     // The public FileLock at 20..39 and the classic read cursor at 56..87 stay intact.
     private const int FileSizeHigh = 88, FilePositionHigh = 92;
+#if COPPERFS_FFS_HANDLER
+    // Classic file headers store a 32-bit size. Wide packets still validate
+    // their inputs and return a quadword through the common packet API.
+    private static ulong FileSize(APTR file) => APTR.ReadUInt32(file, 8);
+    private static void SetFileSize(APTR file, ulong size) => APTR.WriteUInt32(file, 8, (uint)size);
+#else
     private static ulong FileSize(APTR file) => ((ulong)APTR.ReadUInt32(file, FileSizeHigh) << 32) | APTR.ReadUInt32(file, 8);
-    private static ulong FilePosition(APTR file) => ((ulong)APTR.ReadUInt32(file, FilePositionHigh) << 32) | APTR.ReadUInt32(file, 12);
     private static void SetFileSize(APTR file, ulong size)
     { APTR.WriteUInt32(file, 8, (uint)size); APTR.WriteUInt32(file, FileSizeHigh, (uint)(size >> 32)); }
+#endif
+    private static ulong FilePosition(APTR file) => ((ulong)APTR.ReadUInt32(file, FilePositionHigh) << 32) | APTR.ReadUInt32(file, 12);
     private static void SetFilePosition(APTR file, ulong position)
     { APTR.WriteUInt32(file, 12, (uint)position); APTR.WriteUInt32(file, FilePositionHigh, (uint)(position >> 32)); }
 
