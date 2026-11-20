@@ -142,7 +142,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
     }
     private void Stamp(uint p,uint type,uint sector,uint owner,uint gen)
     {
-        m.Write32(p,PackedMagic); m.Write16(p+4,1); m.Write16(p+6,type); m.Write32(p+12,sector); m.Write32(p+16,gen); m.Write32(p+20,owner);
+        m.Write32(p,PackedMagic); if(type!=30) m.Write16(p+4,1); m.Write16(p+6,type); m.Write32(p+12,sector); m.Write32(p+16,gen); m.Write32(p+20,owner);
         m.Write32(p+24,R(IdentityHi)); m.Write32(p+28,R(IdentityLo));
         // Root stamping touches the header and counts. Bitmap decoding also
         // rewrites the virtual header and window base in the first 68 bytes.
@@ -156,13 +156,13 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(type==34) { W(BitmapChanges,0); m.Copy(Arena+BitmapImage,p,512); W(BitmapProof,owner+1); }
         if(type==30||type==32) RememberPage(p,type==30?sector:2u);
     }
-    private bool RootValid(uint p,uint bank)=>m.Read32(p)==PackedMagic&&m.Read16(p+4)==1&&m.Read16(p+6)==30&&m.Read32(p+12)==bank&&
+    private bool RootValid(uint p,uint bank)=>m.Read32(p)==PackedMagic&&m.Read16(p+4) is 1 or 2&&m.Read16(p+6)==30&&m.Read32(p+12)==bank&&
         (m.Read32(p+16)&1)==bank&&m.Read32(p+20)==0&&m.Read32(p+64)==R(Blocks)&&m.Read32(p+68)==1394&&
-        m.Read32(p+72)<=R(Blocks)-1394&&m.Read32(p+76) is >=1 and <=1023&&CheckPageCrc(p,30,bank);
+        m.Read32(p+72)<=R(Blocks)-1394&&m.Read32(p+76) is >=1 and <=1023&&m.Read32(p+88)<=m.Read32(p+76)&&m.Read32(p+88)!=1&&(m.Read16(p+4)==2||m.Read32(p+88)==0)&&CheckPageCrc(p,30,bank);
     private StepResult SelectRoot(uint p)
     {
         bool first=RootValid(p,0),second=RootValid(p+512,1);
-        if(!first&&!second||first&&second&&(m.Read32(p+24)!=m.Read32(p+536)||m.Read32(p+28)!=m.Read32(p+540))) return Fatal();
+        if(!first&&!second||first&&second&&(m.Read16(p+4)!=m.Read16(p+516)||m.Read32(p+24)!=m.Read32(p+536)||m.Read32(p+28)!=m.Read32(p+540))) return Fatal();
         uint bank=second&&(!first||m.Read32(p+528)>m.Read32(p+16))?1u:0;
         p+=bank*512; W(BitmapProof,0); W(RootChanges,0); m.Copy(Root(),p,512); W(DataFloor,1394); W(Bank,bank); W(Generation,m.Read32(p+16));
         W(IdentityHi,m.Read32(p+24)); W(IdentityLo,m.Read32(p+28)); Zero(Arena+State+RawKeys,12);
@@ -184,6 +184,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(left<24) return false;
         uint id=m.Read16(rec),kind=m.Read8(rec+2),len=m.Read16(rec+4),count=m.Read8(rec+3),size=m.Read32(rec+8);
         if(id<=previous||id>=1024||(id>>4)!=group||count>8||len<24||len>left||len>216||(len&3)!=0||m.Read16(rec+6) is 0 or >=1024) return false;
+        if(kind==12) return ReusableIds()&&id!=1&&len==24&&count==0&&size==0&&m.Read16(rec+6)==1&&ValidNextHole(id,m.Read32(rec+12),m.Read32(Root()+76));
         if(kind==10) return len==24&&(count==0?size==0&&m.Read16(rec+18)==0:size!=0&&ExtentOK(m.Read16(rec+16),m.Read16(rec+18)));
         if(kind!=11||size!=0) return false;
         uint at=24,entries=0;
@@ -216,7 +217,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if(home==128||home==129) {
                     if(home==129) Zero(p,512); Header(p,home==128?3u:5u,home,m.Read32(state+Generation)); uint last=m.Read32(root+76);
                     if(home==129) SetRange(p+128,0,last+1,true);
-                    else { m.Write32(p+64,m.Read32(state+Blocks)); m.Write32(p+68,1394); m.Write32(p+72,m.Read32(root+72)); m.Write32(p+80,1023-last); m.Write32(p+88,m.Read32(root+80)); m.Write32(p+92,m.Read32(root+84)); }
+                    else { m.Write32(p+64,m.Read32(state+Blocks)); m.Write32(p+68,1394); m.Write32(p+72,m.Read32(root+72)); m.Write32(p+80,1023-last); m.Write32(p+84,m.Read32(root+88)); m.Write32(p+88,m.Read32(root+80)); m.Write32(p+92,m.Read32(root+84)); }
                     return LoadedPacked(); }
                 if(home is >=130 and <=161) { uint index=home-130,sector=m.Read16(root+96+index*2); if(!Pair(sector,2+index*2)) return Fatal(); return Issue(IoKind.Read,sector,p,512,1101); }
                 if(id==0||id>m.Read32(root+76)) return Fatal();
@@ -297,8 +298,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     uint slot=m.Read8(Arena+DirtySlots+index),entry=Arena+CacheMeta+(slot<<5);
                     uint home=m.Read32(entry),p=Image(slot); m.Write32(state+Index,index+1);
                     if(home is >=2000 and <2256) return WriteCommentPage(home,p,gen);
-                    if(!ValidHomeType(p,home)) return Fatal();
-                    if(home==128) { m.Write32(root+72,m.Read32(p+72)); m.Write32(root+76,1023-m.Read32(p+80)); m.Write32(root+80,m.Read32(p+88)); m.Write32(root+84,m.Read32(p+92)); }
+                    if(!ValidHomeType(p,home)&&!(ReusableIds()&&home>=258&&home<1280&&ValidHole(p,home-256,1023))) return Fatal();
+                    if(home==128) { m.Write32(root+72,m.Read32(p+72)); m.Write32(root+76,1023-m.Read32(p+80)); m.Write32(root+80,m.Read32(p+88)); m.Write32(root+84,m.Read32(p+92)); m.Write32(root+88,m.Read32(p+84)); }
                     else if(home is >=130 and <=161) { uint map=home-130,pointer=root+96+map*2,sector=Alternate(m.Read16(pointer),2+map*2);
                         m.Copy(output,p,512); Stamp(output,34,sector,map,gen); RootPointer(pointer,sector); return Issue(IoKind.Write,sector,output,512,1201); }
                     else if(home>256) { uint key=(home-256)>>4; if(m.Read8(Arena+SeenGroups+key)==0) { uint n=m.Read32(state+BucketListCount); m.Write8(Arena+SeenGroups+key,1); m.Write8(Arena+GroupQueue+n,(byte)key); m.Write32(state+BucketListCount,n+1); } }

@@ -1,0 +1,907 @@
+{
+  "sourceBase": "513c89d655cb116634bb84e4072088e3b6b95c54",
+  "handlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+  "compilerCliSha256": "37686F82FD519FE27651CE32B27305280371A5E957DF01867479B23384DFE8C6",
+  "updatedHandlerSources": [
+    {
+      "Path": "prototypes\\CopperNova.Native\\NativeNovaHandler.cs",
+      "Sha256": "6DFB305A813C9870A061A57F4A26D8AFE71C82226020DF34F56B705EB46B273D"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Attributes.cs",
+      "Sha256": "4C11B5624F388E433A598CE5AD87298D9F1504FE00FB2E639D7ADFC4452B6E36"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.cs",
+      "Sha256": "E86547853ABD179D804D1852BA36F707A142C91BDA4312BD5F9EEA70BEFC7523"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Data.cs",
+      "Sha256": "1588158244C7E26134A1D3DF85B39C313C68F5FE69A2884B110AC71ADDC959DB"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Namespace.cs",
+      "Sha256": "DF472304D3E4C73A104A4298CC0943AB79E2F599B9F293B8FDD1B7C90057D839"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Packed.cs",
+      "Sha256": "811E7BD8136400CE28FDD49FD674A57877678C2B6C214D3777FD4B50595E544A"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Packets.cs",
+      "Sha256": "330DD1A2C10ED21DD953D18B51D68ECEAE1B542474908F25540EBE1E89431AC3"
+    },
+    {
+      "Path": "prototypes\\CopperNova.Prototype\\NovaEngine.Persistence.cs",
+      "Sha256": "B06F7E4EBB771999589061E581654EE959945824430B7F5FA549A903E1B33D26"
+    }
+  ],
+  "rdb": {
+    "HandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+    "RomSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+    "WorkbenchSha256": "A8F167BAD2897E8C7F2CFE73DE7A9F8DAD10C7A5B1F78CA17F818AB17278B985",
+    "ProbeSha256": "7A3D826448BE3F50124D2553AF769BCDB6A0222617F791C01D2EA9FB214513D6",
+    "Cpu": "68000",
+    "PartitionOffset": 131072,
+    "PhysicalHardware": false,
+    "Boots": [
+      {
+        "marker": 210,
+        "CompletedFrames": 2431,
+        "Reads": 331,
+        "Writes": 5,
+        "Barriers": 2
+      },
+      {
+        "marker": 211,
+        "CompletedFrames": 2351,
+        "Reads": 331,
+        "Writes": 0,
+        "Barriers": 0
+      }
+    ]
+  },
+  "stackAndAllocation": {
+    "ordinary": {
+      "Passed": true,
+      "PartialPacketCoverage": true,
+      "Cpu": "MC68000",
+      "ChipRamBytes": 524288,
+      "FastRamBytes": 0,
+      "HandlerTaskStackBytes": 4096,
+      "Peak": 768,
+      "Lower": 165548,
+      "Upper": 169644,
+      "GuardIntact": true,
+      "StartupAllocations": 10,
+      "OperationAllocations": 0,
+      "LargestStartupAllocMemRequest": 115200,
+      "ShutdownBarriers": 2,
+      "Stage": 0,
+      "DosError": 0,
+      "Frames": 580,
+      "HostSeconds": 5.6355379,
+      "HandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+      "ProbeSha256": "3D7ED95BC65F07EF220C7B89501D6BBC5DC455C2F58A1F1FE2DE6122EB5B5129",
+      "SourceInputsMatched": true,
+      "ManagedAllocationSites": 0,
+      "IndependentOwnershipAndShutdownPayloadVerified": true
+    },
+    "fragmented": {
+      "Passed": true,
+      "PartialPacketCoverage": true,
+      "Cpu": "MC68000",
+      "ChipRamBytes": 524288,
+      "FastRamBytes": 0,
+      "HandlerTaskStackBytes": 4096,
+      "Peak": 768,
+      "Lower": 166628,
+      "Upper": 170724,
+      "GuardIntact": true,
+      "StartupAllocations": 10,
+      "OperationAllocations": 0,
+      "LargestStartupAllocMemRequest": 115200,
+      "ShutdownBarriers": 2,
+      "Stage": 0,
+      "DosError": 0,
+      "Frames": 621,
+      "HostSeconds": 7.4527097,
+      "HandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+      "ProbeSha256": "6312663487BEA9B1F6DF335FC4326C42FD775E3C0E0FB5CC3AE9AB93E3AB05C1",
+      "SourceInputsMatched": true,
+      "ManagedAllocationSites": 0,
+      "IndependentOwnershipAndShutdownPayloadVerified": true
+    },
+    "namespace": {
+      "Passed": true,
+      "PartialPacketCoverage": true,
+      "NamespaceOperations": true,
+      "Cpu": "MC68000",
+      "ChipRamBytes": 524288,
+      "FastRamBytes": 0,
+      "HandlerTaskStackBytes": 4096,
+      "Peak": 768,
+      "Lower": 166100,
+      "Upper": 170196,
+      "GuardIntact": true,
+      "StartupAllocations": 10,
+      "OperationAllocations": 0,
+      "LargestStartupAllocMemRequest": 115200,
+      "ShutdownBarriers": 2,
+      "Stage": 0,
+      "DosError": 0,
+      "Frames": 607,
+      "HostSeconds": 29.7489091,
+      "HandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+      "ProbeSha256": "D7379EAD4BC793975577E1BD8AD48AB6BD947484BA26BDF45D4DD33B55DB3E3E",
+      "SourceInputsMatched": true,
+      "ManagedAllocationSites": 0,
+      "IndependentOwnershipAndShutdownPayloadVerified": true
+    }
+  },
+  "packetReplays": [
+    "quick-read",
+    "quick-write",
+    "quick-flush",
+    "short",
+    "device-error",
+    "deferred",
+    "deferred-short",
+    "deferred-error",
+    "deferred-cancel",
+    "stale-token",
+    "dma-bounce",
+    "max-transfer-split"
+  ],
+  "copperStartInstructionReplays": [
+    {
+      "suite": "copperstart.floppy.native.tests.dll",
+      "total": 169,
+      "passed": 169,
+      "failed": 0,
+      "notExecuted": 0
+    }
+  ],
+  "solutionTests": [
+    {
+      "suite": "coppercpx.core.tests.dll",
+      "total": 756,
+      "passed": 756,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "coppernova.tests.dll",
+      "total": 47,
+      "passed": 47,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "copperfs.prototype.tests.dll",
+      "total": 77,
+      "passed": 77,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "copperfs.amiga.tests.dll",
+      "total": 18,
+      "passed": 18,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "copperfs.storagebench.tests.dll",
+      "total": 32,
+      "passed": 32,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "copperffs.core.tests.dll",
+      "total": 445,
+      "passed": 445,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "coppercpx.instructiontests.dll",
+      "total": 146,
+      "passed": 139,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "coppersfs.core.tests.dll",
+      "total": 1393,
+      "passed": 1390,
+      "failed": 0,
+      "notExecuted": 0
+    },
+    {
+      "suite": "copperfs.prototype.instructiontests.dll",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "notExecuted": 0
+    }
+  ],
+  "finalCnp2HostTests": [
+    {
+      "suite": "coppernova.tests.dll",
+      "total": 48,
+      "passed": 48,
+      "failed": 0,
+      "notExecuted": 0
+    }
+  ],
+  "physicalHardwareTest": "Pending a designated rig, disposable medium and power control.",
+  "comparison": [
+    {
+      "machine": "Kickstart 3.1, 68000, 512 KiB Chip, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+      "workload": "Create directory; write 8 KiB; two partial overwrites; truncate to 6003 twice; close and rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+      "inputs": {
+        "CandidatePackedRootVersion": 2,
+        "PrototypeHandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+        "BaselinePrototypeHandlerSha256": "13C1C0BC682A3EE35FD3DA8C791AE6ABEA3E296F02E0B8884AAC09CB534C4D09",
+        "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+        "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+        "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+        "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+        "ProbeSha256": "6B6AF87EB23DA47DDE2A7FBCBF5DFD8525D7B9EDB896FCE0E07157F42B6CFD83",
+        "DiskBytes": 16777216,
+        "SectorBytes": 512
+      },
+      "arms": [
+        {
+          "name": "Qualified CNP2",
+          "mutationPlusFlush": 3983805,
+          "remount": 134435,
+          "total": 6802710
+        },
+        {
+          "name": "CopperNova prototype",
+          "mutationPlusFlush": 3966825,
+          "remount": 154065,
+          "total": 6807390
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "mutationPlusFlush": 4021020,
+          "remount": 176565,
+          "total": 6895845
+        }
+      ],
+      "trials": [
+        {
+          "name": "Qualified CNP2",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 3841310,
+            "flushCycles": 142450,
+            "remountCycles": 134430,
+            "verifyCycles": 2684560
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "E47FF2DABEE3AB4486ADBE4A17C18F56A8E46CE60B0BB10AE580B84580E40FF1",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 3826550,
+            "flushCycles": 140640,
+            "remountCycles": 154080,
+            "verifyCycles": 2686500
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "308249F3E2318F5C7DDA6D7B3E2C7E2ED5720D1B49AB3D9F354747DF87AA7028",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 3994460,
+            "flushCycles": 26570,
+            "remountCycles": 176570,
+            "verifyCycles": 2698270
+          },
+          "reads": 37,
+          "writes": 17,
+          "barriers": 2,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "5158C0117407892A458F4455DE00D3806DB44EE5E62664734A5B4081E2F9AF52",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 3994430,
+            "flushCycles": 26580,
+            "remountCycles": 176560,
+            "verifyCycles": 2698250
+          },
+          "reads": 37,
+          "writes": 17,
+          "barriers": 2,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "44363FC31AF2E06DDE784FE5D673B076779180D1B1AA1816D611F148B5413B30",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 3825800,
+            "flushCycles": 140660,
+            "remountCycles": 154050,
+            "verifyCycles": 2686500
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "308249F3E2318F5C7DDA6D7B3E2C7E2ED5720D1B49AB3D9F354747DF87AA7028",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Qualified CNP2",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 3841380,
+            "flushCycles": 142470,
+            "remountCycles": 134440,
+            "verifyCycles": 2684380
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "E47FF2DABEE3AB4486ADBE4A17C18F56A8E46CE60B0BB10AE580B84580E40FF1",
+          "passed": true,
+          "independentCheck": true
+        }
+      ]
+    },
+    {
+      "machine": "Kickstart 3.1, 68000, 512 KiB Chip, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+      "workload": "32 writes of 64 KiB (2 MiB); two partial overwrites; no-op truncates; rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+      "inputs": {
+        "CandidatePackedRootVersion": 2,
+        "PrototypeHandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+        "BaselinePrototypeHandlerSha256": "13C1C0BC682A3EE35FD3DA8C791AE6ABEA3E296F02E0B8884AAC09CB534C4D09",
+        "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+        "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+        "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+        "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+        "ProbeSha256": "1BA2E2DB0A4610FA926463E91AAB59E0C02AB7B051E5AE4D22D2AB6DB137699D",
+        "DiskBytes": 16777216,
+        "SectorBytes": 512
+      },
+      "arms": [
+        {
+          "name": "Qualified CNP2",
+          "mutationPlusFlush": 2261640,
+          "remount": 136425,
+          "total": 1100697800
+        },
+        {
+          "name": "CopperNova prototype",
+          "mutationPlusFlush": 2266335,
+          "remount": 137150,
+          "total": 1100865840
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "mutationPlusFlush": 3619140,
+          "remount": 179030,
+          "total": 1103620260
+        }
+      ],
+      "trials": [
+        {
+          "name": "Qualified CNP2",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 2034440,
+            "flushCycles": 227800,
+            "remountCycles": 136420,
+            "verifyCycles": 1098300100
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "CEBE048F909A00B65D487E538DE3E1E6209F7FCB8A7A4CCC6F3EF15E8C8D18B6",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 2033560,
+            "flushCycles": 233350,
+            "remountCycles": 137140,
+            "verifyCycles": 1098462930
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "695A79E3C1602CB344A086AD78B7661DE624A1C2B44C507CDAF8E9C485E013C8",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 3587340,
+            "flushCycles": 32320,
+            "remountCycles": 179070,
+            "verifyCycles": 1099822520
+          },
+          "reads": 155,
+          "writes": 136,
+          "barriers": 34,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "55197C30519877510C3210D396603B3F8E34A29FA68FC01FBA63294F26BD82C2",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 3586280,
+            "flushCycles": 32340,
+            "remountCycles": 178990,
+            "verifyCycles": 1099821660
+          },
+          "reads": 155,
+          "writes": 136,
+          "barriers": 34,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "03C38947A748CF8CD45BBE9854CED422A535AA88DB7CC9344CC82946B4B7D459",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 2032370,
+            "flushCycles": 233390,
+            "remountCycles": 137160,
+            "verifyCycles": 1098461780
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "695A79E3C1602CB344A086AD78B7661DE624A1C2B44C507CDAF8E9C485E013C8",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Qualified CNP2",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 2033220,
+            "flushCycles": 227820,
+            "remountCycles": 136430,
+            "verifyCycles": 1098299370
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "CEBE048F909A00B65D487E538DE3E1E6209F7FCB8A7A4CCC6F3EF15E8C8D18B6",
+          "passed": true,
+          "independentCheck": true
+        }
+      ]
+    },
+    {
+      "machine": "Kickstart 3.1, 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+      "workload": "Create directory; write 8 KiB; two partial overwrites; truncate to 6003 twice; close and rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+      "inputs": {
+        "CandidatePackedRootVersion": 2,
+        "PrototypeHandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+        "BaselinePrototypeHandlerSha256": "13C1C0BC682A3EE35FD3DA8C791AE6ABEA3E296F02E0B8884AAC09CB534C4D09",
+        "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+        "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+        "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+        "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+        "ProbeSha256": "0984E37B49A652D20E62ED24A524713C228E1071B8422A5676A78E177C0AD5B1",
+        "DiskBytes": 16777216,
+        "SectorBytes": 512
+      },
+      "arms": [
+        {
+          "name": "Qualified CNP2",
+          "mutationPlusFlush": 1680165,
+          "remount": 86540,
+          "total": 2740500
+        },
+        {
+          "name": "CopperNova prototype",
+          "mutationPlusFlush": 1682565,
+          "remount": 105605,
+          "total": 2760645
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "mutationPlusFlush": 1703580,
+          "remount": 108980,
+          "total": 2782275
+        },
+        {
+          "name": "SmartFilesystem 1.279",
+          "mutationPlusFlush": 2650665,
+          "remount": 218815,
+          "total": 3931355
+        }
+      ],
+      "trials": [
+        {
+          "name": "Qualified CNP2",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 1586690,
+            "flushCycles": 93770,
+            "remountCycles": 86540,
+            "verifyCycles": 973940
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "E47FF2DABEE3AB4486ADBE4A17C18F56A8E46CE60B0BB10AE580B84580E40FF1",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 1592790,
+            "flushCycles": 90040,
+            "remountCycles": 106390,
+            "verifyCycles": 972640
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "308249F3E2318F5C7DDA6D7B3E2C7E2ED5720D1B49AB3D9F354747DF87AA7028",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 1683090,
+            "flushCycles": 20440,
+            "remountCycles": 108980,
+            "verifyCycles": 969670
+          },
+          "reads": 37,
+          "writes": 17,
+          "barriers": 2,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "A5870AB290B053BF655F9F9C50509012F0302A5182DCD5F940D8CCB0EBDC26B0",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "SmartFilesystem 1.279",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 2499840,
+            "flushCycles": 161320,
+            "remountCycles": 218840,
+            "verifyCycles": 1064170
+          },
+          "reads": 8,
+          "writes": 7,
+          "barriers": 4,
+          "initial": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "final": "599728E51D4A81F9C3987940EFC3E89D455B57D6522F9AAA04451696957B1A97",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "SmartFilesystem 1.279",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 2478940,
+            "flushCycles": 161230,
+            "remountCycles": 218790,
+            "verifyCycles": 1059580
+          },
+          "reads": 8,
+          "writes": 7,
+          "barriers": 4,
+          "initial": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "final": "8F2FB3775EBA55CF0C7C12A7AD506A7D57017793A4E3E69ADF73DDE568F59F61",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 1683150,
+            "flushCycles": 20480,
+            "remountCycles": 108980,
+            "verifyCycles": 969760
+          },
+          "reads": 37,
+          "writes": 17,
+          "barriers": 2,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "4C96E69D6528B40D98905BBB5B9CAA7956DB84BC1872B0B26F3C1DB7EC9A5EC2",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 1592310,
+            "flushCycles": 89990,
+            "remountCycles": 104820,
+            "verifyCycles": 972310
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "308249F3E2318F5C7DDA6D7B3E2C7E2ED5720D1B49AB3D9F354747DF87AA7028",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Qualified CNP2",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 1586110,
+            "flushCycles": 93760,
+            "remountCycles": 86540,
+            "verifyCycles": 973650
+          },
+          "reads": 9,
+          "writes": 7,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "E47FF2DABEE3AB4486ADBE4A17C18F56A8E46CE60B0BB10AE580B84580E40FF1",
+          "passed": true,
+          "independentCheck": true
+        }
+      ]
+    },
+    {
+      "machine": "Kickstart 3.1, 68020, 512 KiB Chip + 2 MiB Fast, 512-byte sectors, 16 MiB hardfile, 32 DOS buffers",
+      "workload": "32 writes of 64 KiB (2 MiB); two partial overwrites; no-op truncates; rename; second file; ACTION_FLUSH; remount; complete read/verify.",
+      "inputs": {
+        "CandidatePackedRootVersion": 2,
+        "PrototypeHandlerSha256": "34B39A69125EC0756023FC2ACCBA64FF8AB4D43EFEAAFD5A69F96AC0EF8F851F",
+        "BaselinePrototypeHandlerSha256": "13C1C0BC682A3EE35FD3DA8C791AE6ABEA3E296F02E0B8884AAC09CB534C4D09",
+        "FfsHandlerSha256": "9992D843E3936EF81F92311404BCA557E3727DA3A10F39B586B94B02921B3773",
+        "Sfs1279HandlerSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+        "KickstartSha256": "8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE",
+        "SfsBaseSha256": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+        "ProbeSha256": "31AF34F1FF54A5AB4EBFF9D74C612C3BA00CB20C845DEB8947896E619656F906",
+        "DiskBytes": 16777216,
+        "SectorBytes": 512
+      },
+      "arms": [
+        {
+          "name": "Qualified CNP2",
+          "mutationPlusFlush": 1434975,
+          "remount": 86685,
+          "total": 365843240
+        },
+        {
+          "name": "CopperNova prototype",
+          "mutationPlusFlush": 1425740,
+          "remount": 91690,
+          "total": 365854775
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "mutationPlusFlush": 2131100,
+          "remount": 114995,
+          "total": 367442535
+        },
+        {
+          "name": "SmartFilesystem 1.279",
+          "mutationPlusFlush": 4747000,
+          "remount": 215010,
+          "total": 369873970
+        }
+      ],
+      "trials": [
+        {
+          "name": "Qualified CNP2",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 1294490,
+            "flushCycles": 140560,
+            "remountCycles": 86690,
+            "verifyCycles": 364321630
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "CEBE048F909A00B65D487E538DE3E1E6209F7FCB8A7A4CCC6F3EF15E8C8D18B6",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 1285700,
+            "flushCycles": 140070,
+            "remountCycles": 91700,
+            "verifyCycles": 364337550
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "695A79E3C1602CB344A086AD78B7661DE624A1C2B44C507CDAF8E9C485E013C8",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 2110560,
+            "flushCycles": 20350,
+            "remountCycles": 114970,
+            "verifyCycles": 365196610
+          },
+          "reads": 155,
+          "writes": 136,
+          "barriers": 34,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "D6FE63ADC4A3BAD2EF26C09E5826370C7D4412BA888256BDA2FAA1E2613A735F",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "SmartFilesystem 1.279",
+          "trial": 1,
+          "phaseCycles": {
+            "mutationCycles": 4572680,
+            "flushCycles": 174270,
+            "remountCycles": 215010,
+            "verifyCycles": 364911940
+          },
+          "reads": 38,
+          "writes": 38,
+          "barriers": 4,
+          "initial": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "final": "A403370E839FD96694BF1916C94BA68D985D8F0E601F8DDD8A78A1074B3804AB",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "SmartFilesystem 1.279",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 4572780,
+            "flushCycles": 174270,
+            "remountCycles": 215010,
+            "verifyCycles": 364911980
+          },
+          "reads": 38,
+          "writes": 38,
+          "barriers": 4,
+          "initial": "18170E0D35A5307AA29F17751B50BC848EB7B47211EB76FC1A88E95091409137",
+          "final": "19B49462A7180FF3DC5C30DF89C0866A98C795446D3853EFF56047BF268A8898",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Kickstart FFS 40.1",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 2110920,
+            "flushCycles": 20370,
+            "remountCycles": 115020,
+            "verifyCycles": 365196270
+          },
+          "reads": 155,
+          "writes": 136,
+          "barriers": 34,
+          "initial": "42A014081CE95E4104EC35C25D4CEB83EF6B7B9737A92B2C2F40C26A1E7BF618",
+          "final": "24A25C4D00EF7A0E4F85B098A5BAF898906FBA4C9C9D8164CBC19A9A9F785FE4",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "CopperNova prototype",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 1285690,
+            "flushCycles": 140020,
+            "remountCycles": 91680,
+            "verifyCycles": 364337140
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "40328C1A8FDEA7098C9A5039F4AB217043F99528977D6037B5B81F756014ECE0",
+          "final": "695A79E3C1602CB344A086AD78B7661DE624A1C2B44C507CDAF8E9C485E013C8",
+          "passed": true,
+          "independentCheck": true
+        },
+        {
+          "name": "Qualified CNP2",
+          "trial": 2,
+          "phaseCycles": {
+            "mutationCycles": 1294590,
+            "flushCycles": 140310,
+            "remountCycles": 86680,
+            "verifyCycles": 364321530
+          },
+          "reads": 41,
+          "writes": 40,
+          "barriers": 3,
+          "initial": "AD987C1C4FBC324A854CE7387F8F44B49C1F7F2C2E7F92663CA4E74BD1BA9C68",
+          "final": "CEBE048F909A00B65D487E538DE3E1E6209F7FCB8A7A4CCC6F3EF15E8C8D18B6",
+          "passed": true,
+          "independentCheck": true
+        }
+      ]
+    }
+  ],
+  "benchmarkSources": [
+    {
+      "path": "tools/CopperNova.Bench/Program.cs",
+      "sha256": "48EA67F060FEB8D269D05F0A740A8CF5A17EF693BA589B7633C410CD77E03F08"
+    },
+    {
+      "path": "tools/CopperCPX.Bench/MixedProbe.cs",
+      "sha256": "87E3172411145F5E420C46213295D1956202F1B993425F9220A575152F7E0C50"
+    },
+    {
+      "path": "tools/CopperCPX.Bench/StreamingProbe.cs",
+      "sha256": "29563A98356E254FD8F265E2E552EC8DE1D22D9691E82205F6025C18B6222CBA"
+    },
+    {
+      "path": "build/Benchmark-NovaPrototype.ps1",
+      "sha256": "269754E93C759F722A0C5FEDBA18028B068BF8E75730A912FE7F3C7288D86AB0"
+    }
+  ],
+  "benchmarkRunnerSha256": "87B6F57243D3EB4D0C5339711E9B6BB6052C1D97A4D45A5027C1B865342F6D7E",
+  "finalSolutionBuild": {
+    "configuration": "Release net10.0",
+    "warnings": 0,
+    "errors": 0
+  },
+  "solutionCoverage": "Nine test assemblies completed. All CNP2 tests also reran on final source."
+}

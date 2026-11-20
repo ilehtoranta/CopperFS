@@ -11,6 +11,10 @@ using CopperSharp.Compiler;
 using CopperSharp.Compiler.BootAdf;
 using CopperSharp.Targets.Amiga;
 
+if(args.Length==4 && args[0]=="prepare-workbench") { await WorkbenchGate.Prepare(args[1],args[2],args[3]); return; }
+if(args.Length==2 && args[0]=="check-workbench") { using var disk=File.OpenRead(args[1]); WorkbenchGate.Verify(disk); Console.WriteLine("Readback ownership and payload verified."); return; }
+if(args.Length==5 && args[0]=="workbench") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4]); return; }
+
 if(args.Length!=3) throw new ArgumentException("Usage: CopperNova.Qualification <handler> <ROM> <output directory>");
 string handler=Path.GetFullPath(args[0]),rom=Path.GetFullPath(args[1]),root=Path.GetFullPath(args[2]);
 Directory.CreateDirectory(Path.Combine(root,"boot","S"));
@@ -20,15 +24,17 @@ string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes));
 if(Hash(File.ReadAllBytes(handler))!=manifest.GetProperty("HunkSha256").GetString()) throw new InvalidDataException("Handler hash mismatch");
 foreach(var source in manifest.GetProperty("Sources").EnumerateArray())
     if(Hash(File.ReadAllBytes(Path.Combine(repo,source.GetProperty("Path").GetString()!)))!=source.GetProperty("Sha256").GetString()) throw new InvalidDataException("Source mismatch");
+bool namespaceGate=Environment.GetEnvironmentVariable("NOVA_NAMESPACE")=="1";
 var compiled=AmigaM68kCompiler.Compile(new M68kCompilationRequest {
-    AssemblyPath=typeof(NovaGateProbe).Assembly.Location,EntryPoint="NovaGateProbe::Entry",Cpu=M68kCpuTarget.M68000,
+    AssemblyPath=typeof(NovaGateProbe).Assembly.Location,EntryPoint=namespaceGate?"NovaGateProbe::NamespaceEntry":"NovaGateProbe::Entry",Cpu=M68kCpuTarget.M68000,
     OutputFormat=M68kOutputFormat.Hunk,RuntimeProfile=M68kRuntimeProfile.Application,ExceptionMode=M68kExceptionMode.Full,IncludedExportNames=[] });
 if(!compiled.FrameworkAnalysis.IsCompatible||compiled.FrameworkAnalysis.ManagedAllocationSites.Count!=0) throw new InvalidOperationException("Incompatible gate probe");
 File.WriteAllBytes(Path.Combine(root,"boot","PROBE"),compiled.Image); File.Copy(handler,Path.Combine(root,"boot","HANDLER"),true);
 File.WriteAllText(Path.Combine(root,"boot","S","startup-sequence"),"PROBE\n");
 byte[] boot=await FileSystemAdf.CreateAsync(Path.Combine(root,"boot"),"NovaPrototypeGate");
 bool packed=Environment.GetEnvironmentVariable("NOVA_PACKED")=="1";
-string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,packed?NovaImage.FormatPacked():NovaImage.Format());
+if(namespaceGate&&!packed) throw new ArgumentException("The namespace probe requires NOVA_PACKED=1");
+string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,packed?NovaImage.FormatPacked(16*1024*1024,reusableObjects:namespaceGate):NovaImage.Format());
 var hook=new Storage();
 bool done=false,failed=false; uint control=0,pointer=0; int octets=0,shutdownBefore=-1,shutdownAfter=-1;
 using(var machine=new LightweightA500Machine(new() {
@@ -53,7 +59,7 @@ using(var machine=new LightweightA500Machine(new() {
     for(int frame=0;frame<20000&&!done&&!failed&&watch.Elapsed<TimeSpan.FromMinutes(8);frame++) sampler.Frame();
     var receipt=new {
         Passed=done&&!failed&&sampler.GuardIntact&&sampler.Peak is >0 and <=4096&&sampler.OperationAllocations==0&&sampler.StartupAllocations>0&&shutdownAfter-shutdownBefore==(packed?2:4),
-        PartialPacketCoverage=true,Cpu="MC68000",ChipRamBytes=524288,FastRamBytes=0,HandlerTaskStackBytes=4096,
+        PartialPacketCoverage=true, NamespaceOperations=namespaceGate,Cpu="MC68000",ChipRamBytes=524288,FastRamBytes=0,HandlerTaskStackBytes=4096,
         sampler.Peak,sampler.Lower,sampler.Upper,sampler.GuardIntact,sampler.StartupAllocations,sampler.OperationAllocations,
         sampler.LargestStartupAllocMemRequest,ShutdownBarriers=shutdownAfter-shutdownBefore,
         Stage=control==0?0:Read(machine,control+20),DosError=control==0?0:Read(machine,control+24),

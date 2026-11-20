@@ -42,7 +42,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         uint id=R(Target),fib=Arg(1)<<2,p=R(Loaded);
         if(phase==54) {
             if(!ValidInode(p,id)) return Fatal();
-            Zero(fib,260); uint type=id==1?1u:m.Read16(p+6)==11?2u:0xfffffffdu,size=m.Read32(p+68);
+            Zero(fib,260); if(R(Action)==24) m.Write32(fib,id);
+            uint type=id==1?1u:m.Read16(p+6)==11?2u:0xfffffffdu,size=m.Read32(p+68);
             m.Write32(fib+4,type); m.Write32(fib+120,type); m.Write32(fib+124,size); m.Write32(fib+128,(size+511)>>9);
             if(id!=1) return Load(256+m.Read32(p+108),55);
             uint name=m.Read32(R(Volume)+40)<<2; if(name!=0) { uint len=m.Read8(name); if(len>107) return Error(210); m.Copy(fib+8,name,len+1); }

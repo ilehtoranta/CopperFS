@@ -1,10 +1,12 @@
 # CopperNova direct-metadata prototype
 
+The [Workbench namespace qualification](../../docs/coppernova-workbench.md) covers the RDB discovery path and the CNP2 reusable-object format. The [write-side CRC report](../../docs/coppernova-write-crc-2026-11-19.md) records the preceding performance checkpoint.
+
 The [packed leaf CRC and encoder results](../../docs/coppernova-packed-leaf-2026-11-18.md) give the current benchmark and qualification. The [packet-handling profile](../../docs/coppernova-packet-handling-2026-11-18.md) records the preceding build.
 
 This isolated experiment implements the next-format metadata study. It is not a
 CPX4 upgrade and cannot mount CPX4 or CPX5 media. It recognizes the experimental `CNM1` (`0x434E4D31`) and
-`CNP2` (`0x434E5032`) formats, both at page version 1. Existing filesystem sources, handler
+`CNP2` (`0x434E5032`) formats, with version 1 metadata pages. Fresh CNP2 volumes can select root version 2 to enable deletion and object ID reuse. Existing filesystem sources, handler
 entry points, packet ABI and build selections are unchanged.
 
 The portable core uses the existing `ICpxMemory`, `CpxIo`, `Wide` and `StepResult`
@@ -97,16 +99,15 @@ Private packet/file-handle/data-buffer aliases are rejected before I/O or edits.
 This is a benchmark-capable metadata prototype, not a feature-complete filesystem:
 
 - One group, 512-byte sectors, 2–32 MiB volumes; both comparisons use 16 MiB.
-- Up to 1,022 ordinary objects, with no inode deletion/reuse. Live identities use
-  incarnation 1; stale-resource tokens are checked independently. Slot reuse and
-  incarnation wrap are not qualified.
+- Up to 1,022 ordinary live objects. CNM1 and CNP2 root version 1 allocate monotonically. CNP2 root version 2 reuses deleted IDs after checking live locks and handles.
 - ASCII names stored inline, at most 168 bytes per component and a 255-byte DOS
   path. The 192-byte directory payload limits the number/length of entries.
 - Eight inline extents. Overflow directory/extent trees and string continuations
   from the wider study are not implemented; capacity is rejected explicitly.
 - Create directories/files, shared locks, open/read/write/seek, shrink, same-parent
   rename to an unused name, close, flush, inhibit/remount and shutdown are supported.
-- Sparse growth, grow-by-resize, cross-directory moves, deletion, links, extended
+- CNP2 also supports directory enumeration and cross-directory moves. Root version 2 adds deletion and reuse.
+- Sparse growth, grow-by-resize, links, extended
   attributes, notifications, record locking, formatting via DOS, automatic trim,
   media-change integration and maintenance timers are outside this prototype.
   Scalar space is reserved; the production attribute/timestamp feature set is
@@ -117,8 +118,7 @@ This is a benchmark-capable metadata prototype, not a feature-complete filesyste
 
 The unchanged frozen guest HUNKs still supply their historical CPX4 DOS-type
 environment field while explicitly loading this separate segment. The prototype
-selects its own format from its anchors. This is not CPX4 media autodiscovery or
-Workbench/RDB integration. Original handlers retain their complete feature sets
+selects its own format from its anchors. The separate Workbench qualification boots the system disk and discovers its CNP2 partition from an RDB. Original handlers retain their complete feature sets
 and their own cache policies, so these results do not establish general feature
 or memory-budget parity.
 

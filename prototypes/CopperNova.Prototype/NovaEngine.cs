@@ -50,7 +50,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     public uint DirtyPages=>R(DirtyCount);
     public bool IsMounted=>R(Mounted)!=0&&R(Poison)==0;
     public CpxIo Request=>new() { Kind=(IoKind)m.Read32(Arena+136), Sector=new(m.Read32(Arena+140),m.Read32(Arena+144)), Buffer=m.Read32(Arena+148), Bytes=m.Read32(Arena+152), Token=m.Read32(Arena+156) };
-    public void Bind(uint blocks,uint port,uint volume) { W(Blocks,blocks); W(Port,port); W(Volume,volume); }
+    public void Bind(uint blocks,uint port,uint volume) => Bind(blocks,port,volume,0);
+    public void Bind(uint blocks,uint port,uint volume,uint unit) { W(Blocks,blocks); W(Port,port); W(Volume,volume); W(UnitNumber,unit); }
     private const uint ActiveHandles=528,ActiveLocks=532,ComponentHash=536,CacheUsed=540,CrcLow=544,CrcHigh=548;
     public bool HasResources=>R(ActiveHandles)!=0||R(ActiveLocks)!=0;
     public CpxError BeginMount()

@@ -39,3 +39,5 @@ For a packed-to-packed comparison, pass `-Packed -PackedBaseline -BaselineHandle
 Add `-ChipOnly` for the original 68000 with 512 KiB Chip RAM and no Fast RAM. The wrapper compiles the workload’s Chip-memory entry point. It requests public probe buffers and a 4,096-longword handler stack, and keeps the DOS requests, payloads and timing markers of the frozen workload. Qualified CNP2, the candidate and Kickstart FFS 40.1 run on this profile. Original SFS 1.279 requires a 68020 and runs on the default profile.
 
 The [write-side CRC qualification](../../docs/coppernova-write-crc-2026-11-19.md) records mutation, explicit flush and remount on both CPU profiles.
+
+For the Workbench namespace format, add `-Packed -ReusableObjects`. A packed baseline continues to receive root version 1. The report records the candidate root version and each trial’s initial media hash.

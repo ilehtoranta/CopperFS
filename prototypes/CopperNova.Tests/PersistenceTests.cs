@@ -57,6 +57,23 @@ public class PersistenceTests(ITestOutputHelper output)
             }
         }
     }
+    [Fact] public void BufferedDeleteAndReusePublishTogetherAcrossPowerCuts()
+    {
+        var h=new Harness(NovaImage.FormatPacked(2*1024*1024,reusableObjects:true)); h.Mount();
+        uint old=h.Open("old"); h.Write(old,Enumerable.Repeat((byte)42,1024).ToArray()); h.Close(old); h.Flush();
+        var initial=(byte[])h.Disk.Clone(); var events=Capture(h);
+        h.Bstr(Harness.NameAt,"old"); Assert.Equal(uint.MaxValue,h.Packet(16,0,Harness.NameAt>>2));
+        uint next=h.Open("new"); h.Write(next,Enumerable.Repeat((byte)69,1024).ToArray()); h.Close(next); h.Flush();
+        Assert.Equal(2,events.Count(e=>e.Barrier));
+        var before=NovaImage.CheckPacked(initial).Entries.Single(); var after=NovaImage.CheckPacked(h.Disk).Entries.Single();
+        Assert.Equal(before.Slot,after.Slot);
+        foreach(var cut in Crashes(initial,events)) {
+            var fresh=new Harness(cut.Disk); fresh.Mount();
+            var view=NovaImage.CheckPacked(cut.Disk);
+            Assert.Equal(view.Generation==1?before:after,Assert.Single(view.Entries));
+            if(cut.Barriers==2) Assert.Equal(2u,view.Generation);
+        }
+    }
     [Fact] public void PhysicalSectorCutsAcrossBankReuseAndChangedRetry()
     {
         var h=Prepare(); Add(h); byte[] initial=(byte[])h.Disk.Clone(); var events=Capture(h); h.Flush();
