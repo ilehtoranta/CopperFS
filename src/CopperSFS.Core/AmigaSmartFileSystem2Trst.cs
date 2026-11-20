@@ -269,7 +269,9 @@ public static partial class AmigaSmartFileSystem2WriteCore
             if (original.IsNull) original = p.ReadRetainedBlock(target);
             if (original.IsNull)
             {
-                if (!p.ReadBlock(target, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
+                if (!p.TryReadTrstOriginal(target, 1, w.Data, out var read))
+                    read = p.ReadBlock(target, w.Data);
+                if (!read) return Fail(ref w, DOS.Error.DiskNotValidated);
                 original = w.Data;
             }
             var changes = staged.OwnedArena.IsNotNull && p.UsesOriginalSfs2DataWrites && p.BlockBytes == 512

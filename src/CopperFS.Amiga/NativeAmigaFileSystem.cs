@@ -4354,12 +4354,23 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return true;
     }
 #else
-    // Bind these optional journal operations directly on the native value type.
-    // The non-pool handler uses the ordinary one-block read and write paths.
+    // Bind the optional operation directly on the native platform value type.
     public bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success)
     {
         success = false;
+#if COPPERSTART_NATIVE_SFS2 && !COPPERFS_SFS2_OWNED
+        if (count != 1 || !CanReadPhysicalCache(block, out _)) return false;
+
+        // A journal preimage miss needs one block. Reading through the payload
+        // cache would refill its entire window, which journal writes can evict.
+        // The owned build retains windows across disjoint journal writes.
+        success = CanTransferDirect(scratch, BlockBytes)
+            ? TransferBlock(false, block, scratch)
+            : TransferData(false, block, 1, scratch) == 1;
+        return true;
+#else
         return false;
+#endif
     }
 
     public APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity)
