@@ -36,6 +36,14 @@ public interface IAmigaFileSystemPlatform : IAmigaGuestMemory
         view = APTR.Null;
         return false;
     }
+    /// <summary>Borrow a cached classic block with a verified zero-sum checksum.
+    /// The view expires at the next block access. A handled checksum failure
+    /// returns a null view. False requests an ordinary read and full validation.</summary>
+    bool TryBorrowCheckedClassicBlock(uint block, APTR scratch, APTR output, uint outputBytes, out APTR view)
+    {
+        view = APTR.Null;
+        return false;
+    }
     /// <summary>Optional copy of a retained, logically current SFS2 metadata block
     /// verified for type, block number and version-4 checksum. False requests the
     /// ordinary read and validation path.</summary>
@@ -114,6 +122,19 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     /// WriteBlock. Does not flush or stage metadata. The caller must durably
     /// publish undo before overwriting reachable data or metadata.</summary>
     bool WriteDataBlocks(uint block, uint count, APTR source);
+    /// <summary>Explicit opt-in to original SFS2-style file-data overwrites.
+    /// Metadata remains journaled, but existing payload bytes are not rolled
+    /// back after packet failure or a crash. The default retains full-data redo.</summary>
+    bool UsesOriginalSfs2DataWrites => false;
+    /// <summary>Consume a checked file-data run synchronously outside overlays,
+    /// ordering overlapping physical writes or replacing an owned full-sector
+    /// queue image while preserving read-your-writes. Requires the policy
+    /// above; never use for metadata or privately staged replacement images.
+    /// Flush still orders payload completion before metadata publication.</summary>
+    bool WriteExistingFileDataBlocks(uint block, uint count, APTR source) => false;
+    // A following OFS run may need to update the previous run's forward
+    // link. Retain the last sector only after a complete successful write.
+    bool WriteDataBlocksRetainingLast(uint block, uint count, APTR source) => WriteDataBlocks(block, count, source);
     /// <summary>Whether this platform implements direct unpublished-data writes.</summary>
     bool SupportsUnpublishedDataWrites => false;
     /// <summary>On a TRST encoding cache miss, optionally read the current
@@ -145,15 +166,23 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity) { capacity = 0; return APTR.Null; }
     void ReleaseSfsJournalPages(APTR pages) { }
     bool WriteRetainedBlock(uint block, APTR source) => false;
+    // The caller has sealed the classic block's zero-sum checksum. Only the
+    // matching retained image may inherit that proof after successful I/O.
+    bool WriteSealedClassicBlock(uint block, APTR source) =>
+        SupportsRetainedBlockWrites ? WriteRetainedBlock(block, source) : WriteBlock(block, source);
+    // Patch an allocated FFS payload sector through a private DMA-safe cache
+    // slot. False requests the caller's ordinary read/modify/write path.
+    bool TryPatchClassicSector(uint key, uint offset, APTR source, uint length, out DOS.Error error)
+    { error = DOS.Error.None; return false; }
+    // Patch a cached OFS tail after the successor data was written. An
+    // unavailable cache slot leaves the ordinary read/modify/write to the core.
+    bool TryPatchClassicOfsForwardLink(uint key, uint successor, out bool written)
+    { written = false; return false; }
 #if COPPERFS_SFS_POOL
-    /// <summary>Install a sealed redo slot after journal publication. Raw data
-    /// slots have a zero verification ID. The default preserves ordinary home writes.</summary>
-    bool WriteTrstHomeSlot(APTR slot)
-    {
-        var block = ReadUInt32(slot);
-        var source = APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
-        return SupportsRetainedBlockWrites ? WriteRetainedBlock(block, source) : WriteBlock(block, source);
-    }
+    /// <summary>Whether the platform can preserve verification on a sealed redo home write.</summary>
+    bool SupportsTrstHomeSlotWrites => false;
+    /// <summary>Install the sealed slot after durable journal publication. A false result is a write failure.</summary>
+    bool WriteTrstHomeSlot(APTR slot) => false;
 #endif
     /// <summary>Maximum adjacent TRST home images the platform can gather using
     /// existing storage. Each entry in slots points at a redo slot, with its

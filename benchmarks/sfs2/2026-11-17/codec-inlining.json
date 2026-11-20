@@ -1,0 +1,44 @@
+[
+  {
+    "Inlining": false,
+    "ScalarReplacement": true,
+    "AssumeLittleEndian": false,
+    "CrossAssemblyIPO": false,
+    "CilicaRevision": "ca199fd583f492e156f2617dff43b5f28ff8684d",
+    "CilicaPackageVersion": "0.20.2-preview",
+    "Methods": [
+      "static uint AmigaSmartFileSystemTrstCodec::SparseKind<!!T>(!!T&, APTR, APTR, uint, uint)",
+      "static uint AmigaSmartFileSystemTrstCodec::PlanSparse512<!!T>(!!T&, APTR, APTR, uint, APTR, uint&)",
+      "static uint AmigaSmartFileSystemTrstCodec::Plan<!!T>(!!T&, APTR, APTR, uint, APTR, uint&)"
+    ],
+    "CoreInputSha256": "7F46137429503C60FF7FF3508DF3DA77A7DB2AD1E6A6C7F729355A33E1AF7BB5",
+    "CoreOutputSha256": "A6E4477BC35A10C3C3E5826BE6D615ECB65A7D525B6AC9852C91EAFA2F27DA14",
+    "AdapterSha256": "B27D4208B5C4D08C16BACAAF1F18E4BAB6BDB6A2C4D5CE8B3DAE7458983CB01A",
+    "HandlerSha256": "13EE674FBF6AE86606972238D5DC86A33A72A54FCBC4C5D80B95AE6885B7EE38",
+    "HandlerBytes": 248920,
+    "GrowthCycles": 434010,
+    "OverwriteCycles": 142630,
+    "ReadCycles": 49820
+  },
+  {
+    "Inlining": true,
+    "ScalarReplacement": true,
+    "AssumeLittleEndian": false,
+    "CrossAssemblyIPO": false,
+    "CilicaRevision": "ca199fd583f492e156f2617dff43b5f28ff8684d",
+    "CilicaPackageVersion": "0.20.2-preview",
+    "Methods": [
+      "static uint AmigaSmartFileSystemTrstCodec::SparseKind<!!T>(!!T&, APTR, APTR, uint, uint)",
+      "static uint AmigaSmartFileSystemTrstCodec::PlanSparse512<!!T>(!!T&, APTR, APTR, uint, APTR, uint&)",
+      "static uint AmigaSmartFileSystemTrstCodec::Plan<!!T>(!!T&, APTR, APTR, uint, APTR, uint&)"
+    ],
+    "CoreInputSha256": "7F46137429503C60FF7FF3508DF3DA77A7DB2AD1E6A6C7F729355A33E1AF7BB5",
+    "CoreOutputSha256": "150B0D1DC09A8F197C3712FC6A2F2C8A2F86EFB08290DC0F48FBE4D601EDAE03",
+    "AdapterSha256": "B27D4208B5C4D08C16BACAAF1F18E4BAB6BDB6A2C4D5CE8B3DAE7458983CB01A",
+    "HandlerSha256": "7FAA3A09F76FF1BBC0FC1CFDAAD193AB933B87A8E14AF5E25095BF4ACEE17A59",
+    "HandlerBytes": 249000,
+    "GrowthCycles": 427430,
+    "OverwriteCycles": 142800,
+    "ReadCycles": 49820
+  }
+]

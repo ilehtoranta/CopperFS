@@ -8,7 +8,9 @@ public static class NativeCpxRecordTimers
 {
     private static APTR State(uint arena)=>APTR.FromPointer(arena+2816);
     private static uint Slot(uint arena,uint n)=>arena+CpxArena.Scratch+6*APTR.ReadUInt32(APTR.FromPointer(arena),12)+CpxArena.IndexBytes+14336+n*64+8;
-    public static uint SignalMask(uint arena)=>1u<<APTR.ReadUInt8(APTR.FromPointer(APTR.ReadUInt32(State(arena),192)),15);
+    internal static APTR Port(uint arena)=>APTR.FromPointer(APTR.ReadUInt32(State(arena),192));
+    public static uint SignalMask(uint arena)
+    { APTR port=Port(arena); return port.IsNull?0u:1u<<APTR.ReadUInt8(port,15); }
     public static bool Active(uint arena)=>APTR.ReadUInt32(State(arena),204)!=0;
     public static bool HasReplies(uint arena)
     { uint port=APTR.ReadUInt32(State(arena),192); return port!=0&&APTR.ReadUInt32(APTR.FromPointer(port),20)!=port+24; }

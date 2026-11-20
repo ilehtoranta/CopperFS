@@ -310,11 +310,11 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (w.FreedCount != 0) { p.ObserveFreedRange(w.FreedFirst, w.FreedCount); w.FreedCount = 0; }
         if (w.FreeDelta != 0)
         {
-            if (!EditMetadata(ref p, ref w, w.RootContainer, ObjectId, w.Meta, out var edit)) return false;
+            if (!EditScalarMetadata(ref p, ref w, w.RootContainer, ObjectId, w.Meta, out var edit)) return false;
             var oldFree = p.ReadUInt32(edit.Image, (int)p.BlockBytes - 28);
             var updated = (long)oldFree + w.FreeDelta;
             if (updated < 0 || updated > p.BlockCount) return RejectMetadata(ref p, ref w, ref edit);
-            p.WriteUInt32(edit.Image, (int)p.BlockBytes - 28, (uint)updated);
+            Scalar32(ref p, ref edit, (int)p.BlockBytes - 28, (uint)updated);
             if (!PublishMetadata(ref p, ref w, w.RootContainer, ref edit)) return false;
         }
         if (w.RedoStaging) return true;
@@ -361,10 +361,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         if (!BitmapPosition(ref p, ref w, block, out var map, out var offset, out var mask) ||
-            !EditMetadata(ref p, ref w, map, BitmapId, w.Bitmap, out var edit)) return false;
+            !EditScalarMetadata(ref p, ref w, map, BitmapId, w.Bitmap, out var edit)) return false;
         var old = p.ReadUInt32(edit.Image, offset);
         if (((old & mask) != 0) == free) return RejectMetadata(ref p, ref w, ref edit);
-        p.WriteUInt32(edit.Image, offset, free ? old | mask : old & ~mask);
+        Scalar32(ref p, ref edit, offset, free ? old | mask : old & ~mask);
         if (!PublishMetadata(ref p, ref w, map, ref edit)) return false;
         w.FreeDelta += free ? 1 : -1;
         if (free && w.TrackFrees)
@@ -385,6 +385,15 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (preferred >= p.ReservedBlocks && preferred < p.BlockCount - 1 &&
             IsFree(ref p, ref w, preferred, out var free) && free)
             return Mark(ref p, ref w, preferred, false) ? preferred : 0;
+        if (w.RedoStaging && p.Sfs2Context.IsNotNull)
+        {
+            // The owned trial can inspect a bitmap page once, including for
+            // one-sector growth. Reacquiring it for every occupied candidate
+            // repeats metadata lookup and verification without changing it.
+            if (!FindFreeRun(ref p, ref w, 0, 1, 1, true, out var first, out var count)) return 0;
+            if (count == 0) { Fail(ref w, DOS.Error.DiskFull); return 0; }
+            return Mark(ref p, ref w, first, false) ? first : 0;
+        }
         for (var block = p.ReservedBlocks; block < p.BlockCount - 1; block++)
         {
             if (!IsFree(ref p, ref w, block, out free)) return 0;
@@ -933,6 +942,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
     private static bool GrowExtent<T>(ref T p, ref Work w, uint key, uint newBlock)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        if (w.RedoStaging && p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites)
+            return GrowOriginalExtent(ref p, ref w, key, newBlock, 1);
         if (!ExtentLeaf(ref p, ref w, key, out var leaf)) return false;
         var count = p.ReadUInt16(w.Meta, 12); var stride = p.ReadUInt8(w.Meta, 15);
         for (var i = 0; i < count; i++)
@@ -1399,9 +1410,17 @@ public static partial class AmigaSmartFileSystem2WriteCore
     public static bool Write<T>(ref T p, ref Work w, ref Request r, out uint actual)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
+        var info = default(FileInformation);
+        return WritePacket(ref p, ref w, ref r, out actual, false, ref info);
+    }
+
+    private static bool WritePacket<T>(ref T p, ref Work w, ref Request r, out uint actual,
+        bool prepared, ref FileInformation info)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
         actual = 0;
         if (r.Length > int.MaxValue || !p.IsMapped(r.Buffer, r.Length)) return Fail(ref w, DOS.Error.BadNumber);
-        if (!Prepare(ref p, ref w) || !FileInformationForWrite(ref p, ref w, r.Node, out var info)) return false;
+        if (!prepared && (!Prepare(ref p, ref w) || !FileInformationForWrite(ref p, ref w, r.Node, out info))) return false;
         var size = info.Size; var first = info.First;
         if (r.Position > size) return Fail(ref w, DOS.Error.SeekError);
         if (r.Position > MaxFileSize || r.Length > MaxFileSize - r.Position) return Fail(ref w, DOS.Error.ObjectTooLarge);
@@ -1443,6 +1462,11 @@ public static partial class AmigaSmartFileSystem2WriteCore
                         {
                             if (!GrowExtentRun(ref p, ref w, lastKey, start, runCount)) return false;
                         }
+                        else if (w.RedoStaging && p.Sfs2Context.IsNotNull && p.UsesOriginalSfs2DataWrites)
+                        {
+                            if (!InsertOriginalExtentRun(ref p, ref w, start,
+                                lastKey == 0 ? r.Node | 0x80000000 : lastKey, runCount)) return false;
+                        }
                         else if (!InsertExtent(ref p, ref w, start, lastKey == 0 ? r.Node | 0x80000000 : lastKey) ||
                             !GrowExtentRun(ref p, ref w, start, start + 1, runCount - 1)) return false;
                         if (!WriteNewDataRun(ref p, ref w, start, runCount, APTR.FromPointer(r.Buffer.Raw + written))) return false;
@@ -1461,6 +1485,23 @@ public static partial class AmigaSmartFileSystem2WriteCore
                 if (first == 0) first = diskBlock;
                 p.Clear(w.Data, blockBytes);
             }
+            else if (w.RedoStaging && p.Sfs2Context.IsNotNull && withinRemainder == 0 && r.Length - written >= blockBytes)
+            {
+                // A complete overwrite needs no old payload or intermediate
+                // scratch copy. Retain full-data redo staging, bounded by the
+                // extent just validated by FileBlock. The private trial still
+                // owns every resulting image and rolls back the whole packet.
+                var blocks = (r.Length - written) / blockBytes;
+                var available = lastSize - (diskBlock - lastKey);
+                if (blocks > available) blocks = available;
+                var source = APTR.FromPointer(r.Buffer.Raw + written);
+                if (!TryWriteOriginalFileData(ref p, ref w, diskBlock, blocks, source, out var direct)) return false;
+                if (!direct && !p.WriteDataBlocks(diskBlock, blocks, source))
+                    return Fail(ref w, DOS.Error.NoFreeStore);
+                var take = blocks * blockBytes;
+                written += take; position += take;
+                continue;
+            }
             else if (!p.ReadBlock(diskBlock, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
             var within = withinRemainder;
             var count = blockBytes - within;
@@ -1470,11 +1511,20 @@ public static partial class AmigaSmartFileSystem2WriteCore
             {
                 if (!WriteNewDataRun(ref p, ref w, diskBlock, 1, w.Data)) return false;
             }
-            else if (!JournalWrite(ref p, ref w, diskBlock, w.Data)) return false;
+            else
+            {
+                if (!TryWriteOriginalFileData(ref p, ref w, diskBlock, 1, w.Data, out var direct)) return false;
+                if (!direct && !JournalWrite(ref p, ref w, diskBlock, w.Data)) return false;
+            }
             written += count; position += count;
         }
-        if (!UpdateFileInformation(ref p, ref w, r.Node, first, end > size ? end : size)) return false;
+        var finalSize = end > size ? end : size;
+        // Existing-data writes often leave all three object fields unchanged.
+        // Avoid creating/sealing a metadata edit solely to write the same bytes.
+        if ((first != info.First || finalSize != size || (info.Protection & 16) != 0) &&
+            !UpdateWriteInformation(ref p, ref w, r.Node, ref info, first, finalSize)) return false;
         if (!Finish(ref p, ref w)) return false;
+        info.First = first; info.Size = finalSize; info.Protection &= ~16u;
         actual = written;
         return true;
     }

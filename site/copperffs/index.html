@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CopperFFS · Amiga Old File System and Fast File System handler</title>
+  <meta name="description" content="Check Amiga OFS and FFS read/write compatibility across DOS0–DOS5, build the CopperFFS handler, and use CopperTrim on writable volumes.">
+  <link rel="canonical" href="https://ilehtoranta.github.io/CopperFS/copperffs/">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="masthead">
+    <div class="wrap bar">
+      <a class="brand" href="../" aria-label="CopperFS home"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>CopperFS</a>
+      <nav class="primary" aria-label="Main navigation">
+        <a href="../">Overview</a>
+        <a href="../copperffs/" aria-current="page">CopperFFS</a>
+        <a href="../coppersfs/">CopperSFS</a>
+        <a href="../coppernova/">CopperNova</a>
+      </nav>
+      <a class="github" href="https://github.com/ilehtoranta/CopperFS">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+  <main class="wrap" id="main" tabindex="-1">
+    <header class="detail-head">
+      <h1>CopperFFS</h1>
+      <p class="lead">An Amiga filesystem handler for Old File System and Fast File System disks.</p>
+      <p class="eyeline">OFS / FFS · DOS0–DOS5</p>
+    </header>
+    <div class="reference">
+      <nav class="outline" aria-label="Page contents"><b>On this page</b>
+        <a href="#compatibility">Disk compatibility</a>
+        <a href="#build">Build the handler</a>
+        <a href="#trim">Manual TRIM</a>
+        <a href="#testing">Compatibility results</a>
+      </nav>
+      <div class="content">
+        <section aria-labelledby="compatibility">
+          <h2 id="compatibility">Disk compatibility</h2>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="Disk compatibility">
+            <table aria-labelledby="compatibility"><thead><tr><th scope="col">DOS type</th><th scope="col">Disk format</th><th scope="col">Access</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>DOS0</code></th><td>Old File System (OFS)</td><td>Read and write</td></tr>
+                <tr><th scope="row"><code>DOS1</code></th><td>Fast File System (FFS)</td><td>Read and write</td></tr>
+                <tr><th scope="row"><code>DOS2–DOS3</code></th><td>International OFS and FFS</td><td>Read only</td></tr>
+                <tr><th scope="row"><code>DOS4–DOS5</code></th><td>Directory-cache OFS and FFS</td><td>Read only</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section aria-labelledby="build">
+          <h2 id="build">Build the handler</h2>
+          <p>Install .NET 10 and place a CopperSharp68k checkout beside CopperFS. From the CopperFS root, build the standalone Amiga handler and the optional maintenance command.</p>
+          <pre tabindex="0"><code>./build/Build-Handler.ps1 -Ffs -ArtifactRoot artifacts/ffs
+./build/Build-Trim.ps1</code></pre>
+          <p>The handler is <code>artifacts/ffs/CopperFFS</code>. The default CPU is the 68000. Use <code>-Cpu 68020</code> for a 68020 build or <code>-CopperSharpRoot</code> to select another toolchain checkout. <a href="../../README.md#build-and-test">Repository build instructions</a>.</p>
+        </section>
+        <section aria-labelledby="trim">
+          <h2 id="trim">Manual TRIM</h2>
+          <p>Install the matching <code>CopperTrim</code> command in <code>C:</code> and the handler in <code>L:</code>. On a writable DOS0 or DOS1 mount, substitute your volume name for <code>DH0:</code>.</p>
+          <pre tabindex="0"><code>CopperTrim DH0: CHECK
+CopperTrim DH0: DRYRUN
+CopperTrim DH0:</code></pre>
+          <p><code>CHECK</code> queries device support. <code>DRYRUN</code> flushes pending changes and reports free ranges. The final command issues SCSI UNMAP for verified free space. The device and bridge must support UNMAP through <code>HD_SCSICMD</code>. <a href="../../docs/manual-trim.md#command">CopperTrim command reference</a>.</p>
+        </section>
+        <section aria-labelledby="testing">
+          <h2 id="testing">Compatibility results</h2>
+          <p>Kickstart 3.1 comparisons with FastFileSystem 40.1 exercised DD and HD floppy images and 16 MB hard disk images for both OFS and FFS. Each of the six cases passed independent content checks after writing and reopening the image with both handlers. <a href="../../docs/original-handler-correctness-ab-2026-11-06.md#main-matrix">Full-ROM comparison matrix</a>.</p>
+          <p>The report identifies the tested binaries and records host and compiled-native replay results separately. Physical-drive behavior remains unqualified by these emulator runs. <a href="../../docs/original-handler-correctness-ab-2026-11-06.md#separate-validation-coverage">Validation coverage</a>.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+  <footer class="wrap footer">
+    <span><b>CopperFS</b> <span class="dim">/</span> Amiga filesystems</span>
+    <a href="https://github.com/ilehtoranta/CopperFS/blob/main/LICENSE">MIT license</a>
+  </footer>
+</body>
+</html>

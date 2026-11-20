@@ -129,7 +129,25 @@ public sealed partial class OriginalHandlerCorrectnessTests
         Assert.True(trace.Failures >= 2); // Original failure and refused mutation/recovery attempt.
         var report = SfsImageChecker.Check(new MemoryStream(result));
         if (report.Entries.Any(e => e.Path == "/Renamed")) AssertCrossClose(report);
-        else Assert.Equal(JsonSerializer.Serialize(SfsImageChecker.Check(new MemoryStream(initial))), JsonSerializer.Serialize(report));
+        else
+        {
+            var expected = SfsImageChecker.Check(new MemoryStream(initial));
+            if (Environment.GetEnvironmentVariable("COPPERFS_TEST_IN_PLACE") == "1")
+            {
+                // Once the fault is cleared, Flush can persist the existing
+                // data written before the unpublished metadata was discarded.
+                Assert.Equal(1, barrier);
+                var payload = ReadMedia.Payload.ToArray();
+                payload.AsSpan(0, 3).Fill(93);
+                var hash = Hash(payload);
+                expected = expected with
+                {
+                    Entries = expected.Entries.Select(entry =>
+                        entry.Path == "/Payload" ? entry with { Sha256 = hash } : entry).ToArray()
+                };
+            }
+            Assert.Equal(JsonSerializer.Serialize(expected), JsonSerializer.Serialize(report));
+        }
         await Run(root, "sfs2-trst", "original-restart", original, result, true, "Sfs2RecoveryProbe::Recover");
     }
 }

@@ -6,6 +6,9 @@ namespace CopperCPX.Tests;
 
 internal struct Ram(byte[] bytes) : ICpxMemory
 {
+        public void Copy(uint destination,uint source,uint bytes) => CpxMemoryCopy.Forward(ref this,destination,source,bytes);
+        public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
+        public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
     public byte[] Bytes=bytes;
     public byte Read8(uint p)=>Bytes[p]; public void Write8(uint p,byte value)=>Bytes[p]=value;
     public uint Read32(uint p)=>BinaryPrimitives.ReadUInt32BigEndian(Bytes.AsSpan((int)p));
@@ -35,6 +38,11 @@ public class EngineTests
             Assert.InRange(engine.TransactionImageCount,0u,42u);
             if(result!=StepResult.NeedIo) continue;
             CpxIo io=engine.Request; Assert.Equal(StepResult.NeedIo,engine.Step()); Assert.Equal(io.Token,engine.Request.Token);
+            uint view=engine.Arena+CpxArena.PendingIo;
+            Assert.Equal((uint)io.Kind,ram.Read32(view));
+            Assert.Equal(io.Sector.High,ram.Read32(view+4)); Assert.Equal(io.Sector.Low,ram.Read32(view+8));
+            Assert.Equal(io.Buffer,ram.Read32(view+12)); Assert.Equal(io.Bytes,ram.Read32(view+16));
+            Assert.Equal(io.Token,ram.Read32(view+20));
             ulong sector=((ulong)io.Sector.High<<32)|io.Sector.Low;
             if(io.Kind==IoKind.Read) disk.Read(sector,ram.Bytes.AsSpan((int)io.Buffer,(int)io.Bytes));
             else if(io.Kind==IoKind.Write) disk.Write(sector,ram.Bytes.AsSpan((int)io.Buffer,(int)io.Bytes));
@@ -48,7 +56,7 @@ public class EngineTests
     {
         Disk disk=Fresh(unit); var ram=new Ram(Enumerable.Repeat((byte)0xa5,100000).ToArray()); var engine=new CpxEngine<Ram>(ram,32);
         Assert.Equal(CpxError.None,engine.Initialize(512,(uint)unit,Wide.From(8192),1));
-        Assert.Equal(CpxError.None,engine.BeginOperation(CpxOperation.Mount)); Assert.True(Drive(ref engine,ram,disk)>30); Assert.True(engine.IsMounted);
+        Assert.Equal(CpxError.None,engine.BeginOperation(CpxOperation.Mount)); Assert.InRange(Drive(ref engine,ram,disk),1,30); Assert.True(engine.IsMounted);
         Assert.All(ram.Bytes[..32],b=>Assert.Equal(0xa5,b));
         Assert.All(ram.Bytes[(32+(int)CpxArena.Bytes((uint)Math.Max(unit,1024)))..],b=>Assert.Equal(0xa5,b));
     }

@@ -118,7 +118,7 @@ performs one maintenance window and at most one allocation-unit discard. The
 native transport discovers SCSI B2/B0/READ CAPACITY(16) asynchronously, checks
 completion/status/length, and submits one bounded UNMAP descriptor. An explicitly
 unsupported command disables discard cleanly; other errors are not capability
-success. Idle timer-driven maintenance is not implemented yet.
+success. The same scanner also runs on a [30-second timer](#timer-driven-trim-maintenance).
 
 The standalone admits 512, 1024, 2048 and 4096-byte device sectors from
 DosEnvec. Startup authenticates primary and backup anchor candidates before
@@ -139,10 +139,10 @@ All operation state remains inside the existing 8,192..16,383 region. Informatio
 packets use 644 bytes at mount offsets 3,072..3,715 for a directory record, object
 record and staged FIB. UNMAP shares the selected DMA buffer during its request. Lock name
 contexts occupy 512 previously unused bytes at pool offsets 15,360..15,871.
-Timer bookkeeping occupies mount offsets 2,816..3,023. No page buffer or pool was
-added. Startup allocates one timer port and opens 16 forty-byte timer requests;
-these OS-owned allocations are measured separately. There is no per-operation
-allocation.
+Record timer bookkeeping occupies mount offsets 2,816..3,023. Periodic TRIM uses
+offsets 4,004..4,015. Startup allocates one timer port shared by 16 record-lock
+requests and one maintenance request, each 40 bytes. OS-owned allocations are
+measured separately. All timers reuse their requests during operation.
 
 ## Notifications and record waits
 
@@ -454,6 +454,150 @@ No production handler source or identity was substituted for CPX4.
 
 ## Validation and measurement scope
 
+### Power loss in the standalone journal
+
+`StandaloneHunkSurvivesJournalPowerCuts` boots the standalone handler under
+Kickstart 3.1 on an MC68000 with 512 KiB chip RAM and a 4 KiB handler stack.
+DOS appends 512 bytes to a one-sector file with an allocated neighbor. This
+requires one new allocation unit and a journaled update of the file length,
+extent and allocation metadata. The fixture uses a different byte pattern for
+each file and for the appended sector.
+
+| Power cut | Required result after a fresh writable mount |
+| --- | --- |
+| Before and after invalidation or staged-data flush | Original contents and allocation |
+| Before the commit flush, volatile commit lost | Original contents and allocation |
+| After both commit sectors are written back early, before the commit flush | Appended contents and allocation |
+| Immediately after the commit becomes durable, before DOS receives its reply | Appended contents and allocation |
+| Before and after the home-page or either checkpoint flush | Appended contents and allocation |
+| During replay of a durable commit, after each persisted 512-byte sector or on either side of each flush | Appended contents and allocation |
+
+The test drops the running machine at the hardfile hook and boots a fresh one
+from the durable bytes. In the barrier cases, reads see volatile writes until
+power loss and flush publishes them. The replay sector cases also exercise
+early writeback, including the first sector of a two-sector metadata page.
+The recovery workload reads the file through DOS. A separate read-only decoder
+then walks the raw image, checks the neighbor, reconstructs all allocation
+ownership and compares it with every bitmap bit and free-space count. Both
+checkpoint copies must agree after recovery.
+
+Set `COPPERCPX_BOOT=1` and run the instruction test project with filter
+`FullyQualifiedName~StandaloneHunkSurvivesJournalPowerCuts` after building
+the CPX4 profile. The boot suite's handler and output directory overrides apply.
+Each campaign writes its cut points, expected outcome and recovered image hashes
+under `crash-publication` or `crash-replay`.
+
+All 31 cuts passed for handler SHA-256
+`C62053CD09D6D76FCA3667EDA63E166123DDC9DC32B7F11FFD056F3B1535FA9D`.
+The six flushed batches contained 2, 19, 2, 8, 2 and 2 sector writes in order.
+Five of the 13 publication cuts recovered the original file. The other eight
+recovered the complete append, including early commit writeback. The replay
+campaign interrupted each of eight home-page and four checkpoint sector writes,
+plus both edges of all three flushes. All 18 recovered images had the same
+SHA-256. The test compared both recovered checkpoint pages byte for byte with
+the expected copies, including their checksums. Case receipts are under
+`artifacts/cpx4-compiled-crash/final-crash`.
+
+Nine stack-measurement workloads booted the rebuilt HUNK with exactly 512 KiB
+chip RAM. The highest observed stack use was 1,692 bytes during journal replay,
+leaving 2,404 bytes of the 4,096-byte stack. The eight-level tree workload
+peaked at 1,636 bytes and shutdown at 976 bytes. All nine guards remained
+intact. The restrictive DMA run recorded the overall free-memory minimum of
+142,760 bytes. The loaded segment used 178,840 bytes and the resident arena
+used 59,392 bytes. Stack measurements cover these workloads; the individual
+power cuts use separate fresh boots. Physical SSD persistence was not tested.
+
+### Transaction capacity and exhausted reserve under power loss
+
+The compiled engine stages 42 distinct, reachable metadata pages from a volume
+containing 90 files. It changes protection words in object leaves so that a
+partially published transaction would be visible. A fresh compiled mount checks
+each of the six barrier cuts. The first two recover the original generation and
+protection words. The other four recover the committed generation and edits.
+
+The standalone HUNK boots the committed image under Kickstart 3.1. A second
+run interrupts replay after sector 83 of the 84 home sectors, leaving half of
+the final metadata page installed. The next boot must complete replay. For a
+43rd distinct page the engine must refuse both staging and commit. The test
+retains even the unflushed staging writes and drops all RAM before booting
+the standalone handler. Both checkpoint generations and the original protection
+words must survive. The compiled producer uses the transaction API because DOS
+does not expose an arbitrary metadata-page transaction.
+
+The reserve fixture transfers the reserved space into a reachable file and
+fills the disk. A DOS directory creation must return error 221. Separate boots
+cut power before the refill attempt's invalidation flush, after that flush and
+after the error reply. Every recovery is checked by decoding the disk directly,
+walking its allocation owners, comparing every file and namespace entry with
+the original and checking the checkpoint generation.
+
+### Timer-driven TRIM maintenance
+
+The handler arms a 30-second one-shot on a writable, available volume. The
+timer shares the record-lock timer reply port and signal. On expiry the handler
+remembers the mount epoch and checks it before admitting work. An expiry wakes
+an idle handler and takes one turn between completed DOS packets even if the
+port stays backlogged. Time spent in a long packet never creates a queue of
+missed ticks. The next interval starts after the scan retires.
+
+Each turn rereads the reserve and one allocation bitmap page, checks their
+identity, generation and checksum, examines at most 4096 bits and submits at
+most one allocation unit for discard. The cursor is a hint. A foreground
+allocation made since the previous visit is visible to the new scan. DOS
+mutations stay queued until storage completes. An unsupported discard stops
+automatic scans for this mount. An uncertain storage completion poisons the
+mount. Shutdown reaps the timer before releasing its request and reply port.
+
+The timer uses 12 bytes inside the existing mount arena and one startup-owned
+timer request. There is no per-tick allocation. The idle ROM probe spends
+1700 DOS ticks between two device-counter samples. The compiled dispatcher test
+also keeps the packet port continuously backlogged across two expiries with
+delayed storage completions. A host regression reallocates a freed block to a
+different file, starts the scanner on that exact block, overwrites discarded
+sectors and verifies the new owner's contents.
+
+The standard ROM watchdog allows eight host minutes for shallow fixtures and
+30 for depth eight. The initial growth and replay runs reached the host limit
+during foreground work with zero reported DOS error. Their TRX files and RAM
+snapshots are retained. Setting `COPPERCPX_SLOW_BOOT_HOST=1` gives shallow
+fixtures 16 host minutes for a separate repeat. The emulated frame budget,
+512 KiB configuration, per-instruction stack sampling and guard checks are
+identical in both runs. Receipts record the watchdog actually used.
+
+The 512 KiB Kickstart 3.1 checkpoint used a 196,976-byte handler (SHA-256
+`C62053CD09D6D76FCA3667EDA63E166123DDC9DC32B7F11FFD056F3B1535FA9D`).
+The idle interval produced one UNMAP. The growth and replay workloads each
+produced 35 periodic UNMAPs, the depth-eight ownership workload produced eight,
+and the full depth-eight workload produced 72. The unsupported-device fixture
+issued zero discards. Independent image checks passed after shutdown.
+
+| Measurement | Bytes |
+| --- | ---: |
+| Periodic TRIM stack peak | 924 |
+| Whole-handler stack peak, during recovery | 1,692 |
+| Shutdown stack peak | 976 |
+| Configured task stack, guard intact on all eight workloads | 4,096 |
+| Loaded segment allocation | 178,840 |
+| Resident mount arena | 59,392 |
+| Net OS/device mount allocation, excluding the arena, stack and external DMA | 1,312 |
+| Lowest free memory, restrictive DMA run | 143,392 |
+
+The additional timer request increased measured net OS/device mount allocation
+by 40 bytes from the previous DMA checkpoint. The ordinary mounts had 151,696
+bytes free after startup. The restrictive DMA
+fixture reserved an additional 8,192 bytes. All runs reported 216,432 bytes
+free after shutdown. Growth and replay took 70,361 and 70,448 emulated frames
+respectively. The standard eight-minute attempts are recorded as timeouts.
+Images, binary, input hashes and per-workload receipts are under
+`artifacts/cpx4-periodic`. The device was emulated.
+
+The Release solution build passed. Across eight test projects, 2,276 tests
+passed and five were skipped. Separate runs passed all 63 CPX4 compiled
+instruction tests and 141 affected CopperStart replay tests. The checkpoint
+summary records the 48 handler source hashes by reference to the manifest, both
+ROM harness builds, the guest probe hashes and the five default-watchdog
+timeouts alongside the completed workloads.
+
 ### DMA-constrained allocation
 
 Before opening the device, startup checks the in-arena bounce page against
@@ -479,6 +623,50 @@ mask. If the embedded SCSI fields cannot meet its alignment, discard reports
 unsupported on that mount. Ordinary sector transfers continue through the
 selected buffer. The mask and memory-class inputs come from the DOS environment
 vector. [Amiga ROM Kernel Reference Manual, DOS](https://developer.amigaos3.net/sites/default/files/downloads/2024-10/Amiga_ROM_Kernel_Reference_Manual_DOS.pdf)
+
+The Kickstart 3.1 DMA fixture runs the damaged-primary workload on an MC68000
+with 512 KiB chip RAM. It requests MEMF_CHIP and mask `0x0007f000`. The
+ordinary and constrained runs use the same disk contents and DOS operations.
+The constrained run reserved 8,192 bytes, used a 4,096-byte DMA buffer at
+`0x5a000` and completed 508 reads, 88 writes and eight flushes. After
+shutdown both runs had 218,280 bytes free. An independent mount verified the
+committed file contents and allocation ownership.
+
+Compiled fault-injection tests cover a failed main allocation, exhausted
+candidates, unreachable returned blocks and device-open failure after successful
+reservation. Their Exec allocation ledger checks each release against the
+original address and size. Additional compiled cases force a 512-byte bounce
+buffer, verify both split writes and delayed reads, and exercise a caller that
+fits the address mask but resides in the wrong memory class. The SCSI test
+also verifies the external control, sense, CDB and payload addresses.
+
+All eight full-ROM workloads completed on the same HUNK and DOS probe with
+intact 4096-byte task-stack guards. Measurements are in bytes.
+
+| Workload | Startup and recovery | Shutdown | Whole-handler peak | Minimum free RAM |
+| --- | ---: | ---: | ---: | ---: |
+| DMA fallback and damaged primary | 1,580 | 976 | 1,580 | 145,280 |
+| Damaged primary, ordinary DMA mask | 1,580 | 976 | 1,580 | 153,472 |
+| Format and label | 1,084 | 976 | 1,636 | 153,472 |
+| Format with unsupported TRIM | 1,084 | 976 | 1,636 | 153,472 |
+| Depth-eight ownership | 1,580 | 976 | 1,636 | 153,472 |
+| General growth | 1,580 | 976 | 1,636 | 152,976 |
+| Committed-journal recovery | 1,692 | 976 | 1,692 | 152,976 |
+| General depth-eight tree | 1,580 | 976 | 1,636 | 152,976 |
+
+The 195,604-byte HUNK occupied 177,072 bytes of loaded segments. Net
+OS/device mount allocations were 1,272 bytes in every run. The Release
+solution passed 2,261 tests with five skips and zero failures. The separate
+compiled MC68000 suite passed 61 tests and CopperStart replay passed 141.
+The eight-minute host watchdog expired twice during growth and once during
+journal replay. Both workloads subsequently finished with the same guest
+configuration and timing limits. Physical SSD/controller qualification remains open.
+
+The native source manifest and eight verified measurements are under
+`artifacts/cpx4-dma/checkpoint`. HUNK SHA-256 is
+`A95DB2F69B5D2075BA9568905C891FA7D1001C34554031BAB64CBBFDCB19D994`.
+The guest probe SHA-256 is
+`6052D973115CBCB640205A38A785B99BC1F609C8DEED934FBDDA6E6B97C97D9E`.
 
 ### Startup geometry discovery
 
@@ -1362,3 +1550,31 @@ separately; CopperStart is not a standalone-handler dependency.
 Run the ROM gate after other CPU-heavy campaigns finish: its finite host wall
 timeout is independent of the emulated frame, RAM and stack bounds. Preserve
 timeout diagnostics and report any subsequent retry explicitly.
+
+### Attribute, link and deferred cleanup crash coverage
+
+`StandaloneHunkRecoversMetadata` runs four DOS operations through the standalone HUNK
+on an emulated MC68000 with Kickstart 3.1 and 512 KiB of chip RAM. The operations
+set a packed owner ID, create a 180-byte soft link with an external target page,
+delete a sparse file, and shorten that file from 2,560 to 100 bytes.
+
+Each case loses power after barrier 2 (before commit), 3 (committed, before
+home writes) or 6 (both checkpoints durable). For delete and truncate at
+barrier 6 the test reads the durable cleanup head, requires outstanding work,
+and cuts power again after the first reclamation commit during mount. A new
+machine boots from the surviving sectors each time. The independent decoder
+checks the namespace, every surviving file byte including the neighboring
+file, and exact physical ownership against the allocation bitmap. A writable
+recovery must leave the cleanup list empty. All 12 recovered images passed
+with HUNK SHA-256
+`C62053CD09D6D76FCA3667EDA63E166123DDC9DC32B7F11FFD056F3B1535FA9D`.
+
+All nine whole-handler workloads produced passing 512 KiB receipts in
+`artifacts/cpx4-metadata`. The highest sampled stack use was 1,692 bytes in
+journal recovery. The depth-eight workload used 1,636 bytes on the completed
+retry after two host wall-clock timeouts. Every passing run preserved the
+stack guard. Restrictive DMA produced the lowest observed free memory,
+142,568 bytes. The Release build and 141 CopperStart replay tests passed.
+The full solution run reported a CopperSFS relocation byte mismatch in
+`TrstTransitionFirstRelocationRetainsFinalLayoutAndNextWriteReusesArena`
+with an 8192-byte position, scratch enabled and nextExtent false.

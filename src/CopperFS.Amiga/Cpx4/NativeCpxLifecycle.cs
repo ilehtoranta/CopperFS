@@ -9,7 +9,7 @@ internal static class NativeCpxLifecycle
     private enum Phase : uint
     {
         Idle, ProbeWide, ProbeNarrow, Mount, Timers, Publish, Register,
-        Flush, Detach, FailedStartupDetach, CloseTimers, ReleaseVolume, Drain, Exit, Retain
+        Flush, Detach, FailedStartupDetach, CloseTimers, ReleaseVolume, Drain, Exit, Retain, MaintenanceTimer, ClearPools
     }
     private const int Message=4, Packet=8, Failure=12, Volume=16, Node=20, Registered=24;
     private const int ProbePage=28,BackupCopy=32,FoundUnit=36,FoundHigh=40,FoundLow=44,ReadFault=48;
@@ -34,8 +34,12 @@ internal static class NativeCpxLifecycle
     {
         APTR state=State(arena); Own(state,message,packet,Phase.ProbeWide);
         uint sector=1u<<NativeCpxTransport.SectorShift(arena);
-        APTR.WriteUInt32(state,ProbePage,sector<1024?1024:sector);
+        APTR.WriteUInt32(state,ProbePage,sector);
         for(int n=BackupCopy;n<=ReadFault;n+=4) APTR.WriteUInt32(state,n,0);
+        // Discovery owns the unused sixth maximum-size scratch page. Reuse a
+        // prepared checksum table across anchors before final geometry exists.
+        if(new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).PrepareAnchorChecksum(arena+CpxArena.Scratch+5*4096)!=CpxError.None)
+            APTR.WriteUInt32(state,Failure,103);
     }
     internal static void BeginShutdown(uint arena,APTR message,APTR packet,bool available,bool protectedVolume)
     {
@@ -52,7 +56,7 @@ internal static class NativeCpxLifecycle
         // mounted dispatcher. After removal is submitted it must be reaped.
         if(phase==Phase.Register) { if(error==226) dispatcher.MediaRemoved(); return; }
         if(phase is Phase.Detach or Phase.Flush && error==226) dispatcher.MediaRemoved();
-        if(phase is not (Phase.ProbeWide or Phase.ProbeNarrow or Phase.Mount or Phase.Timers or Phase.Publish or Phase.Flush)) return;
+        if(phase is not (Phase.ProbeWide or Phase.ProbeNarrow or Phase.Mount or Phase.ClearPools or Phase.Timers or Phase.MaintenanceTimer or Phase.Publish or Phase.Flush)) return;
         if(Error(arena)==0||error==226) APTR.WriteUInt32(state,Failure,error);
         if(phase is Phase.Mount or Phase.Flush)
             new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).Cancel();
@@ -73,19 +77,26 @@ internal static class NativeCpxLifecycle
                 if(step is StepResult.NeedIo or StepResult.Pending) return step;
                 if(step==StepResult.Failed&&failure==0)
                 {
-                    if(phase==Phase.Mount&&engine.Error==CpxError.Corrupt) return Next(state,Phase.Timers);
+                    if(phase==Phase.Mount&&engine.Error==CpxError.Corrupt) return PreparePools(state);
                     failure=NativeCpxTransport.DiskChanged(arena)?226u:213u;
                     if(failure==226&&phase==Phase.Flush) dispatcher.MediaRemoved();
                 }
                 if(failure!=0) return Refuse(state,port,failure,phase==Phase.Mount);
-                return Next(state,phase==Phase.Flush?Phase.Detach:Phase.Timers);
+                return phase==Phase.Flush?Next(state,Phase.Detach):PreparePools(state);
+            case Phase.ClearPools:
+                if(failure!=0) return Refuse(state,port,failure,true);
+                return ClearStartupPools(arena)==StepResult.Complete?Next(state,Phase.Timers):StepResult.Pending;
             case Phase.Timers:
                 if(failure!=0) return Refuse(state,port,failure,true);
                 StepResult opened=NativeCpxRecordTimers.OpenOne(arena);
                 if(opened==StepResult.Failed) return Refuse(state,port,103,true);
-                return opened==StepResult.Complete?Next(state,Phase.Publish):StepResult.Pending;
+                return opened==StepResult.Complete?Next(state,Phase.MaintenanceTimer):StepResult.Pending;
+            case Phase.MaintenanceTimer:
+                if(failure!=0) return Refuse(state,port,failure,true);
+                return NativeCpxMaintenance.Open(arena)?Next(state,Phase.Publish):Refuse(state,port,103,true);
             case Phase.Publish:
                 if(failure!=0) return Refuse(state,port,failure,true);
+                PrepareBufferedStorage(ref engine);
                 APTR volume=DOS.MakeDosEntry(CString.FromLiteral("CopperCPX4"),(int)DosListType.Volume);
                 if(volume.IsNull) return Refuse(state,port,103,true);
                 NativeCpxVolume.Initialize(arena,volume,engine.VolumeLabelAddress);
@@ -114,6 +125,8 @@ internal static class NativeCpxLifecycle
                 }
                 return Next(state,Phase.CloseTimers);
             case Phase.CloseTimers:
+                StepResult timer=NativeCpxMaintenance.CloseOne(arena);
+                if(timer!=StepResult.Complete) return timer;
                 if(NativeCpxRecordTimers.CloseOne(arena)==StepResult.Pending) return StepResult.Pending;
                 return Next(state,Phase.ReleaseVolume);
             case Phase.ReleaseVolume:
@@ -143,15 +156,29 @@ internal static class NativeCpxLifecycle
         Reply(state,port,error); APTR.WriteUInt32(state,Failure,startup?error:0);
         return Next(state,startup?Phase.FailedStartupDetach:Phase.Idle);
     }
+    private static StepResult PreparePools(APTR state)
+    {
+        APTR.WriteUInt32(state,ProbePage,0); return Next(state,Phase.ClearPools);
+    }
+    // Discovery's checksum scratch can overlap the final resource pool when
+    // metadata geometry is smaller than the maximum-size startup arena. Retire
+    // that scratch before publishing any DOS slots. One visit clears 1 KiB.
+    internal static StepResult ClearStartupPools(uint arena)
+    {
+        APTR state=State(arena); uint offset=APTR.ReadUInt32(state,ProbePage);
+        uint pool=arena+CpxArena.Scratch+6*APTR.ReadUInt32(APTR.FromPointer(arena),12)+CpxArena.IndexBytes;
+        for(uint n=0;n<1024;n+=4) APTR.WriteUInt32(APTR.FromPointer(pool+offset+n),0,0);
+        offset+=1024; APTR.WriteUInt32(state,ProbePage,offset);
+        return offset==CpxArena.PoolBytes?StepResult.Complete:StepResult.Pending;
+    }
     private static StepResult EngineStep(uint arena,ref CpxEngine<NativeCpxMemory> engine)
     {
         StepResult step=engine.Step();
         if(step!=StepResult.NeedIo) return step;
-        CpxIo io=engine.Request;
-        StepResult result=NativeCpxTransport.Service(arena,io,out uint actual,out bool unsupported);
+        StepResult result=NativeCpxTransport.ServiceEngineRequest(arena,out uint token,out uint actual,out bool unsupported);
         if(result==StepResult.Pending) return NativeCpxTransport.Waiting(arena)?StepResult.NeedIo:StepResult.Pending;
-        if(unsupported) engine.CompleteUnsupportedDiscard(io.Token);
-        else engine.CompleteIo(io.Token,actual,result==StepResult.Complete);
+        if(unsupported) engine.CompleteUnsupportedDiscard(token);
+        else engine.CompleteIo(token,actual,result==StepResult.Complete);
         return StepResult.Pending;
     }
     private static StepResult Probe(uint arena,APTR state,APTR port,Phase phase,ref CpxEngine<NativeCpxMemory> engine)
@@ -168,17 +195,18 @@ internal static class NativeCpxLifecycle
         if(failure!=0) return Refuse(state,port,failure,true);
         if(result==StepResult.Failed)
         {
-            if(phase==Phase.ProbeWide&&backup==0&&page==(sector<1024?1024:sector)&&NativeCpxTransport.TryNarrowProbe(arena))
+            if(phase==Phase.ProbeWide&&backup==0&&page==(sector)&&NativeCpxTransport.TryNarrowProbe(arena))
                 return Next(state,Phase.ProbeNarrow);
             if(!NativeCpxTransport.UnreadableSector(arena)) return Refuse(state,port,NativeCpxTransport.DiskChanged(arena)?226u:213u,true);
             APTR.WriteUInt32(state,ReadFault,1);
         }
         else
         {
-            CpxError check=engine.InspectAnchor(io.Buffer,page,sector,capacity,location,out uint unit,out Wide identity);
+            CpxError check=engine.InspectAnchor(io.Buffer,page,sector,capacity,location,out uint unit,out Wide identity,out uint version,arena+CpxArena.Scratch+5*4096);
             if(check!=CpxError.None&&check!=CpxError.NotFound) return Refuse(state,port,213,true);
             if(check==CpxError.None)
             {
+                if(version==5) { unit|=0x80000000; uint features=APTR.ReadUInt32(APTR.FromPointer(io.Buffer),100); if(features>=2) unit|=0x40000000; if(features>=3) unit|=0x20000000; if(features>=4) unit|=0x10000000; if(features==5) unit|=0x08000000; }
                 uint previous=APTR.ReadUInt32(state,FoundUnit);
                 if(previous!=0&&(previous!=unit||APTR.ReadUInt32(state,FoundHigh)!=identity.High||
                     APTR.ReadUInt32(state,FoundLow)!=identity.Low)) return Refuse(state,port,213,true);
@@ -188,12 +216,48 @@ internal static class NativeCpxLifecycle
         if(backup==0) { APTR.WriteUInt32(state,BackupCopy,1); return StepResult.Pending; }
         if(page<4096) { APTR.WriteUInt32(state,ProbePage,page*2); APTR.WriteUInt32(state,BackupCopy,0); return StepResult.Pending; }
         uint chosen=APTR.ReadUInt32(state,FoundUnit);
+        bool shadow=(chosen&0x80000000)!=0,compactControl=(chosen&0x40000000)!=0,directInodes=(chosen&0x20000000)!=0,smallMetadata=(chosen&0x10000000)!=0,inlineCatalogue=(chosen&0x08000000)!=0; chosen&=0x07ffffff;
         if(chosen==0&&APTR.ReadUInt32(state,ReadFault)!=0) return Refuse(state,port,213,true);
-        if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1)!=CpxError.None) return Refuse(state,port,213,true);
-        if(chosen==0) return Next(state,Phase.Timers); // readable unformatted medium, explicit DOS Format remains available
+        if(engine.Initialize(sector,chosen==0?sector:chosen,capacity,1,metadataPageBytes:smallMetadata?chosen:0)!=CpxError.None) return Refuse(state,port,213,true);
+        if(engine.DisableShadowVolume()!=CpxError.None) return Refuse(state,port,213,true);
+        PrepareBufferedStorage(ref engine,shadow);
+        if(shadow)
+        {
+            uint extra=CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes);
+            if(engine.BufferedStorageAddress==0||engine.BufferedStorageCapacity<extra) return Refuse(state,port,103,true);
+            uint storage=engine.BufferedStorageAddress+engine.BufferedStorageCapacity-extra;
+            if(engine.EnableShadowVolume(storage,extra,inlineCatalogue?5u:smallMetadata?4u:directInodes?3u:compactControl?2u:1u)!=CpxError.None) return Refuse(state,port,103,true);
+        }
+        if(chosen==0) return PreparePools(state); // readable unformatted medium, explicit DOS Format remains available
         if(engine.BeginMountFromDiscoveredAnchor(new(APTR.ReadUInt32(state,FoundHigh),APTR.ReadUInt32(state,FoundLow)))!=CpxError.None)
             return Refuse(state,port,213,true);
         return Next(state,Phase.Mount);
+    }
+    private static void PrepareBufferedStorage(ref CpxEngine<NativeCpxMemory> engine,bool shadow=false)
+    {
+        bool arenaUndo=engine.MetadataPageBytes==512;
+        if(engine.BufferedStorageAddress!=0)
+        {
+            // Publish revisits this after mount has warmed the metadata cache.
+            // Only a geometry change that disabled buffering needs re-admission.
+            if(engine.BufferedWrites) return;
+            // Media discovery can revisit geometry. Re-admit the same owned
+            // allocation without retaining an undo lease from another layout.
+            if(arenaUndo) engine.EnableArenaUndoBufferedWrites(engine.BufferedStorageAddress,engine.BufferedStorageCapacity,CpxArena.Bytes(4096));
+            else engine.EnableBufferedWrites(engine.BufferedStorageAddress,engine.BufferedStorageCapacity);
+            return;
+        }
+        uint extra=shadow?CpxEngine<NativeCpxMemory>.ShadowStorageBytes(engine.MetadataPageBytes):0;
+        uint bytes=(arenaUndo?CpxEngine<NativeCpxMemory>.ArenaUndoBufferedStorageBytes():CpxEngine<NativeCpxMemory>.BufferedStorageBytes(engine.MetadataPageBytes))+extra;
+        uint storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
+        if(storage==0)
+        {
+            bytes=(arenaUndo?CpxEngine<NativeCpxMemory>.ArenaUndoBufferedStorageBytes(true):CpxEngine<NativeCpxMemory>.CompactBufferedStorageBytes(engine.MetadataPageBytes))+extra;
+            storage=Exec.AllocMem(bytes,Exec.MemoryFlags.Public|Exec.MemoryFlags.Clear);
+        }
+        if(storage!=0&&(arenaUndo?engine.EnableArenaUndoBufferedWrites(storage,bytes,CpxArena.Bytes(4096)):engine.EnableBufferedWrites(storage,bytes))!=CpxError.None) Exec.FreeMem(storage,bytes);
+        engine.EnableAlternatingCheckpoints();
+        engine.EnableCpuBatching();
     }
 }
 #endif

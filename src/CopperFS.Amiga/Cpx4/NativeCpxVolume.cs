@@ -16,7 +16,7 @@ internal static class NativeCpxVolume
     {
         if(APTR.ReadUInt32(APTR.FromPointer(arena+3936),0)==0) return;
         bool changed=false;
-        for(int n=0;n<32;n++) if(APTR.ReadUInt8(APTR.FromPointer(arena+3904),n)!=APTR.ReadUInt8(APTR.FromPointer(label),n)) changed=true;
+        for(int n=0;n<32;n+=4) if(APTR.ReadUInt32(APTR.FromPointer(arena+3904),n)!=APTR.ReadUInt32(APTR.FromPointer(label),n)) changed=true;
         if(!changed) return;
         // DOS owns the semaphore wait; no polling or temporary allocation.
         uint flags=(uint)(DosListLockFlags.Volumes|DosListLockFlags.Write);

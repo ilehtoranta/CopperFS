@@ -9,7 +9,9 @@ namespace CopperCPX.InstructionTests;
 
 public static class NativeEventLoopProbe
 {
-    public const uint Arena = 0x40000, HandlerPort = 0x8000, IoPort = 0x8040,
+    public static uint MediaChangeEntry()=>NativeCpxMedia.TakeChange(Arena)?1u:0u;
+    public static uint ControlEntry()=>NativeCpxHandler.TakeControl(APTR.ReadUInt32(APTR.FromPointer(0x7000),0),APTR.FromPointer(0x7100));
+    public const uint Arena = 0x70000, HandlerPort = 0x8000, IoPort = 0x8040,
         TimerPort = 0x8080, NormalReplyPort = 0x80c0, WaitReplyPort = 0x8100,
         WaitMessage = 0x8300, WaitPacket = 0x8320, UnlockMessage = 0x8400, UnlockPacket = 0x8420;
 
@@ -39,6 +41,78 @@ public static class NativeEventLoopProbe
 
 public class NativeEventLoopInstructions(Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(false,true,false)] [InlineData(true,false,false)]
+    [InlineData(true,true,false)] [InlineData(true,false,true)]
+    public void MediaLatchPeekDoesNotLoseAnInterruptAndOnlyMasksForAcknowledgement(bool registered,bool pending,bool late)
+    {
+        var compiled=AmigaM68kCompiler.Compile(new M68kCompilationRequest {
+            AssemblyPath=typeof(NativeEventLoopProbe).Assembly.Location,EntryPoint=typeof(NativeEventLoopProbe).FullName+"::MediaChangeEntry",
+            ManagedAssemblyPaths=[typeof(CpxArena).Assembly.Location,typeof(APTR).Assembly.Location],IncludedExportNames=[],
+            Cpu=M68kCpuTarget.M68000,OutputFormat=M68kOutputFormat.Assembly,RuntimeProfile=M68kRuntimeProfile.Freestanding,
+            MemoryManagement=M68kMemoryManagement.None,ExceptionMode=M68kExceptionMode.Yolo });
+        Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
+        var bus=new Bus(); compiled.Code.CopyTo(bus.Bytes,0x10000);
+        foreach(var relocation in compiled.Relocations) { uint at=0x10000+(uint)relocation.Offset; bus.Put(at,bus.Get(at)+0x10000); }
+        uint data=NativeEventLoopProbe.Arena+3808;
+        bus.Put(4,0x9000); bus.Put(NativeEventLoopProbe.Arena+3824,registered?0xa000u:0u); bus.Put(data,pending?1u:0u);
+        bus.Bytes.AsSpan(0xee000,4096).Fill(0xa5);
+        bool disabled=false,inject=false,injected=false;
+        bus.ReadObserver=(address,value)=> { if(late&&!injected&&!disabled&&(address==data||address==data+2)&&value==0) inject=true; };
+        using var cpu=M68kCoreFactory.Default.Create(M68kCpuModel.M68000,bus);
+        (uint Result,int Masks) Run()
+        {
+            bus.Put(0xf0000,0xf1000); cpu.Reset(0x10000+compiled.EntryPoint,0xf0000);
+            int masks=0,enables=0,instructions=0;
+            while(cpu.State.ProgramCounter!=0xf1000&&instructions++<10000)
+            {
+                uint pc=cpu.State.ProgramCounter;
+                if(pc==0x9000-120||pc==0x9000-126)
+                {
+                    if(pc==0x9000-120) { Assert.False(disabled); disabled=true; masks++; }
+                    else { Assert.True(disabled); disabled=false; enables++; }
+                    uint stack=cpu.State.A[7]; cpu.State.ProgramCounter=bus.Get(stack); cpu.State.A[7]=stack+4;
+                }
+                else cpu.ExecuteInstruction();
+                if(inject) { Assert.False(disabled); bus.Put(data,1); injected=true; inject=false; }
+            }
+            Assert.Equal(0xf1000u,cpu.State.ProgramCounter); Assert.False(disabled); Assert.Equal(masks,enables);
+            Assert.All(bus.Bytes.AsSpan(0xee000,4096).ToArray(),b=>Assert.Equal(0xa5,b));
+            return (cpu.State.D[0],masks);
+        }
+        Assert.Equal((registered&&pending?1u:0u,registered&&pending?1:0),Run());
+        Assert.Equal(late||!registered&&pending?1u:0u,bus.Get(data));
+        if(late) { Assert.True(injected); Assert.Equal((1u,1),Run()); Assert.Equal(0u,bus.Get(data)); }
+    }
+
+    [Theory][InlineData(false,false)][InlineData(false,true)][InlineData(true,false)][InlineData(true,true)]
+    public void ControlPollingPreservesWaitSignalsAndOnlyClearsAnActuallyPendingBreak(bool pending,bool fromWait)
+    {
+        var compiled=AmigaM68kCompiler.Compile(new M68kCompilationRequest {
+            AssemblyPath=typeof(NativeEventLoopProbe).Assembly.Location,EntryPoint=typeof(NativeEventLoopProbe).FullName+"::ControlEntry",
+            ManagedAssemblyPaths=[typeof(CpxArena).Assembly.Location,typeof(APTR).Assembly.Location],IncludedExportNames=[],
+            Cpu=M68kCpuTarget.M68000,OutputFormat=M68kOutputFormat.Assembly,RuntimeProfile=M68kRuntimeProfile.Freestanding,
+            MemoryManagement=M68kMemoryManagement.None,ExceptionMode=M68kExceptionMode.Yolo });
+        Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
+        var bus=new Bus(); compiled.Code.CopyTo(bus.Bytes,0x10000);
+        foreach(var relocation in compiled.Relocations) { uint at=0x10000+(uint)relocation.Offset; bus.Put(at,bus.Get(at)+0x10000); }
+        uint received=128u|(pending?4096u:0u),woken=fromWait?4096u:0u;
+        bus.Put(4,0x9000); bus.Put(0xf0000,0xf1000); bus.Put(0x7000,woken); bus.Put(0x7100+ExecLayout.Task.SignalReceived,received);
+        using var cpu=M68kCoreFactory.Default.Create(M68kCpuModel.M68000,bus); cpu.Reset(0x10000+compiled.EntryPoint,0xf0000);
+        int clears=0,instructions=0;
+        while(cpu.State.ProgramCounter!=0xf1000&&instructions++<10000)
+        {
+            if(cpu.State.ProgramCounter==0x9000-306)
+            {
+                Assert.Equal(0u,cpu.State.D[0]); Assert.Equal(4096u,cpu.State.D[1]); clears++;
+                cpu.State.D[0]=bus.Get(0x7100+ExecLayout.Task.SignalReceived); bus.Put(0x7100+ExecLayout.Task.SignalReceived,received&~4096u);
+                uint stack=cpu.State.A[7]; cpu.State.ProgramCounter=bus.Get(stack); cpu.State.A[7]=stack+4;
+            }
+            else cpu.ExecuteInstruction();
+        }
+        Assert.Equal(0xf1000u,cpu.State.ProgramCounter); Assert.Equal(pending?1:0,clears);
+        Assert.Equal(pending?woken|received:woken,cpu.State.D[0]); Assert.Equal(128u,bus.Get(0x7100+ExecLayout.Task.SignalReceived));
+    }
     [Theory] [InlineData(false,false)] [InlineData(true,false)] [InlineData(false,true)]
     public void ActualCompiledLoopDrainsResidualWorkAndConsumesSignalsReturnedByWait(bool cancelFromWait,bool injectAllocation)
     {
@@ -52,7 +126,7 @@ public class NativeEventLoopInstructions(Xunit.Abstractions.ITestOutputHelper ou
             ExceptionMode = M68kExceptionMode.Yolo
         });
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
-        Assert.True(compiled.Code.Length < 0x30000, "Probe code must not overlap its guest arena.");
+        Assert.True(compiled.Code.Length < NativeEventLoopProbe.Arena-0x10000, "Probe code must not overlap its guest arena.");
         var bus = new Bus(); compiled.Code.CopyTo(bus.Bytes, 0x10000);
         foreach (var relocation in compiled.Relocations)
         { uint address = 0x10000 + (uint)relocation.Offset; bus.Put(address, bus.Get(address) + 0x10000); }
@@ -171,6 +245,9 @@ public class NativeEventLoopInstructions(Xunit.Abstractions.ITestOutputHelper ou
     }
     private struct HostMemory(Bus bus) : ICpxMemory
     {
+        public void Copy(uint destination,uint source,uint bytes) => CpxMemoryCopy.Forward(ref this,destination,source,bytes);
+        public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
+        public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
         public byte Read8(uint p) => bus.Bytes[p];
         public uint Read32(uint p) => bus.Get(p);
         public void Write8(uint p, byte b) => bus.Bytes[p] = b;
@@ -178,13 +255,14 @@ public class NativeEventLoopInstructions(Xunit.Abstractions.ITestOutputHelper ou
     }
     private sealed class Bus : IM68kBus
     {
+        internal Action<uint,uint>? ReadObserver;
         internal readonly byte[] Bytes = new byte[0x100000];
         internal uint Get(uint p) => BinaryPrimitives.ReadUInt32BigEndian(Bytes.AsSpan((int)p));
         internal void Put(uint p, uint v) => BinaryPrimitives.WriteUInt32BigEndian(Bytes.AsSpan((int)p), v);
         public void ResetExternalDevices(long c) { }
         public byte ReadByte(uint a, ref long c, M68kBusAccessKind k) => Bytes[a];
-        public ushort ReadWord(uint a, ref long c, M68kBusAccessKind k) => BinaryPrimitives.ReadUInt16BigEndian(Bytes.AsSpan((int)a));
-        public uint ReadLong(uint a, ref long c, M68kBusAccessKind k) => Get(a);
+        public ushort ReadWord(uint a, ref long c, M68kBusAccessKind k) { ushort value=BinaryPrimitives.ReadUInt16BigEndian(Bytes.AsSpan((int)a)); ReadObserver?.Invoke(a,value); return value; }
+        public uint ReadLong(uint a, ref long c, M68kBusAccessKind k) { uint value=Get(a); ReadObserver?.Invoke(a,value); return value; }
         public void WriteByte(uint a, byte v, ref long c, M68kBusAccessKind k) => Bytes[a] = v;
         public void WriteWord(uint a, ushort v, ref long c, M68kBusAccessKind k) => BinaryPrimitives.WriteUInt16BigEndian(Bytes.AsSpan((int)a), v);
         public void WriteLong(uint a, uint v, ref long c, M68kBusAccessKind k) => Put(a, v);

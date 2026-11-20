@@ -184,7 +184,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             if (LastExtent(obj, extent) && (unlink || U64(extent, 0) >= keep || U32(extent, 16) > keep - U64(extent, 0)))
             {
                 ulong physical = U64(extent, 8); uint count = U32(extent, 16);
-                uint take = Math.Min(count, (uint)((physical + count - 1) % BitmapUnits + 1));
+                uint take = Math.Min(count, (uint)((physical + count - 1) % ((uint)layout.BitmapWindowUnits) + 1));
                 if (!unlink && U64(extent, 0) < keep) take = Math.Min(take, count - (uint)(keep - U64(extent, 0)));
                 Begin(Operation.Reclaim); ChangeBits(physical + count - take, take, false);
                 if (take == count) RemoveExtent(obj, U64(extent, 0));

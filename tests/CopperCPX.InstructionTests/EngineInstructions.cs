@@ -10,6 +10,9 @@ namespace CopperCPX.InstructionTests;
 
 public struct GuestMemory : ICpxMemory
 {
+        public void Copy(uint destination,uint source,uint bytes) => CpxMemoryCopy.Forward(ref this,destination,source,bytes);
+        public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
+        public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
     public uint Reserved;
     public byte Read8(uint p)=>APTR.ReadUInt8(APTR.FromPointer(p),0);
     public uint Read32(uint p)=>APTR.ReadUInt32(APTR.FromPointer(p),0);
@@ -20,7 +23,7 @@ public static class MountProbe
 {
     public static uint Entry()
     {
-        var memory=new GuestMemory(); var engine=new CpxEngine<GuestMemory>(memory,0x40000);
+        var memory=new GuestMemory(); var engine=new CpxEngine<GuestMemory>(memory,0x70000);
         if(engine.Initialize(512,512,Wide.From(8192),1)!=CpxError.None) return 1;
         if(engine.BeginOperation(CpxOperation.Mount)!=CpxError.None) return 2;
         uint phase=0;
@@ -125,9 +128,10 @@ public class EngineInstructions(Xunit.Abstractions.ITestOutputHelper output)
         Assert.All(bus.Memory.AsSpan(0xee000,4096).ToArray(),b=>Assert.Equal(0xa5,b));
         output.WriteLine($"{probe.Name}: {compiled.Code.Length} code bytes, {instructions} instructions, {0xf0000-minimum} stack bytes, {bus.Requests} external I/O boundaries. This is not DOS handler coverage.");
     }
-    private sealed class Bus : IM68kBus,IBlockDevice
+    internal sealed class Bus : IM68kBus,IBlockDevice
     {
         internal byte[] Memory=new byte[0x100000],Disk=new byte[4*1024*1024]; internal int Requests;
+        internal Action<uint>? AfterRequest;
         public int SectorSize=>512; public ulong SectorCount=>8192;
         public void Read(ulong s,Span<byte> b)=>Disk.AsSpan((int)s*512,b.Length).CopyTo(b);
         public void Write(ulong s,ReadOnlySpan<byte> b)=>b.CopyTo(Disk.AsSpan((int)s*512)); public void Flush() { }
@@ -145,6 +149,7 @@ public class EngineInstructions(Xunit.Abstractions.ITestOutputHelper output)
             if(v==1) Read(Get(0x8008),Memory.AsSpan((int)Get(0x800c),(int)Get(0x8010)));
             else if(v==2) Write(Get(0x8008),Memory.AsSpan((int)Get(0x800c),(int)Get(0x8010)));
             else Assert.Equal(3u,v);
+            AfterRequest?.Invoke(v);
         }
     }
 }

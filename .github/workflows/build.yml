@@ -14,9 +14,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ilehtoranta/CopperSharp68k
+          # .NET 10 compiler revision used for the SFS2 benchmark validation.
+          ref: f07e8ec99de4ddbdfad74cc2dbb4a9343e1e55b7
           path: CopperSharp68k
+      - uses: actions/checkout@v4
+        with:
+          repository: ilehtoranta/CopperScreen
+          # Provides the emulator and CopperDisk projects used by integration tests.
+          ref: 05a352e5f248e7676843a0cbafd805fb93317663
+          path: CopperScreen
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
       - name: Test OFS, FFS, SFS and SFS2 cores
         run: dotnet test CopperFS/CopperFS.slnx -c Release
+      - name: Test the shared SFS pool home-write fallback
+        run: dotnet test CopperFS/tests/CopperSFS.Core.Tests/CopperSFS.Core.Tests.csproj -c Release -p:CopperFsSfsPool=true --filter FullyQualifiedName~SharedPoolHomeWriteFailureUpdatesCaller

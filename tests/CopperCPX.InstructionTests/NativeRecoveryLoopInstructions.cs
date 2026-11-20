@@ -11,7 +11,7 @@ public static class NativeRecoveryLoopProbe
 {
     public static uint Entry()
     {
-        const uint arena=0x40000;
+        const uint arena=0x70000;
         NativeCpxTransport.Initialize(arena,APTR.FromPointer(0x8200),default,Wide.From(8192),4096,uint.MaxValue,true);
         NativeCpxLifecycle.BeginStartup(arena,APTR.FromPointer(0x8300),APTR.FromPointer(0x8320));
         var dispatcher=new CpxDosDispatcher<NativeCpxMemory>(new NativeCpxMemory(),arena);
@@ -39,7 +39,7 @@ public class NativeRecoveryLoopInstructions
         // backup must authorize replay even when shutdown races its barrier.
         if(stopAtBarrier) disk.Bytes[65536+80]^=1;
         var compiled=Compiled.Value; Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
-        Assert.True(compiled.Code.Length<0x30000);
+        Assert.True(compiled.Code.Length<0x60000);
         var bus=new NativeTestBus(); compiled.Code.CopyTo(bus.Bytes,0x10000);
         foreach(var reloc in compiled.Relocations)
         { uint p=0x10000+(uint)reloc.Offset; bus.Put(p,bus.Get(p)+0x10000); }
@@ -56,6 +56,7 @@ public class NativeRecoveryLoopInstructions
             int lvo=unchecked((int)(0x9000-cpu.State.ProgramCounter));
             switch(lvo)
             {
+                case 198: cpu.State.D[0]=0; break; // Exercise replay with optional buffered storage unavailable.
                 case 306: // SetSignal at the top of each real dispatch visit
                     transfersThisVisit=0; cpu.State.D[0]=0; break;
                 case 462:

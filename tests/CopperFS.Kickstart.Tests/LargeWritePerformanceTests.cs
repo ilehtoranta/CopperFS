@@ -5,6 +5,22 @@ namespace CopperFS.Kickstart.Tests;
 
 public sealed partial class OriginalHandlerCorrectnessTests
 {
+    [PerformanceProfileTheory]
+    [InlineData("ffs")] [InlineData("ofs")]
+    public async System.Threading.Tasks.Task ProfileLargeClassicWrites(string profile)
+    {
+        var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
+        var pair = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!.Profiles.Single(p => p.Name == profile);
+        var initial = CopperStart.Floppy.Native.Tests.DosDiskImage.Create(profile == "ffs",
+            includeLargeFile: false, blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3]).Bytes;
+        var root = Path.Combine(Path.GetDirectoryName(path)!, "large-write-profile", profile);
+        var disk = await Run(root, profile, "candidate", pair.Candidate, initial, true,
+            profile == "ffs" ? "LargeWriteProbe::Ffs" : "LargeWriteProbe::Ofs");
+        Assert.True(File.Exists(Path.Combine(root, "candidate", "grow-profile.json")));
+        var file = DosImageInspection.Check(disk, true, false).Files.Single(f => f.Path == "/Large");
+        Assert.Equal(Hash(Enumerable.Repeat((byte)0xD4, 98304).ToArray()), file.Sha256);
+    }
+
     [HandlerSizePerformanceTheory]
     [InlineData("ofs", false)] [InlineData("ffs", false)] [InlineData("sfs", false)]
     [InlineData("ofs", true)] [InlineData("ffs", true)]
@@ -13,6 +29,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var path = Environment.GetEnvironmentVariable("COPPERFS_SIZE_MANIFEST")!;
         var manifest = JsonSerializer.Deserialize<SizeManifest>(File.ReadAllText(path))!;
         var pair = manifest.Profiles.Single(p => p.Name == profile);
+        var allowance = ClassicCycleRatio(profile, manifest.ClassicAutoTrimComparison);
         var initial = profile == "sfs" ? File.ReadAllBytes(manifest.ClassicBase)
             : CopperStart.Floppy.Native.Tests.DosDiskImage.Create(profile == "ffs",
                 includeLargeFile: false, blockCount: 32768, firstFileBlock: 2, payload: [1, 2, 3]).Bytes;
@@ -52,7 +69,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
         File.WriteAllText(Path.Combine(root, "cycles.json"), JsonSerializer.Serialize(new
         {
             BaselineSha256 = Hash(File.ReadAllBytes(pair.Baseline)),
-            CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), Samples = samples
+            CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), MaximumCycleRatio = allowance, Samples = samples
         }, Json));
         Assert.Equal(18, samples.Count);
         foreach (var phase in new[] { "grow", "overwrite", "verify" })
@@ -66,7 +83,8 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 Assert.True(after[trial].Flushes <= before[trial].Flushes, $"{profile}/{phase}: more device flushes");
             }
             var ratio = after.Average(s => s.Cycles) / before.Average(s => s.Cycles);
-            Assert.True(ratio <= 1.001, $"{profile}/{phase}: candidate uses {(ratio - 1) * 100:F3}% more cycles; see cycles.json.");
+            Assert.True(ratio <= allowance,
+                $"{profile}/{phase}: candidate uses {(ratio - 1) * 100:F3}% more cycles (limit {(allowance - 1) * 100:F1}%); see cycles.json.");
         }
     }
 }

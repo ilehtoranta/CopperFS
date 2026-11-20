@@ -128,6 +128,24 @@ public static partial class NativeAmigaFileSystem
         var generation = APTR.ReadUInt32(entry, 0);
         var root = APTR.ReadUInt32(entry, Sfs2InputPath.Root);
         var lookup = default(AmigaSmartFileSystemReadOnlyCore.LookupRoot);
+#if COPPERFS_SFS2_OWNED
+        // Mutation invalidates the lookup generation, but the established
+        // mount still owns checked roots. Restore the lookup scalars while
+        // resolving this open so its first read can use the file description
+        // we are about to obtain, rather than opening and scanning it again.
+        if ((root == 0 || APTR.ReadUInt32(entry, Sfs2InputPath.RootGeneration) != generation) && p.Sfs2Context.IsNotNull)
+        {
+            if (!AmigaSmartFileSystemReadOnlyCore.MountSfs2ForLookup(ref p, Metadata(state), true, out lookup, out var extentTree))
+            { size = 0; isDirectory = false; error = DOS.Error.DiskNotValidated; return 0; }
+            APTR.WriteUInt32(entry, Sfs2InputPath.NodeTree, lookup.NodeTree);
+            APTR.WriteUInt32(entry, Sfs2InputPath.ExtentTree, extentTree);
+            APTR.WriteUInt32(entry, Sfs2InputPath.FirstChild, lookup.FirstChild);
+            APTR.WriteUInt32(entry, Sfs2InputPath.CaseSensitive, lookup.CaseSensitive ? 1u : 0u);
+            APTR.WriteUInt32(entry, Sfs2InputPath.RootGeneration, generation);
+            APTR.WriteUInt32(entry, Sfs2InputPath.Root, lookup.RootBlock);
+            root = lookup.RootBlock;
+        }
+#endif
         if (root != 0 && APTR.ReadUInt32(entry, Sfs2InputPath.RootGeneration) == generation)
             lookup = new AmigaSmartFileSystemReadOnlyCore.LookupRoot(root, APTR.ReadUInt32(entry, Sfs2InputPath.NodeTree),
                 APTR.ReadUInt32(entry, Sfs2InputPath.FirstChild), APTR.ReadUInt32(entry, Sfs2InputPath.CaseSensitive) != 0);

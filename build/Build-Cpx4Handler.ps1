@@ -1,7 +1,8 @@
 param(
     [string]$CopperSharpRoot = '', [string]$Configuration = 'Release',
     [string]$ArtifactRoot = '', [ValidateSet('68000','68020')][string]$Cpu = '68000',
-    [switch]$SkipCompilerBuild
+    [switch]$SkipCompilerBuild,
+    [ValidateSet('always','auto')][string]$ClrPolicy = 'always'
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -25,8 +26,10 @@ if ($LASTEXITCODE -ne 0) { throw 'CPX4 managed input build failed.' }
 $output = Join-Path $ArtifactRoot 'CopperCPX4'
 $arguments = @((Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"),
     (Join-Path $inputs 'CopperFS.Amiga.dll'), '--entry', 'CopperCPX.Amiga.NativeCpxHandler::Entry',
-    '--platform','amiga','--cpu',$Cpu,'--clr','always','--peephole','fixed-point',
+    '--platform','amiga','--cpu',$Cpu,'--clr',$ClrPolicy,'--peephole','fixed-point',
     '--fpu','disabled','--exceptions','yolo','--format','hunk','--runtime','freestanding',
+    '--code-size-optimizations','on',
+    '--code-size-passes','ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis',
     '--memory','none','--exports','none','--symbols','off','--output',$output,
     '--compatibility-report',(Join-Path $ArtifactRoot 'CopperCPX4.compatibility.json'))
 foreach ($assembly in @('CopperCPX.Core.dll','CopperSharp.Sdk.Amiga.dll','CopperSharp.Compiler.dll')) {
@@ -45,7 +48,7 @@ $sourceOutputs = Get-CpxSourceHashes
 if (($sourceInputs | ConvertTo-Json -Depth 5 -Compress) -ne ($sourceOutputs | ConvertTo-Json -Depth 5 -Compress)) {
     throw 'CPX4 sources changed during native compilation. The generated HUNK is unqualified; rebuild from stable sources.'
 }
-@{ Cpu=$Cpu; HunkSha256=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash;
+@{ Cpu=$Cpu; ClrPolicy=$ClrPolicy; HunkSha256=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash;
    CompatibilitySha256=(Get-FileHash -LiteralPath (Join-Path $ArtifactRoot 'CopperCPX4.compatibility.json') -Algorithm SHA256).Hash;
    ManagedAllocationSiteCount=@($report.ManagedAllocationSites).Count;
    Sources=$sourceInputs;

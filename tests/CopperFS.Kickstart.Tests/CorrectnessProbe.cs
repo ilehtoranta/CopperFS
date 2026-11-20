@@ -98,6 +98,8 @@ public static class CorrectnessProbe
     public static int OwnedBenchmarkChipSfs2() => Run(3, true, benchmark: true, chip: true, splitMount: true);
     public static int TraceCommitSfs2() => Run(3, true, benchmark: true, splitMount: true, commitTrace: true);
     public static int TraceCommitSfs() => Run(2, true, benchmark: true, splitMount: true, commitTrace: true);
+    public static int TraceCommitFfs() => Run(1, true, benchmark: true, splitMount: true, commitTrace: true);
+    public static int TraceCommitOfs() => Run(0, true, benchmark: true, splitMount: true, commitTrace: true);
 
     public static int CutOfs() => Run(0, true, true, cutSchedule: true);
     public static int CutFfs() => Run(1, true, true, cutSchedule: true);
@@ -360,11 +362,14 @@ public static class CorrectnessProbe
         if (commitTrace) Report(163);
         if (sfs2 && !InputHasSize("SEQ0:AB/Donor", 32768)) return 91;
         if (DOS.DeleteFile("SEQ0:AB/Donor") == 0) return 36;
+        if (commitTrace) Report(176);
         if (sfs2 && !InputIsMissing("SEQ0:AB/Donor")) return 92;
         file = DOS.Open("SEQ0:AB/Main", DOS.FileMode.ReadWrite);
         if (!file.HasValue) return 37;
+        if (commitTrace) Report(177);
         if (DOS.Seek(file.Value, 0, 1) != 0 || DOS.Write(file.Value,
             APTR.FromPointer(data.Raw + 81937), 8193) != 8193) return 38;
+        if (commitTrace) Report(178);
         for (var pass = 0; pass < 2; pass++)
         {
             var at = pass == 0 ? 487 : 35000;

@@ -43,6 +43,9 @@ internal static class NativeSfs2Bridge
 
     internal static void ReleaseContext(APTR state)
     {
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.Sfs2RetainedWriteCursorOffset, 0);
+#endif
         Suspend(state);
         var storage = APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextStorageOffset);
         if (storage != 0) global::Amiga.Exec.FreeMem(storage, APTR.ReadUInt32(state, NativeAmigaFileSystem.Sfs2ContextBytesOffset));
@@ -174,7 +177,7 @@ internal static class NativeSfs2Bridge
     }
 
     private static bool Mutate(APTR state, ref AmigaSmartFileSystem2WriteCore.Request request,
-        AmigaSmartFileSystem2WriteCore.TrstOperation kind, out uint actual, out DOS.Error error)
+        AmigaSmartFileSystem2WriteCore.TrstOperation kind, out uint actual, out DOS.Error error, APTR originalCursor = default)
     {
         var p = new NativeFileSystemPlatform(state); var work = Work(state); actual = 0;
 #if COPPERSTART_SFS2_TRST_WRITES
@@ -184,7 +187,7 @@ internal static class NativeSfs2Bridge
         if (arena.IsNotNull)
         {
             var saved = request;
-            ok = AmigaSmartFileSystem2WriteCore.ExecuteTrstGroup(ref p, ref work, ref request, kind, arena, out actual);
+            ok = AmigaSmartFileSystem2WriteCore.ExecuteTrstGroup(ref p, ref work, ref request, kind, arena, out actual, originalCursor);
             if (!ok && work.Error == DOS.Error.NoFreeStore)
             {
                 // A rejected packet has not changed the accepted view. Commit
@@ -267,6 +270,45 @@ internal static class NativeSfs2Bridge
         var r = new AmigaSmartFileSystem2WriteCore.Request { Node = node, Position = position, Buffer = data, Length = length };
         return Mutate(state, ref r, AmigaSmartFileSystem2WriteCore.TrstOperation.Write, out actual, out error);
     }
+
+#if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
+    internal static void RetainOriginalCursor(APTR state, APTR file, uint node)
+    {
+        var cursor = APTR.FromPointer(file.Raw + NativeAmigaFileSystem.Sfs2FileWriteCursorOffset);
+        if (APTR.ReadUInt32(cursor, 0) != node || APTR.ReadUInt32(cursor, 40) == 0) return;
+        var retained = APTR.FromPointer(state.Raw + NativeAmigaFileSystem.Sfs2RetainedWriteCursorOffset);
+        new NativeFileSystemPlatform(state).Copy(cursor, retained, AmigaSmartFileSystem2WriteCore.OriginalDataCursorBytes);
+    }
+
+    internal static bool WriteOriginalCached(APTR state, uint node, ulong position, APTR data, uint length,
+        APTR cursor, out uint actual, out DOS.Error error)
+    {
+        var r = new AmigaSmartFileSystem2WriteCore.Request { Node = node, Position = position, Buffer = data, Length = length };
+        var p = new NativeFileSystemPlatform(state); actual = 0;
+        var group = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartRangeBufferOffset));
+        // Without the bounded timer, Mutate must supply the immediate barrier.
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0)
+        {
+            if (APTR.ReadUInt32(cursor, 0) == node)
+            {
+                if (!AmigaSmartFileSystem2WriteCore.TryContinueOriginalDataWrite(ref p, group, cursor,
+                    ref r, out var handled, out error)) return false;
+                if (handled) { actual = length; return true; }
+            }
+            else
+            {
+                var retained = APTR.FromPointer(state.Raw + NativeAmigaFileSystem.Sfs2RetainedWriteCursorOffset);
+                if (APTR.ReadUInt32(retained, 0) == node)
+                {
+                    if (!AmigaSmartFileSystem2WriteCore.TryContinueOriginalDataWrite(ref p, group, retained,
+                        ref r, out var handled, out error, reuseAfterFlush: true)) return false;
+                    if (handled) { actual = length; return true; }
+                }
+            }
+        }
+        return Mutate(state, ref r, AmigaSmartFileSystem2WriteCore.TrstOperation.Write, out actual, out error, cursor);
+    }
+#endif
 
     internal static bool Resize(APTR state, uint node, ulong size, out DOS.Error error)
     {

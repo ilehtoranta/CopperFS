@@ -5,6 +5,56 @@ namespace CopperSFS.Tests;
 
 public sealed class TrstCodecTests
 {
+    [Fact]
+    public void SparsePlansKeepCanonicalCodesAtEveryChangedWordAndReadOnlyCertifiedRegions()
+    {
+        for (var changedWord = 0; changedWord < 128; changedWord++)
+        foreach (var value in new[] { 0u, 0x12345678u, uint.MaxValue, 0x87654321u })
+        {
+            var p = new Memory(1700); var before = APTR.FromPointer(16);
+            var after = APTR.FromPointer(600); var full = APTR.FromPointer(1200); var sparse = APTR.FromPointer(1400);
+            for (var i = 0; i < 128; i++)
+            {
+                p.WriteUInt32(before, i * 4, 0x12345678);
+                p.WriteUInt32(after, i * 4, i == changedWord ? value : 0x12345678u);
+            }
+            var fullRuns = AmigaSmartFileSystemTrstCodec.Plan(ref p, before, after, 512, full, out var fullLength);
+            p.LongReads = 0;
+            var sparseRuns = AmigaSmartFileSystemTrstCodec.PlanSparse512(ref p, before, after,
+                1u << (changedWord >> 2), sparse, out var sparseLength);
+            Assert.Equal(8, p.LongReads); // Exactly one old/final read of the four possible changes.
+            Assert.Equal(fullRuns, sparseRuns); Assert.Equal(fullLength, sparseLength);
+            Assert.Equal(p.Bytes.AsSpan((int)full.Raw, (int)fullRuns).ToArray(),
+                p.Bytes.AsSpan((int)sparse.Raw, (int)sparseRuns).ToArray());
+        }
+    }
+
+    [Fact]
+    public void SparsePlansMatchFullPlansForMixedAndOverestimatedRegionMasks()
+    {
+        var random = new Random(279);
+        for (var trial = 0; trial < 200; trial++)
+        {
+            var p = new Memory(1700); var before = APTR.FromPointer(16);
+            var after = APTR.FromPointer(600); var full = APTR.FromPointer(1200); var sparse = APTR.FromPointer(1400);
+            var changed = trial == 0 ? 0u : trial == 1 ? uint.MaxValue : (uint)random.NextInt64(0, 1L << 32);
+            for (var i = 0; i < 128; i++)
+            {
+                var old = (uint)random.NextInt64(0, 1L << 32);
+                var kind = (changed & (1u << (i >> 2))) == 0 ? 1 : random.Next(4);
+                p.WriteUInt32(before, i * 4, old);
+                p.WriteUInt32(after, i * 4, kind switch { 0 => 0u, 1 => old, 2 => uint.MaxValue, _ => old ^ 0x5A5A5A5A });
+            }
+            var fullRuns = AmigaSmartFileSystemTrstCodec.Plan(ref p, before, after, 512, full, out var fullLength);
+            p.LongReads = 0;
+            var sparseRuns = AmigaSmartFileSystemTrstCodec.PlanSparse512(ref p, before, after, changed, sparse, out var sparseLength);
+            Assert.Equal(System.Numerics.BitOperations.PopCount(changed) * 8, p.LongReads);
+            Assert.Equal(fullRuns, sparseRuns); Assert.Equal(fullLength, sparseLength);
+            Assert.Equal(p.Bytes.AsSpan((int)full.Raw, (int)fullRuns).ToArray(),
+                p.Bytes.AsSpan((int)sparse.Raw, (int)sparseRuns).ToArray());
+        }
+    }
+
     private struct Memory(int length) : IAmigaGuestMemory
     {
         public readonly byte[] Bytes = Enumerable.Repeat((byte)0xA5, length).ToArray();
@@ -87,5 +137,30 @@ public sealed class TrstCodecTests
         for (var i = 0; i < 128; i++) p.WriteUInt32(after, i * 4, i < 65 ? 0x12345678u : 0u);
         Assert.Equal(3u, AmigaSmartFileSystemTrstCodec.Plan(ref p, before, after, 512, plan, out length));
         Assert.Equal(new byte[] { 0x7F, 0x40, 0x3E }, p.Bytes.AsSpan((int)plan.Raw, 3).ToArray());
+    }
+
+    [Fact]
+    public void AChangedWordAtEveryPositionKeepsCanonicalSkipBoundaries()
+    {
+        for (var changed = 0; changed < 128; changed++)
+        {
+            var p = new Memory(1700); var before = APTR.FromPointer(16);
+            var after = APTR.FromPointer(600); var plan = APTR.FromPointer(1200);
+            for (var i = 0; i < 128; i++)
+            {
+                p.WriteUInt32(before, i * 4, 0x12345678);
+                p.WriteUInt32(after, i * 4, i == changed ? 0x87654321u : 0x12345678u);
+            }
+            var expected = new List<byte>();
+            for (var left = changed; left != 0; left -= Math.Min(left, 64))
+                expected.Add((byte)(0x40 | (Math.Min(left, 64) - 1)));
+            expected.Add(0xC0);
+            for (var left = 127 - changed; left != 0; left -= Math.Min(left, 64))
+                expected.Add((byte)(0x40 | (Math.Min(left, 64) - 1)));
+            var runs = AmigaSmartFileSystemTrstCodec.Plan(ref p, before, after, 512, plan, out var length);
+            Assert.Equal(256, p.LongReads);
+            Assert.Equal((uint)expected.Count, runs); Assert.Equal(runs + 4, length);
+            Assert.Equal(expected, p.Bytes.AsSpan((int)plan.Raw, (int)runs).ToArray());
+        }
     }
 }

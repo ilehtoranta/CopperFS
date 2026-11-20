@@ -59,8 +59,13 @@ public class SchedulingTests
     }
     private struct MeterMemory(Meter meter):ICpxMemory
     {
+        public void Copy(uint destination,uint source,uint bytes) => CpxMemoryCopy.Forward(ref this,destination,source,bytes);
+        public uint Read16(uint p)=>(uint)Read8(p)<<8|Read8(p+1);
+        public void Write16(uint p,uint v) { Write8(p,(byte)(v>>8)); Write8(p+1,(byte)v); }
         public byte Read8(uint p)=>meter.Read(p);
-        public uint Read32(uint p)=>BinaryPrimitives.ReadUInt32BigEndian(meter.Bytes.AsSpan((int)p));
+        // Observe the same byte sequence for longword CRC input. Table reads
+        // lie outside the six pages and do not count as another page checksum.
+        public uint Read32(uint p)=>(uint)meter.Read(p)<<24|(uint)meter.Read(p+1)<<16|(uint)meter.Read(p+2)<<8|meter.Read(p+3);
         public void Write8(uint p,byte b)=>meter.Bytes[p]=b;
         public void Write32(uint p,uint n)=>BinaryPrimitives.WriteUInt32BigEndian(meter.Bytes.AsSpan((int)p),n);
     }

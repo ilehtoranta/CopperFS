@@ -17,6 +17,7 @@ param(
     [switch]$Sfs2TrstWrites,
     [switch]$SharedDispatch,
     [switch]$AutoTrim,
+    [switch]$FfsTrimLayoutControl,
     [ValidateSet(64, 256, 1024)] [int]$FfsIndexKiB = 256,
     [switch]$SkipCompilerBuild,
     [switch]$SkipCilica,
@@ -28,25 +29,27 @@ param(
     [switch]$SfsInPlaceOverwrite,
     [ValidateSet(0, 16)] [int]$SfsExtraKiB = 0,
     [switch]$OwnedSfs2,
+    [switch]$Sfs2OriginalDataWrites,
     [ValidateSet(0, 16, 64, 256)] [int]$Sfs2ExtraKiB = 0,
     [switch]$Sfs2CsunWrites
 )
 
 $ErrorActionPreference = 'Stop'
+if ($FfsTrimLayoutControl -and (!$Ffs -or $NoSpecialization -or $SharedDispatch -or $Cpx4)) { throw 'FfsTrimLayoutControl requires the specialized FFS entry.' }
+if ($CilicaInlining -and ($SkipCilica -or $Cpx4)) { throw 'CilicaInlining requires this script''s CILica stage and excludes Cpx4.' }
 if ($SfsInPlaceOverwrite -and (!$SharedSfsPool -or $Cpx4)) { throw 'SfsInPlaceOverwrite requires the SFS shared-pool profile.' }
 if ($SfsCoreCilica -and (!$SharedSfsPool -or $SkipCilica -or $Cpx4)) {
     throw 'SfsCoreCilica requires the shared SFS pool and CILica.'
 }
 if ($SfsExtraKiB -ne 0 -and (!$SharedSfsPool -or $Cpx4)) { throw 'SfsExtraKiB requires the SFS shared-pool profile.' }
 if ($Cpx4) {
-    if ($Ffs -or $Sfs2 -or $FfsOnly -or $SmartOnly -or $OwnedSfs2 -or $GroupedSfs2Trst) { throw 'Cpx4 is an isolated handler profile.' }
+    if ($Ffs -or $Sfs2 -or $FfsOnly -or $SmartOnly -or $OwnedSfs2 -or $GroupedSfs2Trst -or $Sfs2OriginalDataWrites) { throw 'Cpx4 is an isolated handler profile.' }
     & (Join-Path $PSScriptRoot 'Build-Cpx4Handler.ps1') -CopperSharpRoot $CopperSharpRoot -Configuration $Configuration -ArtifactRoot $ArtifactRoot -Cpu $Cpu -SkipCompilerBuild:$SkipCompilerBuild
     return
 }
 if ($SharedSfsPool) { $GroupedSfsTrst = [switch]::new($true) }
 if ($OwnedSfs2) { $GroupedSfs2Trst = [switch]::new($true) }
 if ($GroupedSfsTrst -and ($Ffs -or $Sfs2 -or $StrictWrites -or $LegacyCsUn)) { throw 'GroupedSfsTrst requires buffered SFS TRST.' }
-if ($Sfs2ExtraKiB -ne 0 -and !$OwnedSfs2) { throw 'Sfs2ExtraKiB requires -OwnedSfs2.' }
 if ($SharedDispatch) { $NoSpecialization = $true }
 if ($Ffs -and $Sfs2) { throw 'Choose the FFS or SFS2 handler, not both.' }
 if ($FfsOnly -and (!$Ffs -or $Sfs2)) { throw 'FfsOnly requires -Ffs and excludes -Sfs2.' }
@@ -65,12 +68,29 @@ if ([string]::IsNullOrWhiteSpace($ArtifactRoot)) { $ArtifactRoot = Join-Path $fi
 $inputRoot = Join-Path $ArtifactRoot 'inputs'
 if (($Sfs2TrstWrites -or $Sfs2CsunWrites) -and !$Sfs2) { throw 'SFS2 write-policy switches require -Sfs2.' }
 if ($Sfs2TrstWrites -and $Sfs2CsunWrites) { throw 'Choose one SFS2 write policy.' }
-if ($GroupedSfs2Trst -and (!$Sfs2 -or $Sfs2CsunWrites -or $StrictWrites)) { throw 'GroupedSfs2Trst requires SFS2 TRST without StrictWrites.' }
 $useSfs2Trst = $Sfs2 -and !$Sfs2CsunWrites -and ($Sfs2TrstWrites -or !$PSBoundParameters.ContainsKey('Sfs2TrstWrites'))
+if (($GroupedSfs2Trst -or $Sfs2OriginalDataWrites) -and (!$useSfs2Trst -or $StrictWrites)) { throw 'Grouped and original-data SFS2 profiles require SFS2 TRST without StrictWrites.' }
+# The handler project selects the SFS2 defaults. Pass only explicit overrides.
+$sfs2Profile = @()
+if ($PSBoundParameters.ContainsKey('OwnedSfs2')) {
+    $sfs2Profile += "-p:CopperFsSfs2Owned=$($OwnedSfs2.IsPresent.ToString().ToLowerInvariant())"
+}
+if ($OwnedSfs2 -or $PSBoundParameters.ContainsKey('GroupedSfs2Trst')) {
+    $sfs2Profile += "-p:CopperStartSfs2TrstGrouped=$($GroupedSfs2Trst.IsPresent.ToString().ToLowerInvariant())"
+}
+if ($PSBoundParameters.ContainsKey('Sfs2OriginalDataWrites')) {
+    $sfs2Profile += "-p:CopperFsSfs2OriginalDataWrites=$($Sfs2OriginalDataWrites.IsPresent.ToString().ToLowerInvariant())"
+}
 # Only the qualified default policies opt in automatically. Other write-policy
 # combinations retain their existing combined handler until qualified.
 $useFfsOnly = $FfsOnly -or ($Ffs -and !$Sfs2 -and !$NoSpecialization -and !$StrictWrites -and !$LegacyCsUn)
 $useSmartOnly = $SmartOnly -or (!$Ffs -and !$NoSpecialization -and !$Sfs2CsunWrites -and !$StrictWrites -and !$LegacyCsUn)
+# Match the qualified standalone FFS layout in both AutoTrim policies.
+# The -AutoTrim switch alone still enables discard.
+if ($useFfsOnly) {
+    if (!$PSBoundParameters.ContainsKey('FfsTrimLayoutControl')) { $FfsTrimLayoutControl = [switch]::new($true) }
+    if (!$SkipCilica -and !$PSBoundParameters.ContainsKey('CilicaInlining')) { $CilicaInlining = [switch]::new($true) }
+}
 New-Item -ItemType Directory -Force -Path $inputRoot | Out-Null
 $cliProject = Join-Path $CopperSharpRoot 'Compiler.Cli/CopperSharp.Compiler.Cli.csproj'
 $dosProject = Join-Path $repositoryRoot 'src/CopperFS.Amiga/CopperFS.Amiga.csproj'
@@ -78,7 +98,7 @@ if (!$SkipCompilerBuild) {
     dotnet build $cliProject -c $Configuration --verbosity quiet -m:1
     if ($LASTEXITCODE -ne 0) { throw 'CopperSharp compiler build failed.' }
 }
-dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" "-p:CopperFsFfsIndexKiB=$FfsIndexKiB" "-p:CopperFsAutoTrim=$($AutoTrim.IsPresent.ToString().ToLowerInvariant())" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsOnly=$($useFfsOnly.ToString().ToLowerInvariant())" "-p:CopperFsSmartOnly=$($useSmartOnly.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperFsSfsInPlace=$($SfsInPlaceOverwrite.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsExtraKiB=$SfsExtraKiB" "-p:CopperFsSfsPool=$($SharedSfsPool.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsGrouped=$($GroupedSfsTrst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2Owned=$($OwnedSfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2ExtraKiB=$Sfs2ExtraKiB" "-p:CopperStartSfs2TrstGrouped=$($GroupedSfs2Trst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfs2TrstWrites=$($useSfs2Trst.ToString().ToLowerInvariant())" --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
+dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$CopperSharpRoot" "-p:CopperFsFfsTrimLayoutControl=$($FfsTrimLayoutControl.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsIndexKiB=$FfsIndexKiB" "-p:CopperFsAutoTrim=$($AutoTrim.IsPresent.ToString().ToLowerInvariant())" '-p:CopperStartSfsStandalone=true' '-p:CopperStartNativeSfsWrites=true' "-p:CopperFsNativeFfsReadAhead=$($Ffs.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsFfsOnly=$($useFfsOnly.ToString().ToLowerInvariant())" "-p:CopperFsSmartOnly=$($useSmartOnly.ToString().ToLowerInvariant())" "-p:CopperStartSfsStrictWrites=$($StrictWrites.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstWrites=$($useTrst.ToString().ToLowerInvariant())" "-p:CopperStartSfsTrstBuffered=$($useBufferedTrst.ToString().ToLowerInvariant())" "-p:CopperFsSfsInPlace=$($SfsInPlaceOverwrite.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsExtraKiB=$SfsExtraKiB" "-p:CopperFsSfsPool=$($SharedSfsPool.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfsGrouped=$($GroupedSfsTrst.IsPresent.ToString().ToLowerInvariant())" "-p:CopperStartNativeSfs2=$($Sfs2.IsPresent.ToString().ToLowerInvariant())" "-p:CopperFsSfs2ExtraKiB=$Sfs2ExtraKiB" "-p:CopperStartSfs2TrstWrites=$($useSfs2Trst.ToString().ToLowerInvariant())" @sfs2Profile --artifacts-path (Join-Path $ArtifactRoot 'managed-build') --output $inputRoot --verbosity quiet -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler input build failed.' }
 $compiler = Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"
 $dos = Join-Path $inputRoot 'CopperFS.Amiga.dll'
@@ -91,14 +111,14 @@ if (!$SkipCilica) {
     $activeSdkVersion = (& dotnet --version).Trim()
     & (Join-Path $CopperSharpRoot 'scripts/optimize-il.ps1') -InputAssembly $dos -OutputAssembly $optimizedDos -ResolverPaths $inputRoot -SdkVersion $activeSdkVersion
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$optimizedDos.cilica.json")) { throw 'Standalone handler CILica optimization failed.' }
-    # The pinned optimizer supports scalar replacement independently of inlining.
-    # Reprocess the original input with that profile, never the inlined output.
+    # Compare inlining independently of scalar replacement. Both modes consume
+    # the original input and retain the optimizer's provenance report.
     $optimizer = Join-Path $CopperSharpRoot '.artifacts/CilicaOptimizer/build/bin/CilicaOptimizer/release/CilicaOptimizer.dll'
-    $inlining = if ($CilicaInlining) { 'on' } else { 'off' }
-    dotnet $optimizer $dos $optimizedDos --resolver $inputRoot --inlining $inlining
+    $inliningMode = if ($CilicaInlining) { 'on' } else { 'off' }
+    dotnet $optimizer $dos $optimizedDos --resolver $inputRoot --inlining $inliningMode
     if ($LASTEXITCODE -ne 0) { throw 'Standalone CILica optimization failed.' }
     $report = Get-Content -LiteralPath "$optimizedDos.cilica.json" -Raw | ConvertFrom-Json
-    if ($report.EnableInlining -ne $CilicaInlining.IsPresent -or $report.EnableScalarReplacement -ne $true) { throw 'Unexpected CILica optimization profile.' }
+    if ($report.EnableInlining -ne [bool]$CilicaInlining -or $report.EnableScalarReplacement -ne $true) { throw 'Unexpected CILica optimization profile.' }
     $dos = $optimizedDos
     if ($SfsCoreCilica) {
         $driver = Join-Path $repositoryRoot 'tools/CopperSFS.Cilica/CopperSFS.Cilica.csproj'
@@ -113,7 +133,7 @@ if (!$SkipCilica) {
             if ($LASTEXITCODE -ne 0) { throw 'SFS core scalar replacement failed.' }
             dotnet $tool (Join-Path $scalarDirectory 'CopperSFS.Core.dll') $outputDirectory on hot $inputRoot
         } else {
-            dotnet $tool $core $outputDirectory $inlining writer $inputRoot
+            dotnet $tool $core $outputDirectory $inliningMode writer $inputRoot
         }
         if ($LASTEXITCODE -ne 0) { throw 'SFS core CILica optimization failed.' }
         $core = Join-Path $outputDirectory 'CopperSFS.Core.dll'
@@ -126,7 +146,7 @@ $entry = if ($Ffs) { 'CopperStart.Dos.NativeSfsStandaloneHandler::FfsEntry' } el
 # transport and memory accesses without adding shared-return branches.
 $codeSizePasses = 'ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,ClusterInternalCalls,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis'
 # The FFS-only call clustering layout measurably slows the qualified read
-# workloads. Keep every other pass and the same no-inline CILica profile.
+# workloads. Keep every other native pass fixed when comparing CILica profiles.
 if ($useFfsOnly) { $codeSizePasses = $codeSizePasses.Replace('ClusterInternalCalls,', '') }
 $arguments = @($compiler, $dos, '--entry', $entry,
     '--platform', 'amiga', '--cpu', $Cpu, '--clr', 'always', '--peephole', 'fixed-point',

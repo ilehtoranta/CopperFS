@@ -3,6 +3,53 @@ using System.Buffers.Binary;
 namespace CopperSFS.Tests;
 public sealed partial class AmigaSmartFileSystemTests
 {
+    [Theory]
+    [InlineData(1u)]
+    [InlineData(2u)]
+    public void SharedPoolHomeWriteFailureUpdatesCaller(uint runCapacity)
+    {
+        const uint first = 2000, lastHome = first + 14;
+        var seed = ContinuationSeed((int)first);
+        var baseline = Stage();
+        var work = TrstWork();
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref baseline, ref work, GroupAddress));
+        var homeWriteIndex = baseline.WrittenSectors!.FindIndex(write => write.Block == lastHome);
+        Assert.True(homeWriteIndex >= 0);
+        Assert.Equal(baseline.WrittenSectors.Count, baseline.Writes);
+
+        var disk = Stage();
+        disk.FailAtWrite = homeWriteIndex + 1;
+        work = TrstWork();
+        Assert.False(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        Assert.Equal(DOS.Error.DiskNotValidated, work.Error);
+        Assert.Equal(disk.FailAtWrite, disk.Writes);
+        Assert.Equal(homeWriteIndex, disk.WrittenSectors!.Count);
+        Assert.DoesNotContain(disk.WrittenSectors, write => write.Block == lastHome);
+
+        disk.FailAtWrite = 0;
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        Assert.Equal(baseline.Snapshot(), disk.Snapshot());
+
+        Disk Stage()
+        {
+            var staged = new Disk(seed.Image.ToArray()) { RetainedRunCapacity = runCapacity };
+            Assert.True(AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref staged, GroupAddress, 9756));
+            Assert.True(GroupWrite(ref staged, 3, 0, new byte[1024]));
+            var scratch = TrstWork().Meta;
+            // Stage widely spaced payload sectors so the retained-run path still has single-block homes.
+            for (var block = first + 4; block <= lastHome; block += 2)
+            {
+                Assert.True(staged.ReadBlock(block, scratch));
+                staged.WriteUInt8(scratch, 0, (byte)block);
+                Assert.True(staged.WriteBlock(block, scratch));
+            }
+            Assert.InRange(staged.ReadUInt32(staged.RedoOverlay), 6u, 64u);
+            staged.Writes = 0;
+            staged.WrittenSectors = [];
+            return staged;
+        }
+    }
+
     [Fact]
     public void OverlappingSuccessorCannotCertifyTwoPhysicalSourceRuns()
     {

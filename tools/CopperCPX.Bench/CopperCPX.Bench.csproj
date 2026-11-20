@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../prototypes/CopperFS.Cpx4.Reference/CopperFS.Cpx4.Reference.csproj" />
+    <ProjectReference Include="../CopperSFS.Check/CopperSFS.Check.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Targets.Amiga/CopperSharp.Targets.Amiga.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Sdk.Amiga/CopperSharp.Sdk.Amiga.csproj" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Compiler.BootAdf/CopperSharp.Compiler.BootAdf.csproj" />
+    <ProjectReference Include="../../../CopperScreen/CopperMod.Amiga.Lightweight/CopperMod.Amiga.Lightweight.csproj" />
+    <Compile Include="../../tests/CopperFFS.Core.Tests/DosDiskImage.cs" Link="Fixtures/DosDiskImage.cs" />
+  </ItemGroup>
+</Project>

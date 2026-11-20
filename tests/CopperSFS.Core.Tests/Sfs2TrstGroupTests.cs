@@ -66,7 +66,7 @@ public sealed class Sfs2TrstGroupTests
         PutFile(ref seed, node, 0, StudyFixture.Pattern(65536)); image = seed.Snapshot();
         var disk = new StudyDisk(image, 512); Initialize(ref disk, true);
         Accept(ref disk, node, 91); Accept(ref disk, node, 92, 512); Accept(ref disk, node, 93, 1024);
-        var active = disk.RedoOverlay; var full = disk.ReadUInt32(active, 20) + disk.ReadUInt32(active) * 528;
+        var active = disk.RedoOverlay; var full = disk.ReadUInt32(active, 20) + disk.ReadUInt32(active) * (512 + Sfs2MetadataStore.SlotBytes);
         var accepted = disk.Ram.AsSpan((int)active.Raw, (int)full).ToArray();
         var context = disk.Sfs2Context; var epoch = disk.ReadUInt32(context, 8); var generation = disk.ReadUInt32(context, 12);
         for (var retry = 0; retry < 2; retry++)

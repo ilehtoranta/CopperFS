@@ -69,6 +69,8 @@ public static class FfsAppendProbe
         CorrectnessProbe.Report(200);
         for (var shift = 24; shift >= 0; shift -= 8) CorrectnessProbe.Report((int)(control.Raw >> shift));
         if (CorrectnessProbe.Mount(control, kind) != 0) return CorrectnessProbe.Failed(control, 3);
+        if (!seed && APTR.ReadUInt32(control, 948) == 1 && !CorrectnessProbe.WarmDiscardDevice(data))
+            return CorrectnessProbe.Failed(control, 13);
         var port = DOS.DeviceProc("SEQ0:");
         if (port.IsNull) return CorrectnessProbe.Failed(control, 4);
         for (var i = 0; i < 4096; i++) APTR.WriteUInt8(data, i, seed ? (byte)0x35 : (byte)0x66);

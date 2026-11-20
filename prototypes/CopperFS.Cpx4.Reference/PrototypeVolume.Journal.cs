@@ -80,7 +80,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private bool ReadCheckpoint(ulong at, out ulong transaction)
     {
         RawRead(at, B(5)); transaction = U64(B(5), 80);
-        return IsPage(B(5), PageType.Checkpoint, at, 0) && layout.IdentityMatches(B(5)) && transaction == U64(B(5), 32);
+        return VolumePage(B(5), PageType.Checkpoint, at, 0) && layout.IdentityMatches(B(5)) && transaction == U64(B(5), 32);
     }
     private void ReadImage(ulong transaction, int index, scoped Span<byte> page)
     {
@@ -90,7 +90,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         if (U32(Index, offset + 16) != index || U16(Index, offset + 26) != 0 || U32(Index, offset + 28) != 0)
             throw new InvalidDataException("Invalid journal descriptor.");
         RawRead(layout.Image(transaction, index), page);
-        if (!IsPage(page, type, address, owner) || U64(page, 32) != transaction || U32(page, 8) != U32(Index, offset + 20))
+        if (!VolumePage(page, type, address, owner) || U64(page, 32) != transaction || U32(page, 8) != U32(Index, offset + 20))
             throw new InvalidDataException("Committed journal image is corrupt.");
     }
     private void RecoverJournal(bool onlyRead)
@@ -102,8 +102,8 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         for (ulong slot = 1; slot <= 2; slot++)
         {
             RawRead(layout.Commit(slot), B(5));
-            if (!ValidCrc(B(5))) continue; // uncommitted/torn publication under the documented crash model
-            if (!IsPage(B(5), PageType.Commit, layout.Commit(slot), 0) || !layout.IdentityMatches(B(5)))
+            if (!VolumeCrc(B(5))) continue; // uncommitted/torn publication under the documented crash model
+            if (!VolumePage(B(5), PageType.Commit, layout.Commit(slot), 0) || !layout.IdentityMatches(B(5)))
                 throw new InvalidDataException("Invalid valid-CRC commit identity.");
             ulong tx = U64(B(5), 80);
             if (tx != U64(B(5), 32) || layout.Commit(tx) != layout.Commit(slot)) throw new InvalidDataException("Commit slot/ID mismatch.");
@@ -116,7 +116,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         {
             if (onlyRead) throw new InvalidOperationException("Journal recovery requires a writable mount.");
             RawRead(layout.Journal(successor), B(5));
-            if (!IsPage(B(5), PageType.JournalHeader, layout.Journal(successor), 0) || !layout.IdentityMatches(B(5)) ||
+            if (!VolumePage(B(5), PageType.JournalHeader, layout.Journal(successor), 0) || !layout.IdentityMatches(B(5)) ||
                 U64(B(5), 32) != successor || U64(B(5), 80) != successor || U64(B(5), 88) != generation || U32(B(5), 96) != count || U32(B(5), 100) != digest)
                 throw new InvalidDataException("Commit/header mismatch.");
             Index.Clear();
@@ -124,7 +124,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             {
                 RawRead(layout.Descriptor(successor, page), B(5));
                 int first = page * layout.DescriptorsPerPage, take = Math.Clamp(count - first, 0, layout.DescriptorsPerPage);
-                if (!IsPage(B(5), PageType.Descriptor, layout.Descriptor(successor, page), 0) || U64(B(5), 32) != successor || U16(B(5), 48) != take)
+                if (!VolumePage(B(5), PageType.Descriptor, layout.Descriptor(successor, page), 0) || U64(B(5), 32) != successor || U16(B(5), 48) != take)
                     throw new InvalidDataException("Corrupt journal descriptors.");
                 if (take != 0) B(5).Slice(64, take * 32).CopyTo(Index[(first * 32)..]);
             }
@@ -140,7 +140,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             if(ownedAttribute&&!stateImage)
             {
                 RawRead(layout.State,B(0));
-                if(!IsPage(B(0),PageType.State,layout.State,0)||U64(B(0),32)>generation) throw new InvalidDataException("Invalid ownership feature state.");
+                if(!VolumePage(B(0),PageType.State,layout.State,0)||U64(B(0),32)>generation) throw new InvalidDataException("Invalid ownership feature state.");
                 ownership=U16(B(0),52)==136;
             }
             if(ownedAttribute&&!ownership) throw new InvalidDataException("Owned attributes require the ownership feature before replay.");

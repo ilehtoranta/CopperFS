@@ -7,6 +7,88 @@ namespace CopperSFS.Tests;
 
 public sealed class Sfs2OwnedStateTests
 {
+    [Fact]
+    public void InvalidatedCacheSlotsAreReusedWithoutRevivingEarlierHandles()
+    {
+        var disk = Mounted(); var work = WorkFor(disk);
+        var root = disk.ReadUInt32(Sfs2MountContext.RootImage(disk.Sfs2Context), 104);
+        var cache = Sfs2MountContext.Cache(ref disk, disk.Sfs2Context);
+        Assert.True(Sfs2MetadataStore.Acquire(ref disk, root, 0x4F424A43, work.Meta, out var pin));
+        var stale = pin; Assert.True(Sfs2MetadataStore.Release(ref disk, ref pin));
+        var occupied = disk.ReadUInt32(cache);
+        for (var i = 0; i < 50; i++)
+        {
+            Assert.True(Sfs2MetadataStore.Invalidate(ref disk, cache, root, 1));
+            Assert.True(Sfs2MetadataStore.Acquire(ref disk, root, 0x4F424A43, work.Meta, out pin));
+            Assert.False(Sfs2MetadataStore.Current(ref disk, stale));
+            Assert.False(Sfs2MetadataStore.Release(ref disk, ref stale));
+            Assert.Equal(occupied, disk.ReadUInt32(cache));
+            stale = pin; Assert.True(Sfs2MetadataStore.Release(ref disk, ref pin));
+        }
+    }
+
+    [Fact]
+    public void GenericEditableViewPreservesPinsAndCannotHideChangesFromPredecessorClone()
+    {
+        var disk = Mounted(); var work = WorkFor(disk);
+        var root = disk.ReadUInt32(Sfs2MountContext.RootImage(disk.Sfs2Context), 104);
+        var source = disk.BatchBuffer; const uint budget = 32752;
+        var destination = APTR.FromPointer(source.Raw + budget);
+        Assert.True(disk.ReadBlock(root, work.Meta));
+        Assert.True(Sfs2MetadataStore.Initialize(ref disk, source, budget, 512, 1));
+        Assert.True(Sfs2MetadataStore.Store(ref disk, source, root, work.Meta, 0x4F424A43));
+        Assert.True(Sfs2MetadataStore.Clone(ref disk, source, destination, budget, 2));
+        disk.WriteUInt32(source, 24, 0); disk.WriteUInt32(destination, 24, 0);
+        Assert.True(Sfs2MetadataStore.Acquire(ref disk, source, root, 0x4F424A43, out var pin));
+        Assert.True(AmigaSmartFileSystemRedoArena.MetadataView(ref disk, source, root, 0x4F424A43, true, out var found).IsNull);
+        Assert.True(found); Assert.True(Sfs2MetadataStore.Release(ref disk, ref pin));
+        var image = AmigaSmartFileSystemRedoArena.MetadataView(ref disk, source, root, 0x4F424A43, true, out found);
+        Assert.True(found); Assert.True(image.IsNotNull);
+        disk.WriteUInt32(image, 36, 0x10203040);
+        Seal(disk.Ram.AsSpan((int)image.Raw, 512));
+        Assert.True(Sfs2MetadataStore.Clone(ref disk, source, destination, budget, 3, true));
+        var copied = Sfs2MetadataStore.Find(ref disk, destination, root);
+        Assert.Equal(0x10203040u, disk.ReadUInt32(copied, 36));
+        Assert.True(AmigaFileSystemBlockIo.ValidSfs2Sum(ref disk, copied, 512));
+    }
+
+    [Fact]
+    public void FullBlockRunOverwriteKeepsPrivateImagesAcrossFragmentedExtents()
+    {
+        var (image, node) = Seed();
+        var seed = new StudyDisk(image, 512);
+        PutFile(ref seed, node, 1027, StudyFixture.Pattern(8192, 53), true);
+        image = seed.Snapshot();
+        var payload = StudyFixture.Pattern(4096, 91);
+        string Run(bool owned)
+        {
+            var disk = new StudyDisk(image, 512); var work = WorkFor(disk);
+            if (owned)
+            {
+                Assert.True(Sfs2MountContext.Mount(ref disk, ref work, APTR.FromPointer(disk.Payload.Raw + 900000), 16508));
+                Assert.True(InitializeTrstGroup(ref disk, disk.BatchBuffer, 65536));
+            }
+            var source = APTR.FromPointer(disk.Payload.Raw + 1);
+            payload.CopyTo(disk.Ram, (int)source.Raw);
+            var request = new Request { Node = node, Position = 512, Buffer = source, Length = 4096 };
+            uint actual;
+            Assert.True(owned ? ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write, disk.BatchBuffer, out actual) :
+                ExecuteTrst(ref disk, ref work, ref request, TrstOperation.Write, disk.BatchBuffer, 65536, out actual));
+            Assert.Equal(4096u, actual);
+            if (owned)
+            {
+                Assert.Equal(image, disk.Snapshot()); // Nothing reached the physical device.
+                disk.Ram.AsSpan((int)source.Raw, 4096).Fill(0xA7);
+                Assert.Equal(4096, AmigaSmartFileSystemReadOnlyCore.Read(ref disk, node, 512,
+                    disk.Payload, 4096, work.Meta, work.Data, out _));
+                Assert.Equal(payload, disk.Ram.AsSpan((int)disk.Payload.Raw, 4096).ToArray());
+                Assert.True(FlushTrstGroup(ref disk, ref work, disk.BatchBuffer));
+            }
+            return Manifest(disk.Snapshot());
+        }
+        Assert.Equal(Run(false), Run(true));
+    }
+
     private static StudyDisk Mounted(uint capacity = 16384)
     {
         var (image, _) = Seed(); var disk = new StudyDisk(image, 512); var work = WorkFor(disk);

@@ -45,6 +45,57 @@ public sealed partial class VolumeGeometryTests
     }
 
     [Fact]
+    public void TrackedFfsBatchKeepsBitmapScratchIdentityAcrossDisjointMaps()
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g); var w = Work();
+        var batch = APTR.FromPointer((uint)storage.Ram.Length - 2048);
+        p.WriteUInt32(batch, 0, 100); p.WriteUInt32(batch, 4, 16);
+        p.WriteUInt32(batch, 8, 8500); p.WriteUInt32(batch, 12, 16);
+        Assert.True(AmigaFfsWriteCore.TrimFreedBatch(ref p, ref w, APTR.Null, batch, 2, out var result), w.Error.ToString());
+        Assert.Equal(32u, result.Blocks); Assert.Equal(1, storage.Flushes);
+        Assert.Equal(2, storage.Discards.Count);
+    }
+
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void TrackedFfsFreesAreDurableAndReallocatedDataSurvives(bool ofs)
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g); if (ofs) SetDosType(ref p, 0x444F5300);
+        storage.FreedQueue = APTR.FromPointer((uint)storage.Ram.Length - 4096);
+        var w = Work(); System.Text.Encoding.ASCII.GetBytes("Deleted").CopyTo(storage.Ram, (int)Name.Raw);
+        var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 7 };
+        Assert.True(AmigaFfsWriteCore.Create(ref p, ref w, ref r, false));
+        storage.Ram.AsSpan((int)Payload.Raw, 4099).Fill(0xA7);
+        r.Buffer = Payload; r.Length = 4099;
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref r, out _));
+        Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, r.Header, false));
+        Assert.True(AmigaFreedRangeQueue.Count(ref p, storage.FreedQueue) > 0);
+        System.Text.Encoding.ASCII.GetBytes("Reused").CopyTo(storage.Ram, (int)Name.Raw);
+        r = new() { Directory = g.RootBlock, Name = Name, Length = 6 };
+        Assert.True(AmigaFfsWriteCore.Create(ref p, ref w, ref r, false));
+        storage.Ram.AsSpan((int)Payload.Raw, 513).Fill(0xB6);
+        r.Buffer = Payload; r.Length = 513;
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref r, out _));
+        while (AmigaFreedRangeQueue.Take(ref p, storage.FreedQueue, 4096, 0, out var first, out var count))
+        {
+            var before = storage.Discards.Count;
+            storage.FailFlush = true;
+            Assert.False(AmigaFfsWriteCore.TrimFreedRange(ref p, ref w, APTR.Null, first, count, out _));
+            Assert.Equal(before, storage.Discards.Count);
+            storage.FailFlush = false;
+            Assert.True(AmigaFfsWriteCore.TrimFreedRange(ref p, ref w, APTR.Null, first, count, out _), w.Error.ToString());
+            foreach (var range in storage.Discards.Skip(before))
+                Assert.True(range.Block >= first && range.Count <= count && range.Block - first <= count - range.Count);
+        }
+        Assert.True(storage.Discarded > 0);
+        Assert.Equal(513, AmigaDiskFileSystemCore.Read(ref p, r.Header, ofs ? 0x444F5300u : 0x444F5301u,
+            0, Output, 513, Meta, Data, out _));
+        Assert.All(storage.Ram.AsSpan((int)Output.Raw, 513).ToArray(), b => Assert.Equal(0xB6, b));
+    }
+
+    [Fact]
     public void AutomaticUnsupportedDiscoveryDoesNotReadOrEvictBootBlock()
     {
         var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));

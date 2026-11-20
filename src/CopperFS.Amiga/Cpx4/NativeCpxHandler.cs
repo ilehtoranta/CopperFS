@@ -33,11 +33,12 @@ public static class NativeCpxHandler
                 NativeCpxTransport.Initialize(arena,request,start,sectors,maximum,mask,true,sectorBytes);
                 if(NativeCpxTransport.ReserveDma(arena,APTR.ReadUInt32(env,48)))
                     opened=Exec.OpenDevice(CString.FromPointer(device.Raw),APTR.ReadUInt32(startup,0),request,APTR.ReadUInt32(startup,12))==0;
+                if(opened) NativeCpxTransport.EnableQuickIo(arena);
                 if(opened&&NativeCpxMedia.Initialize(arena,request,ioPort,task))
                 {
                     NativeCpxLifecycle.BeginStartup(arena,message,packet);
                     var dispatcher=new CpxDosDispatcher<NativeCpxMemory>(new NativeCpxMemory(),arena);
-                    ran=true; error=Run(arena,port,ioPort,ref dispatcher);
+                    ran=true; error=Run(arena,port,ioPort,ref dispatcher,task);
                 }
             }
             else error=115;
@@ -48,6 +49,8 @@ public static class NativeCpxHandler
         NativeCpxTransport.ReleaseDma(arena);
         if(request.IsNotNull) Exec.DeleteIORequest(request);
         if(ioPort.IsNotNull) Exec.DeleteMsgPort(ioPort);
+        var retired=new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena);
+        if(retired.BufferedStorageAddress!=0) Exec.FreeMem(retired.BufferedStorageAddress,retired.BufferedStorageCapacity);
         Exec.FreeMem(arena,bytes); Exec.CloseLibrary(dos); return error==0?0u:20u;
     }
     internal static bool Geometry(APTR env,out Wide start,out Wide sectors,out uint sectorBytes,out uint maximum,out uint mask)
@@ -66,7 +69,7 @@ public static class NativeCpxHandler
             !Wide.Left(first,shift,out start)||!Wide.Add(first,sectors,out var end)||!Wide.Left(end,shift,out _)) return false;
         maximum=APTR.ReadUInt32(env,52); mask=APTR.ReadUInt32(env,56); return maximum>=sectorBytes;
     }
-    internal static uint Run(uint arena,APTR port,APTR ioPort,ref CpxDosDispatcher<NativeCpxMemory> dispatcher)
+    internal static uint Run(uint arena,APTR port,APTR ioPort,ref CpxDosDispatcher<NativeCpxMemory> dispatcher,APTR task=default)
     {
         APTR message=APTR.Null,packet=APTR.Null;
         uint wheel=0,removeAt=64,removeEnd=64,woken=0;
@@ -77,13 +80,14 @@ public static class NativeCpxHandler
             {
                 NativeCpxMedia.Poll(arena);
                 bool changed=NativeCpxMedia.TakeChange(arena);
-                uint control=woken|Exec.SetSignal(0,4096);
+                uint control=TakeControl(woken,task);
                 woken=0;
                 if(changed||(control&4096)!=0)
                     NativeCpxLifecycle.Stop(arena,changed?226u:304u,ref dispatcher);
                 StepResult step=NativeCpxLifecycle.Visit(arena,port,ref dispatcher);
                 if(step==StepResult.Complete) return NativeCpxLifecycle.Error(arena);
-                if(step==StepResult.NeedIo&&!HasMessages(ioPort)) woken=Exec.Wait(signals);
+                if(step==StepResult.NeedIo&&!HasMessages(ioPort))
+                    woken=Exec.Wait(signals|NativeCpxRecordTimers.SignalMask(arena));
                 continue;
             }
             // One asynchronous-resource phase plus at most three filesystem
@@ -92,7 +96,7 @@ public static class NativeCpxHandler
             // Wait consumes its signal bits. Retain the returned control signal
             // until the next bounded visit instead of relying on SetSignal.
             if(NativeCpxMedia.TakeChange(arena)) { dispatcher.MediaRemoved(); NativeCpxTransport.RequestStop(arena); activity=true; auxiliary=true; }
-            else if(((woken|Exec.SetSignal(0,4096))&4096)!=0)
+            else if((TakeControl(woken,task)&4096)!=0)
             { dispatcher.RequestStorageCancellation(); if(dispatcher.StorageStopPending) NativeCpxTransport.RequestStop(arena); activity=true; auxiliary=true; }
             else if(auxiliary) activity=wheel==5?NativeCpxMedia.Poll(arena):ServiceAsync(arena,port,wheel,ref dispatcher);
             woken=0;
@@ -103,6 +107,7 @@ public static class NativeCpxHandler
                 if(removeAt==removeEnd) Reply(message,packet,port,dispatcher.Result,dispatcher.DosError);
                 continue;
             }
+            if(!dispatcher.Busy&&NativeCpxMaintenance.Service(arena,ref dispatcher)) continue;
             if(!dispatcher.Busy)
             {
                 if(!dispatcher.TryBeginNotificationRefresh())
@@ -134,19 +139,23 @@ public static class NativeCpxHandler
                 StepResult result=dispatcher.Step();
                 if(result==StepResult.NeedIo)
                 {
-                    CpxIo io=dispatcher.Request;
-                    StepResult transfer=NativeCpxTransport.Service(arena,io,out uint actual,out bool unsupported);
+                    StepResult transfer=NativeCpxTransport.ServiceEngineRequest(arena,out uint token,out uint actual,out bool unsupported);
                     if(transfer is StepResult.Complete or StepResult.Failed)
                     {
                         APTR deviceRequest=APTR.FromPointer(APTR.ReadUInt32(APTR.FromPointer(arena+2048),16));
                         if(transfer==StepResult.Failed&&APTR.ReadUInt8(deviceRequest,31)==29) { dispatcher.MediaRemoved(); NativeCpxTransport.RequestStop(arena); }
-                        if(unsupported) new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).CompleteUnsupportedDiscard(io.Token);
-                        else dispatcher.CompleteIo(io.Token,actual,transfer==StepResult.Complete);
+                        if(unsupported) new CpxEngine<NativeCpxMemory>(new NativeCpxMemory(),arena).CompleteUnsupportedDiscard(token);
+                        else dispatcher.CompleteIo(token,actual,transfer==StepResult.Complete);
                     }
                     else if(NativeCpxTransport.Waiting(arena)) break;
                 }
                 else if(result==StepResult.Complete)
                 {
+                    if(dispatcher.InternalMaintenance)
+                    {
+                        if(dispatcher.DosError!=0) dispatcher.CancelRecordWaits(dispatcher.DosError);
+                        break;
+                    }
                     if(dispatcher.DosError==0&&dispatcher.MediaAvailable) NativeCpxVolume.Publish(arena,dispatcher.VolumeLabelAddress);
                     if(dispatcher.DosError is 213 or 226) dispatcher.CancelRecordWaits(dispatcher.DosError);
                     if(!dispatcher.InternalNotification&&!dispatcher.PacketDeferred)
@@ -159,15 +168,30 @@ public static class NativeCpxHandler
                 }
             }
             if(dispatcher.Busy&&NativeCpxTransport.Waiting(arena)&&!activity&&!dispatcher.HasRecordWork&&
-                !dispatcher.HasNotificationDelivery&&!NativeCpxRecordTimers.HasReplies(arena)&&!HasMessages(ioPort)) woken=Exec.Wait(signals|NativeCpxRecordTimers.SignalMask(arena));
+                !dispatcher.HasNotificationDelivery&&!HasMessages(ioPort))
+            {
+                // Consume an expired maintenance timer even during a long DOS
+                // request. A queued timer reply must never turn this into a spin.
+                if(NativeCpxRecordTimers.HasReplies(arena)) NativeCpxMaintenance.Service(arena,ref dispatcher);
+                else woken=Exec.Wait(signals|NativeCpxRecordTimers.SignalMask(arena));
+            }
         }
+    }
+    internal static uint TakeControl(uint woken,APTR task)
+    {
+        // Peek only decides whether the atomic Exec operation is needed. A
+        // signal arriving after this read stays pending for the next visit.
+        if(task.IsNull||(APTR.ReadUInt32(task,ExecLayout.Task.SignalReceived)&4096)!=0)
+            return woken|Exec.SetSignal(0,4096);
+        return woken;
     }
     private static bool HasMessages(APTR port)=>APTR.ReadUInt32(port,20)!=port.Raw+24;
     private static bool ServiceAsync(uint arena,APTR port,uint phase,ref CpxDosDispatcher<NativeCpxMemory> dispatcher)
     {
-        if(phase==0) return NativeCpxRecordTimers.ReapOne(arena,ref dispatcher);
+        if(phase==0) return NativeCpxRecordTimers.Active(arena)&&NativeCpxRecordTimers.ReapOne(arena,ref dispatcher);
         if(phase==1)
         {
+            if(!NativeCpxRecordTimers.Active(arena)&&!dispatcher.HasRecordWork) return false;
             // Observe a completed timeout before considering this waiter's grant.
             bool reaped=NativeCpxRecordTimers.ReapForSlot(arena,dispatcher.NextRecordWaitSlot,ref dispatcher);
             return dispatcher.StepRecordWaits()||reaped;

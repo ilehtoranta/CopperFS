@@ -75,9 +75,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
         { if (length > 80) throw new InvalidDataException("Invalid inline name."); entry.Slice(48, length).CopyTo(destination); }
         else
         {
-            Load(address, B(4));
-            if (!IsPage(B(4), PageType.Name, address, U64(entry, 8)) || U16(B(4), 64) != length) throw new InvalidDataException("Invalid external name.");
-            B(4).Slice(68, length).CopyTo(destination);
+            ReadBlob(address, PageType.Name, U64(entry, 8), length, destination);
         }
         return length;
     }

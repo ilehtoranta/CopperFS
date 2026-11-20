@@ -81,3 +81,4 @@ try {
     foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name,$saved[$name]) }
     Pop-Location
 }
+

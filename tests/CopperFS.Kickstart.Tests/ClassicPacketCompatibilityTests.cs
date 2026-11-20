@@ -8,6 +8,21 @@ namespace CopperFS.Kickstart.Tests;
 public sealed partial class OriginalHandlerCorrectnessTests
 {
     [CorrectnessTheory]
+    [InlineData("ffs")] [InlineData("ofs")]
+    public async System.Threading.Tasks.Task Classic68000WritesSurviveOriginalHandlerReadback(string profile)
+    {
+        var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
+        var handlers = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!.Profiles.Single(p => p.Name == profile);
+        Assert.Equal(handlers.OriginalSha256, Hash(File.ReadAllBytes(handlers.Original)));
+        var initial = DosDiskImage.Create(profile == "ffs", includeLargeFile: false, blockCount: 32768,
+            firstFileBlock: 2, payload: [1, 2, 3], volumeName: "Correctness").Bytes;
+        var root = Path.Combine(Path.GetDirectoryName(path)!, "classic-68000", profile);
+        var media = await Run(root, profile, "write", handlers.Candidate, initial, true, cpu: M68kCpuModel.M68000);
+        DosImageInspection.Check(media, true);
+        await Run(root, profile, "read", handlers.Original, media, false, cpu: M68kCpuModel.M68000);
+    }
+
+    [CorrectnessTheory]
     [InlineData("ffs", "Ffs")]
     [InlineData("sfs", "Sfs")]
     [InlineData("sfs2-trst", "Sfs2")]

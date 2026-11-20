@@ -30,7 +30,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     }
     public FreeSearch StartFreeSearch(uint units, bool metadataPages = false)
     {
-        Ready(); if (units == 0 || units > BitmapUnits || metadataPages && units != layout.Q) throw new ArgumentOutOfRangeException(nameof(units));
+        Ready(); if (units == 0 || units > ((uint)layout.BitmapWindowUnits) || metadataPages && units != layout.Q) throw new ArgumentOutOfRangeException(nameof(units));
         return NewFreeSearch(units, metadataPages);
     }
     private FreeSearch NewFreeSearch(uint wanted, bool metadata) => new()
@@ -48,14 +48,14 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
             if (s.NeedGroup)
             {
                 Load(layout.GroupDescriptor(s.Group), B(0)); s.PagesRead++;
-                if (!IsPage(B(0), PageType.Group, layout.GroupDescriptor(s.Group), s.Group) || U32(B(0), 64) != layout.ValidUnits(s.Group)) throw new InvalidDataException("Invalid group descriptor.");
+                if (!VolumePage(B(0), PageType.Group, layout.GroupDescriptor(s.Group), s.Group) || U32(B(0), 64) != layout.ValidUnits(s.Group)) throw new InvalidDataException("Invalid group descriptor.");
                 if (U32(B(0), 68) == 0) { s.Group += GroupUnits; continue; }
                 s.NeedGroup = false; s.Map = 0; if (s.PagesRead == 4) return ScanResult.Pending;
             }
             int map = s.Map; ulong group = s.Group;
             Load(layout.Bitmap(group, map), B(0)); ValidateBitmap(B(0), group, map); s.PagesRead++;
             if (++s.Map == 16) { s.Group += GroupUnits; s.NeedGroup = true; }
-            ulong first = group + (uint)(map * BitmapUnits), end = Math.Min(layout.Units, first + BitmapUnits);
+            ulong first = group + (uint)(map * ((uint)layout.BitmapWindowUnits)), end = Math.Min(layout.Units, first + ((uint)layout.BitmapWindowUnits));
             for (ulong unit = first; unit < end; unit += s.Metadata ? layout.Q : 1)
             {
                 if (layout.Permanent(unit) || Bit(B(0), (int)(unit - first))) continue;

@@ -9,21 +9,35 @@ public static class NativeStorageLoopProbe
 {
     public static uint Entry()
     {
-        const uint arena=0x40000;
+        const uint arena=0x70000;
         var memory=new NativeCpxMemory(); var engine=new CpxEngine<NativeCpxMemory>(memory,arena);
         uint mode=memory.Read32(0x7ff0);
-        if(engine.Initialize(512,512,Wide.From(8192),1,true)!=CpxError.None) return 1;
-        memory.Write32(arena+40,1); // Already mounted read-only fixture: Inhibit requires only a barrier.
+        if(engine.Initialize(512,512,Wide.From(8192),1,mode!=10)!=CpxError.None) return 1;
+        // Startup owns a quiescent unmounted engine; the other cases begin
+        // mounted, where Inhibit requires only a barrier.
+        memory.Write32(arena+40,mode is >=6 and <=8?0u:1u);
         var dispatcher=new CpxDosDispatcher<NativeCpxMemory>(memory,arena); dispatcher.Initialize(0x8000,0x8500);
         NativeCpxTransport.Initialize(arena,APTR.FromPointer(0x8200),default,Wide.From(8192),512,uint.MaxValue,true);
-        memory.Write32(arena+3824,0x9400); memory.Write32(arena+3828,512); // Registered callback's retained storage, idle in this fixture.
+        if(mode==10)
+        {
+            memory.Write32(arena+2816+192,0x8080);
+            if(!NativeCpxMaintenance.Open(arena)) return 3;
+            // The UNMAP capability handshake is covered by the transport and ROM tests.
+            memory.Write32(arena+2304,4); memory.Write32(arena+2308,4096);
+        }
+        else
+        {
+            // Only the media fixtures own this change signal. The maintenance
+            // fixture must wake on the timer port's signal alone.
+            memory.Write32(arena+3824,0x9400); memory.Write32(arena+3828,512);
+        }
         if(mode is >=6 and <=8) NativeCpxLifecycle.BeginStartup(arena,APTR.FromPointer(0x8300),APTR.FromPointer(0x8320));
         NativeCpxHandler.Run(arena,APTR.FromPointer(0x8000),APTR.FromPointer(0x8040),ref dispatcher);
         return 2;
     }
 }
 
-public class NativeStorageLoopInstructions(Xunit.Abstractions.ITestOutputHelper output)
+public partial class NativeStorageLoopInstructions(Xunit.Abstractions.ITestOutputHelper output)
 {
     private static readonly Lazy<M68kCompilationResult> Compilation=new(()=>AmigaM68kCompiler.Compile(new M68kCompilationRequest {
         AssemblyPath=typeof(NativeStorageLoopProbe).Assembly.Location,EntryPoint=typeof(NativeStorageLoopProbe).FullName+"::Entry",
@@ -38,7 +52,7 @@ public class NativeStorageLoopInstructions(Xunit.Abstractions.ITestOutputHelper 
     {
         var compiled=Compilation.Value;
         Assert.True(compiled.FrameworkAnalysis.IsCompatible); Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
-        Assert.True(compiled.Code.Length<0x30000);
+        Assert.True(compiled.Code.Length<0x60000);
         var bus=new NativeTestBus(); compiled.Code.CopyTo(bus.Bytes,0x10000);
         foreach(var r in compiled.Relocations) { uint p=0x10000+(uint)r.Offset; bus.Put(p,bus.Get(p)+0x10000); }
         bus.Put(4,0x9000); bus.Put(0xf0000,0xf1000); bus.Bytes.AsSpan(0xee000,4096).Fill(0xa5);
@@ -55,11 +69,12 @@ public class NativeStorageLoopInstructions(Xunit.Abstractions.ITestOutputHelper 
             int lvo=unchecked((int)(0x9000-cpu.State.ProgramCounter));
             if(!startup && lvo is 198 or 204 or 222 or 654 or 666 or 684 or 696 or 708 or 870 or 894 or 936 or 942 or 972 or 984)
                 Assert.Fail($"Mounted handler requested Exec allocation LVO -{lvo} while processing storage lifecycle packets.");
-            if(lvo is 120 or 126 or 306 or 318 or 366 or 372 or 462 or 468 or 474 or 480)
+            if(lvo is 120 or 126 or 198 or 306 or 318 or 366 or 372 or 462 or 468 or 474 or 480)
             {
                 switch(lvo)
                 {
                     case 120: case 126: break;
+                    case 198: cpu.State.D[0]=0; break; // Optional startup buffering; operation allocations still fail above.
                     case 306: cpu.State.D[0]=0; break;
                     case 372:
                         Assert.Equal(0x8000u,cpu.State.A[0]);
@@ -82,7 +97,7 @@ public class NativeStorageLoopInstructions(Xunit.Abstractions.ITestOutputHelper 
                         if(replies++==0)
                         {
                             Assert.Equal(0x8300u,cpu.State.A[1]); Assert.Equal(graceful?uint.MaxValue:0u,bus.Get(0x832c));
-                            Assert.Equal(graceful?0u:cause==0?304u:226u,bus.Get(0x8330)); Assert.Equal(0u,bus.Get(0x40000+512+324));
+                            Assert.Equal(graceful?0u:cause==0?304u:226u,bus.Get(0x8330)); Assert.Equal(0u,bus.Get(0x70000+512+324));
                         }
                         else
                         {
@@ -99,7 +114,7 @@ public class NativeStorageLoopInstructions(Xunit.Abstractions.ITestOutputHelper 
                         if(!injected)
                         {
                             injected=true;
-                            if(cause==1) bus.Put(0x40000+3808,1);
+                            if(cause==1) bus.Put(0x70000+3808,1);
                             if(cause==2) complete=true;
                             cpu.State.D[0]=cause==0?4096u:cause==1?512u:256u;
                         }

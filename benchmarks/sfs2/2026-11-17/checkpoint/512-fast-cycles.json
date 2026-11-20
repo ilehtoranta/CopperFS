@@ -1,0 +1,193 @@
+{
+  "OriginalSha256": "C7DD174131035A0F5845BE1076FB5C55642F6AA2125D4B5D8C029B141DCC8205",
+  "CandidateSha256": "26192DC97730DF7F4D8C5E8B4439B77DA580D52892B6BB7315FC724E07907E2C",
+  "PayloadBytes": 131072,
+  "PacketBytes": 512,
+  "ChipPayload": false,
+  "FrameAlignedReadStart": true,
+  "FrameAlignedWriteStart": true,
+  "BusHz": 7093790,
+  "WriteIncludesCloseAndFlush": true,
+  "Samples": [
+    {
+      "Trial": 0,
+      "Arm": "original",
+      "Phase": "grow",
+      "Cycles": 28924930,
+      "KiBPerSecond": 31.39178279774575,
+      "Reads": 1,
+      "Writes": 20,
+      "Flushes": 4
+    },
+    {
+      "Trial": 0,
+      "Arm": "original",
+      "Phase": "overwrite",
+      "Cycles": 6604710,
+      "KiBPerSecond": 137.47842373094352,
+      "Reads": 0,
+      "Writes": 20,
+      "Flushes": 4
+    },
+    {
+      "Trial": 0,
+      "Arm": "original",
+      "Phase": "read",
+      "Cycles": 5541020,
+      "KiBPerSecond": 163.8696702051247,
+      "Reads": 17,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 0,
+      "Arm": "candidate",
+      "Phase": "grow",
+      "Cycles": 20859610,
+      "KiBPerSecond": 43.52934307017245,
+      "Reads": 1,
+      "Writes": 10,
+      "Flushes": 4
+    },
+    {
+      "Trial": 0,
+      "Arm": "candidate",
+      "Phase": "overwrite",
+      "Cycles": 6495750,
+      "KiBPerSecond": 139.78449293769003,
+      "Reads": 0,
+      "Writes": 2,
+      "Flushes": 1
+    },
+    {
+      "Trial": 0,
+      "Arm": "candidate",
+      "Phase": "read",
+      "Cycles": 4381590,
+      "KiBPerSecond": 207.23187701268262,
+      "Reads": 3,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 1,
+      "Arm": "candidate",
+      "Phase": "grow",
+      "Cycles": 20858490,
+      "KiBPerSecond": 43.531680385301144,
+      "Reads": 1,
+      "Writes": 10,
+      "Flushes": 4
+    },
+    {
+      "Trial": 1,
+      "Arm": "candidate",
+      "Phase": "overwrite",
+      "Cycles": 6495640,
+      "KiBPerSecond": 139.7868601092425,
+      "Reads": 0,
+      "Writes": 2,
+      "Flushes": 1
+    },
+    {
+      "Trial": 1,
+      "Arm": "candidate",
+      "Phase": "read",
+      "Cycles": 4381270,
+      "KiBPerSecond": 207.24701285243776,
+      "Reads": 3,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 1,
+      "Arm": "original",
+      "Phase": "grow",
+      "Cycles": 28925300,
+      "KiBPerSecond": 31.391381247558368,
+      "Reads": 1,
+      "Writes": 20,
+      "Flushes": 4
+    },
+    {
+      "Trial": 1,
+      "Arm": "original",
+      "Phase": "overwrite",
+      "Cycles": 6604900,
+      "KiBPerSecond": 137.47446895486684,
+      "Reads": 0,
+      "Writes": 20,
+      "Flushes": 4
+    },
+    {
+      "Trial": 1,
+      "Arm": "original",
+      "Phase": "read",
+      "Cycles": 5541210,
+      "KiBPerSecond": 163.86405135340476,
+      "Reads": 17,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 2,
+      "Arm": "original",
+      "Phase": "grow",
+      "Cycles": 28924930,
+      "KiBPerSecond": 31.39178279774575,
+      "Reads": 1,
+      "Writes": 20,
+      "Flushes": 4
+    },
+    {
+      "Trial": 2,
+      "Arm": "original",
+      "Phase": "overwrite",
+      "Cycles": 6604770,
+      "KiBPerSecond": 137.4771748297064,
+      "Reads": 0,
+      "Writes": 20,
+      "Flushes": 4
+    },
+    {
+      "Trial": 2,
+      "Arm": "original",
+      "Phase": "read",
+      "Cycles": 5539240,
+      "KiBPerSecond": 163.92232869491122,
+      "Reads": 17,
+      "Writes": 0,
+      "Flushes": 0
+    },
+    {
+      "Trial": 2,
+      "Arm": "candidate",
+      "Phase": "grow",
+      "Cycles": 20858510,
+      "KiBPerSecond": 43.53163864532989,
+      "Reads": 1,
+      "Writes": 10,
+      "Flushes": 4
+    },
+    {
+      "Trial": 2,
+      "Arm": "candidate",
+      "Phase": "overwrite",
+      "Cycles": 6495590,
+      "KiBPerSecond": 139.78793612281564,
+      "Reads": 0,
+      "Writes": 2,
+      "Flushes": 1
+    },
+    {
+      "Trial": 2,
+      "Arm": "candidate",
+      "Phase": "read",
+      "Cycles": 4381270,
+      "KiBPerSecond": 207.24701285243776,
+      "Reads": 3,
+      "Writes": 0,
+      "Flushes": 0
+    }
+  ]
+}

@@ -69,8 +69,9 @@ public sealed partial class AmigaSmartFileSystemTests
         Assert.Equal(0, disk.Writes); Assert.Equal(0, disk.Flushes);
     }
 
-    [Fact]
-    public void FreedQueueRandomMergesAndChunkingPreserveExactlyAcceptedHints()
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void FreedQueueRandomMergesAndChunkingPreserveExactlyAcceptedHints(bool compact)
     {
         var disk = new Disk(Image()); var queue = APTR.FromPointer((uint)disk.Ram.Length - 4096);
         var expected = new HashSet<uint>(); var random = new Random(8234);
@@ -80,6 +81,17 @@ public sealed partial class AmigaSmartFileSystemTests
             if (AmigaFreedRangeQueue.Add(ref disk, queue, first, count))
                 for (var key = first; key < first + count; key++) expected.Add(key);
             Assert.InRange(AmigaFreedRangeQueue.Count(ref disk, queue), 0u, AmigaFreedRangeQueue.Capacity);
+        }
+        if (compact)
+        {
+            AmigaFreedRangeQueue.Coalesce(ref disk, queue);
+            uint previousEnd = 0;
+            for (var i = 0; i < AmigaFreedRangeQueue.Count(ref disk, queue); i++)
+            {
+                var start = disk.ReadUInt32(queue, 4 + i * 8);
+                Assert.True(start > previousEnd);
+                previousEnd = start + disk.ReadUInt32(queue, 8 + i * 8);
+            }
         }
         var seen = new HashSet<uint>();
         while (AmigaFreedRangeQueue.Take(ref disk, queue, 31, 7, out var first, out var count))

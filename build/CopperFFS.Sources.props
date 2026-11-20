@@ -1,4 +1,8 @@
 <Project>
+  <!-- Scratch-only consumers can omit the machinery for an index they never allocate. -->
+  <PropertyGroup Condition="'$(CopperFsFfsMountIndex)' == 'false'">
+    <DefineConstants>$(DefineConstants);COPPERFS_NO_FFS_MOUNT_INDEX</DefineConstants>
+  </PropertyGroup>
   <!-- Keep existing native type/assembly identities while maintaining one source copy. -->
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)../src/CopperFFS.Core/*.cs" Link="CopperFS/Core/%(Filename)%(Extension)" />

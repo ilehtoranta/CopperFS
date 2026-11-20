@@ -130,7 +130,7 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     {
         Ready(); if (readOnly || !device.SupportsDiscard || maximumUnits == 0) return 0;
         ulong start = Math.Max(trimCursor, layout.DataStart), end = start;
-        ulong scanEnd = Math.Min(layout.Units, (start & ~4095UL) + 4 * BitmapUnits), cachedMap = ulong.MaxValue;
+        ulong scanEnd = Math.Min(layout.Units, (start & ~((ulong)layout.BitmapWindowUnits - 1)) + 4 * ((uint)layout.BitmapWindowUnits)), cachedMap = ulong.MaxValue;
         while (start < scanEnd && !TrimFree(start, ref cachedMap)) start++;
         if (start == scanEnd) { trimCursor = scanEnd == layout.Units ? layout.DataStart : scanEnd; return 0; }
         end = start;
@@ -149,13 +149,13 @@ public ref partial struct Cpx4Volume<TDevice> where TDevice : IBlockDevice
     private bool TrimFree(ulong unit, ref ulong cachedMap)
     {
         if (layout.Permanent(unit)) return false;
-        ulong window = unit >> 12;
+        ulong window = unit >> layout.BitmapWindowShift;
         if (window != cachedMap)
         {
-            ulong group = layout.GroupBase(unit); int map = (int)((unit & 65535) >> 12);
+            ulong group = layout.GroupBase(unit); int map = (int)((unit & 65535) >> layout.BitmapWindowShift);
             Load(layout.Bitmap(group, map), B(0)); ValidateBitmap(B(0), group, map); cachedMap = window;
         }
-        return !Bit(B(0), (int)(unit & 4095));
+        return !Bit(B(0), (int)(unit & ((uint)layout.BitmapWindowUnits - 1)));
     }
     // Internal qualification seam: exercises real streamed journal admission/publication.
     // Addresses must be valid existing metadata; never exposed as a public mutation API.

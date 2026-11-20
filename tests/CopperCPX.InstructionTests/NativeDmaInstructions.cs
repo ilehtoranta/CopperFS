@@ -8,6 +8,16 @@ namespace CopperCPX.InstructionTests;
 
 public static class DmaAllocationProbe
 {
+    internal static StepResult Transfer(uint arena,CpxIo io,out uint completed,out bool unsupported)
+    {
+        if(APTR.ReadUInt32(APTR.FromPointer(0x7ff8),0)==0)
+            return NativeCpxTransport.Service(arena,io,out completed,out unsupported);
+        APTR view=APTR.FromPointer(arena+CpxArena.PendingIo);
+        APTR.WriteUInt32(view,0,(uint)io.Kind); APTR.WriteUInt32(view,4,io.Sector.High); APTR.WriteUInt32(view,8,io.Sector.Low);
+        APTR.WriteUInt32(view,12,io.Buffer); APTR.WriteUInt32(view,16,io.Bytes); APTR.WriteUInt32(view,20,io.Token);
+        var step=NativeCpxTransport.ServiceEngineRequest(arena,out uint token,out completed,out unsupported);
+        return token==io.Token?step:StepResult.Failed;
+    }
     public static uint Entry()
     {
         const uint arena=0x40000;
@@ -20,18 +30,18 @@ public static class DmaAllocationProbe
         {
             var io=new CpxIo {Kind=op==0?IoKind.Write:IoKind.Read,Buffer=caller,Bytes=1024,Token=1+op};
             StepResult step;
-            do { step=NativeCpxTransport.Service(arena,io,out _,out _); } while(step==StepResult.Pending);
+            do { step=Transfer(arena,io,out _,out _); } while(step==StepResult.Pending);
             if(step!=StepResult.Complete) return 20;
         }
         var query=new CpxIo {Kind=IoKind.QueryDiscard,Buffer=caller,Bytes=4,Token=3};
         StepResult queryStep; bool unsupported;
-        do { queryStep=NativeCpxTransport.Service(arena,query,out _,out unsupported); } while(queryStep==StepResult.Pending);
+        do { queryStep=Transfer(arena,query,out _,out unsupported); } while(queryStep==StepResult.Pending);
         if(queryStep!=StepResult.Complete||!unsupported) return 20;
         NativeCpxTransport.ReleaseDma(arena); NativeCpxTransport.ReleaseDma(arena); return 0;
     }
 }
 
-public class NativeDmaInstructions
+public class NativeDmaInstructions(Xunit.Abstractions.ITestOutputHelper output)
 {
     private static M68kCompilationResult Compile(Type entry,string method)=>AmigaM68kCompiler.Compile(new()
     {
@@ -45,11 +55,13 @@ public class NativeDmaInstructions
 
     // Exec owns every block in this ledger. Reject duplicate frees, changed
     // lengths, freeing an interior pointer and releasing storage during DMA.
-    [Theory][InlineData(false,false)][InlineData(true,false)][InlineData(true,true)]
-    public void RestrictiveMaskBouncesSplitWritesAndDelayedReads(bool chipOnly,bool classMismatch)
+    [Theory][InlineData(false,false,false)][InlineData(true,false,false)][InlineData(true,true,false)]
+    [InlineData(false,false,true)][InlineData(true,false,true)][InlineData(true,true,true)]
+    public void RestrictiveMaskBouncesSplitWritesAndDelayedReads(bool chipOnly,bool classMismatch,bool borrowed)
     {
         var bus=new NativeTestBus(); bus.Put(0x7ff0,chipOnly?3u:1u);
         bus.Put(0x7ff4,classMismatch?0xffffeu:0x1fffeu);
+        bus.Put(0x7ff8,borrowed?1u:0u);
         byte[] original=Enumerable.Range(0,1024).Select(n=>(byte)(n*13+7)).ToArray();
         original.CopyTo(bus.Bytes,0x90000);
         var live=new Dictionary<uint,uint>(); int allocations=0,submits=0,polls=0,reaps=0,typeChecks=0; bool active=false;
@@ -100,13 +112,19 @@ public class NativeDmaInstructions
     [Theory][InlineData("arena")][InlineData("no dma")][InlineData("unreachable dma")][InlineData("open device")]
     public void FailedStartupRepliesNoFreeStoreAndReleasesEachOwnedBlock(string failure)
     {
-        var bus=new NativeTestBus(); const uint arena=0x40008;
+        var bus=new NativeTestBus(); var compiled=Handler.Value;
+        const uint codeBase=0x10000;
+        uint codeEnd=codeBase+(uint)compiled.Code.Length;
+        uint arena=(codeEnd+0x1007)&~7u;
+        uint unreachable=(arena+CpxArena.Bytes(4096)+0x1007)&~7u;
+        Assert.InRange(unreachable+512,0u,0xee000u);
+        output.WriteLine($"Handler code {codeBase:X8}..{codeEnd:X8}; owned arena {arena:X8}; rejected DMA block {unreachable:X8}.");
         bus.Put(0x830a,0x8320);bus.Put(0x8324,0x8100);bus.Put(0x8338,0x8380>>2);
         bus.Put(0x8384,0x83c0>>2);bus.Put(0x8388,0x8400>>2);
         bus.Put(0x8400,16);bus.Put(0x8404,128);bus.Put(0x840c,1);bus.Put(0x8410,1);bus.Put(0x8414,8192);
         bus.Put(0x8430,3);bus.Put(0x8434,4096);bus.Put(0x8438,0x1f000);
         var live=new Dictionary<uint,uint>(); int tries=0,opens=0,replies=0,deletePorts=0,deleteRequests=0;
-        uint result=Execute(Handler.Value,bus,(int lvo,IM68kCore cpu)=>
+        uint result=Execute(compiled,bus,(int lvo,IM68kCore cpu)=>
         {
             switch(lvo)
             {
@@ -119,9 +137,14 @@ public class NativeDmaInstructions
                     else
                     {
                         Assert.True(tries++<4); Assert.Equal(3u,cpu.State.D[1]);
-                        address=failure switch {"unreachable dma"=>0x30008u,"open device"=>0xa008u,_=>0};
+                        address=failure switch {"unreachable dma"=>unreachable,"open device"=>0xa008u,_=>0};
                     }
-                    if(address!=0) Assert.True(live.TryAdd(address,size));
+                    if(address!=0)
+                    {
+                        Assert.True(address+size<=codeBase||address>=codeEnd,"Fake Exec allocation overlaps the loaded handler.");
+                        Assert.True(live.TryAdd(address,size));
+                        if((cpu.State.D[1]&0x10000)!=0) bus.Bytes.AsSpan((int)address,(int)size).Clear();
+                    }
                     cpu.State.D[0]=address; break;
                 case 210:
                     Assert.True(live.Remove(cpu.State.A[1],out uint length)); Assert.Equal(length,cpu.State.D[0]); break;

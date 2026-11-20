@@ -34,6 +34,11 @@ public sealed partial class OriginalHandlerCorrectnessTests
         var hook = new AutomaticDiscardHook(fail);
         var afterReset = -1;
         long setupStarted = 0, setupCycles = 0, deleteStarted = 0, deleteCycles = 0;
+        (int Reads, int Writes, int Flushes, int Scsi, int Unmaps, long Reclaimed) Snapshot() =>
+            (hook.ReadCommands, hook.WriteCommands, hook.Flushes, hook.ScsiCommands, hook.Discards, hook.DiscardBytes);
+        var start = Snapshot();
+        var reply = start;
+        var idleEnd = start;
         var entry = profile == "ofs" ? "AutoOfs" : profile == "ffs" ? "AutoFfs"
             : profile == "sfs" ? "AutoSfs" : "AutoSfs2";
         var result = await Run(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile), profile,
@@ -42,15 +47,23 @@ public sealed partial class OriginalHandlerCorrectnessTests
             observe: (marker, cycle, _, _, _) =>
             {
                 if (marker == 225) { afterReset = hook.Discards; setupStarted = cycle; }
-                if (marker == 232) deleteStarted = cycle;
-                if (marker == 221 && deleteStarted != 0) deleteCycles = cycle - deleteStarted;
+                if (marker == 232) { deleteStarted = cycle; start = Snapshot(); }
+                if (marker == 221 && deleteStarted != 0) { deleteCycles = cycle - deleteStarted; reply = Snapshot(); }
                 if (marker == 221 && setupStarted != 0) setupCycles = cycle - setupStarted;
+                if (marker == 222) idleEnd = Snapshot();
             },
             deviceHook: hook);
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile,
             fail ? "failure-foreground.json" : "foreground.json"), JsonSerializer.Serialize(new
         { Profile = profile, CandidateSha256 = Hash(File.ReadAllBytes(pair.Candidate)), ForegroundDeleteCycles = deleteCycles,
-            CreateCloseAndDeleteCycles = setupCycles }, Json));
+            CreateCloseAndDeleteCycles = setupCycles,
+            ForegroundIo = new { Reads = reply.Reads - start.Reads, Writes = reply.Writes - start.Writes,
+                Flushes = reply.Flushes - start.Flushes, Scsi = reply.Scsi - start.Scsi },
+            DeferredIo = new { Reads = idleEnd.Reads - reply.Reads, Writes = idleEnd.Writes - reply.Writes,
+                Flushes = idleEnd.Flushes - reply.Flushes, Scsi = idleEnd.Scsi - reply.Scsi,
+                UNMAPs = idleEnd.Unmaps - reply.Unmaps, ReclaimedBytes = idleEnd.Reclaimed - reply.Reclaimed } }, Json));
+        if (!fail && profile is "ffs" or "ofs")
+            Assert.True(idleEnd.Reclaimed - reply.Reclaimed >= 32768, "Expected all deleted payload sectors to be reclaimed.");
         Assert.True(hook.Discards > 0, "The timer must issue actual UNMAP without CopperTrim.");
         Assert.True(afterReset >= 0);
         if (Environment.GetEnvironmentVariable("COPPERFS_TRIM_PROFILE") == "1" && !fail)
@@ -58,13 +71,17 @@ public sealed partial class OriginalHandlerCorrectnessTests
             var profiles = Directory.GetFiles(Path.Combine(Path.GetDirectoryName(path)!, "automatic", profile, "poison"),
                 "deferred-*-service-profile.json");
             Assert.NotEmpty(profiles);
-            Assert.Contains(profiles, file =>
+            var reclaimed = 0;
+            foreach (var file in profiles)
             {
                 using var sample = JsonDocument.Parse(File.ReadAllText(file));
                 var root = sample.RootElement;
-                return root.GetProperty("ScopeEnd").GetProperty("Discards").GetInt32() >
+                var commands = root.GetProperty("ScopeEnd").GetProperty("Discards").GetInt32() -
                     root.GetProperty("ScopeStart").GetProperty("Discards").GetInt32();
-            });
+                Assert.InRange(commands, 0, 1);
+                reclaimed += commands;
+            }
+            Assert.True(reclaimed > 0);
         }
         // A long workload may fail maintenance before the explicit remount. Each
         // mount must suspend after its first failure, and remount permits a retry.
@@ -131,18 +148,20 @@ public sealed partial class OriginalHandlerCorrectnessTests
 
     private sealed class AutomaticPowerCutException : Exception { }
 
-    private sealed class AutomaticDiscardHook(bool fail, int cutAt = 0) : IAmigaHardfileDiscardIoHook
+    private sealed class AutomaticDiscardHook(bool fail, int cutAt = 0, bool supportsDiscard = true) : IAmigaHardfileDiscardIoHook
     {
         public int Discards, DiscardSectors, Writes;
         public int ScsiCommands, ReadCommands, WriteCommands, Flushes;
+        public Action<ushort>? CommandObserved;
         public bool CutArmed;
         public long MaximumEnd, DiscardBytes, ReadBytes, WriteBytes;
-        public bool SupportsDiscard => true;
+        public bool SupportsDiscard => supportsDiscard;
         public uint MaximumDiscardSectors => 4096;
         public bool FlushOnDispose => false;
         public void ObserveOpen(int unit) { }
         public void ObserveCommand(ushort command)
         {
+            CommandObserved?.Invoke(command);
             if (command == 28) ScsiCommands++;
             if (command is 2 or 24) ReadCommands++;
             if (command is 3 or 25) WriteCommands++;

@@ -35,6 +35,7 @@ public static partial class CpxBootProbe
         APTR port=DOS.DeviceProc("CPX0:"); if(port.IsNull) return Fail(control,4);
         APTR.WriteUInt32(control,44,Exec.AvailMem(Exec.MemoryFlags.Public)); Report(225);
         APTR data=APTR.FromPointer(control.Raw+512);
+        if((APTR.ReadUInt32(control,60)&256)!=0) return JournalCrashWork(control,data);
         if((APTR.ReadUInt32(control,60)&32)!=0) return BackupAnchorWork(control,port,data);
         if((APTR.ReadUInt32(control,60)&24)==16) return OwnerWork(control,port,data);
         if((APTR.ReadUInt32(control,60)&8)!=0) return FormatWork(control,port,data);
@@ -146,8 +147,15 @@ public static partial class CpxBootProbe
             APTR.WriteUInt32(control,36,400);
             uint mediaFailure=MediaLifecycle(control,port,data); if(mediaFailure!=0) return Fail(control,mediaFailure);
         }
+        bool appendLease=(APTR.ReadUInt32(control,60)&16384)!=0;
+        if(appendLease)
+        {
+            uint appendFailure=AppendLeaseWork(control,port); if(appendFailure!=0) return Fail(control,appendFailure);
+        }
         APTR.WriteUInt32(control,36,0);
-        if(DOS.DoPkt(port,27,0,0,0,0,0)==0) return Fail(control,15);
+        // The append fixture deliberately leaves its last writes unflushed:
+        // DIE must persist them through the normal shutdown continuation.
+        if(!appendLease&&DOS.DoPkt(port,27,0,0,0,0,0)==0) return Fail(control,15);
         APTR.WriteUInt32(control,48,Exec.AvailMem(Exec.MemoryFlags.Public)); Report(226);
         if(DOS.DoPkt(port,5,0,0,0,0,0)==0) return Fail(control,16);
         DOS.Delay(5); APTR.WriteUInt32(control,52,Exec.AvailMem(Exec.MemoryFlags.Public)); Report(210); return 0;
@@ -166,6 +174,11 @@ public static partial class CpxBootProbe
             APTR.WriteUInt32(control,1884,APTR.ReadUInt32(transport,76));
         }
         if(!CheckUnsupportedPackets(control,port,handle,209)) return Fail(control,972);
+        if((APTR.ReadUInt32(control,60)&64)==0)
+        {
+            // No FLUSH, private TRIM or other packet during this interval.
+            Report(211); DOS.Delay(1700); Report(212);
+        }
         if(DOS.Read(file.Value,data,4)!=4||APTR.ReadUInt32(data,0)!=0x6f6c6421||DOS.Seek(file.Value,0,-1)!=4) return Fail(control,973);
         APTR.WriteUInt32(data,0,0x6e657721);
         if(DOS.Write(file.Value,data,4)!=4||DOS.Close(file.Value)==0||DOS.DoPkt(port,27,0,0,0,0,0)==0) return Fail(control,974);

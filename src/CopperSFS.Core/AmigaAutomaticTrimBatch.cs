@@ -67,26 +67,31 @@ public static class AmigaAutomaticTrimBatch
             p.WriteUInt32(batch, Input + (int)j * 8, first);
             p.WriteUInt32(batch, Input + (int)j * 8 + 4, length);
         }
+        p.WriteUInt32(batch, Inputs, MergeSorted(ref p, APTR.FromPointer(batch.Raw + Input), count));
+    }
+
+    internal static uint MergeSorted<T>(ref T p, APTR ranges, uint count) where T : struct, IAmigaGuestMemory
+    {
         uint used = 0;
         for (var i = 0u; i < count; i++)
         {
-            var first = p.ReadUInt32(batch, Input + (int)i * 8);
-            var length = p.ReadUInt32(batch, Input + (int)i * 8 + 4);
+            var first = p.ReadUInt32(ranges, (int)i * 8);
+            var length = p.ReadUInt32(ranges, (int)i * 8 + 4);
             if (length == 0 || first > uint.MaxValue - length) continue;
             if (used != 0)
             {
-                var at = Input + (int)(used - 1) * 8;
-                var start = p.ReadUInt32(batch, at); var end = start + p.ReadUInt32(batch, at + 4);
+                var at = (int)(used - 1) * 8;
+                var start = p.ReadUInt32(ranges, at); var end = start + p.ReadUInt32(ranges, at + 4);
                 if (first <= end)
                 {
-                    if (first + length > end) p.WriteUInt32(batch, at + 4, first + length - start);
+                    if (first + length > end) p.WriteUInt32(ranges, at + 4, first + length - start);
                     continue;
                 }
             }
-            p.WriteUInt32(batch, Input + (int)used * 8, first);
-            p.WriteUInt32(batch, Input + (int)used * 8 + 4, length); used++;
+            p.WriteUInt32(ranges, (int)used * 8, first);
+            p.WriteUInt32(ranges, (int)used * 8 + 4, length); used++;
         }
-        p.WriteUInt32(batch, Inputs, used);
+        return used;
     }
 
     public static bool Contains<T>(ref T p, APTR batch, uint block) where T : struct, IAmigaGuestMemory

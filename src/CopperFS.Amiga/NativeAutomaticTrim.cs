@@ -11,10 +11,48 @@ internal static class NativeAutomaticTrim
         Alignment = 16, Descriptors = 20, Generation = 24,
         DiscoveryCount = 44, Dropped = 48, Commands = 52, Blocks = 56;
     internal const int Eligible = 28;
+#if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
+    // Reset admits the first hint with an empty queue or leaves discard
+    // suspended for this attachment. Both policies use the same foreground
+    // checks and native layout.
+#if COPPERFS_FFS_TRIM_POLICY_OFF
+    private const uint ResetPendingState = 2;
+#else
+    private const uint ResetPendingState = 3;
+#endif
+#endif
     private static APTR Record(APTR state) => APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimRecordOffset);
+#if COPPERFS_FFS_HANDLER
+    internal const uint StorageBytes = AmigaFreedRangeQueue.Bytes + AmigaAutomaticTrimBatch.Bytes + 32;
+    private static APTR WorkspaceQueue(APTR state)
+    {
+        var workspace = APTR.ReadUInt32(state, NativeAmigaFileSystem.FfsIndexOffset);
+        return workspace == 0 ? APTR.Null :
+            APTR.FromPointer(workspace + (NativeAmigaFileSystem.FfsIndexBytes - StorageBytes));
+    }
+    private static APTR Queue(APTR state) => APTR.FromPointer(APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimStorageOffset));
+    internal static APTR Batch(APTR state) => APTR.FromPointer(Queue(state).Raw + AmigaFreedRangeQueue.Bytes);
+    private static APTR Roots(APTR state) => APTR.FromPointer(Batch(state).Raw + AmigaAutomaticTrimBatch.Bytes);
+    internal static APTR QueueForFree(APTR state)
+    {
+        var queue = Queue(state);
+        if (queue.IsNotNull) return queue;
+        queue = WorkspaceQueue(state);
+        if (queue.IsNull)
+            queue = APTR.FromPointer(global::Amiga.Exec.AllocMem(StorageBytes, global::Amiga.Exec.MemoryFlags.Public));
+        if (queue.IsNull) { Suspend(state); return APTR.Null; }
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimStorageOffset, queue.Raw);
+        ClearStaging(state);
+        return queue;
+    }
+    internal static bool HasPreparedBatch(APTR state) => Queue(state).IsNotNull &&
+        APTR.ReadUInt32(Batch(state), AmigaAutomaticTrimBatch.Inputs) != 0;
+#else
     private static APTR Queue(APTR state) => APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimQueueOffset);
-    private static APTR Batch(APTR state) => APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimBatchOffset);
+    internal static APTR QueueForFree(APTR state) => Queue(state);
+    internal static APTR Batch(APTR state) => APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimBatchOffset);
     private static APTR Roots(APTR state) => APTR.FromPointer(state.Raw + (uint)NativeAmigaFileSystem.AutoTrimRootsOffset);
+#endif
 
     internal static void Initialize(APTR state)
     {
@@ -29,7 +67,13 @@ internal static class NativeAutomaticTrim
     {
         var record = Record(state); var memory = APTR.ReadUInt32(record, Control);
         if (memory != 0) global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.BatchControlBytes);
-        APTR.WriteUInt32(record, Control, 0); Reset(state);
+        APTR.WriteUInt32(record, Control, 0);
+#if COPPERFS_FFS_HANDLER
+        var queue = Queue(state);
+        if (queue.IsNotNull && queue != WorkspaceQueue(state)) global::Amiga.Exec.FreeMem(queue.Raw, StorageBytes);
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimStorageOffset, 0);
+#endif
+        Reset(state);
     }
 
     internal static void Reset(APTR state)
@@ -38,9 +82,22 @@ internal static class NativeAutomaticTrim
         // Keep allocated staging across inhibit/remount; cached capabilities and
         // every validation record belong to the old media attachment.
         p.Clear(APTR.FromPointer(Record(state).Raw + 4), 60);
+#if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, ResetPendingState);
+#endif
+        ClearStaging(state);
+    }
+
+    private static void ClearStaging(APTR state)
+    {
+        var queue = Queue(state);
+#if COPPERFS_FFS_HANDLER
+        if (queue.IsNull) return;
+#endif
+        var p = new NativeFileSystemPlatform(state);
         p.Clear(Batch(state), AmigaAutomaticTrimBatch.Bytes);
         p.Clear(Roots(state), 32);
-        AmigaFreedRangeQueue.Clear(ref p, Queue(state));
+        AmigaFreedRangeQueue.Clear(ref p, queue);
     }
 
     internal static bool Pending(APTR state) => APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) == 1;
@@ -65,10 +122,7 @@ internal static class NativeAutomaticTrim
 
     internal static void Suspend(APTR state)
     {
-        var p = new NativeFileSystemPlatform(state);
-        AmigaFreedRangeQueue.Clear(ref p, Queue(state));
-        p.Clear(Batch(state), AmigaAutomaticTrimBatch.Bytes);
-        p.Clear(Roots(state), 32);
+        ClearStaging(state);
         APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, 2);
         APTR.WriteUInt32(Record(state), Eligible, 0);
         APTR.WriteUInt32(Record(state), Queried, 2);
@@ -84,6 +138,9 @@ internal static class NativeAutomaticTrim
         APTR.WriteUInt32(record, Eligible, 0);
         APTR.WriteUInt32(record, Generation, unchecked(APTR.ReadUInt32(record, Generation) + 1));
         APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, 2);
+#if COPPERFS_FFS_HANDLER
+        if (Queue(state).IsNull) return;
+#endif
         APTR.WriteUInt32(Roots(state), 28, 0);
         APTR.WriteUInt32(Batch(state), AmigaAutomaticTrimBatch.Stage, 0);
     }
@@ -102,6 +159,34 @@ internal static class NativeAutomaticTrim
         APTR.WriteUInt32(cache, 28, 1);
     }
 
+    // Device inquiry needs only a private command buffer. It can establish
+    // eligibility before an idle classic mount publishes pending metadata.
+    internal static APTR DiscardControl(APTR state)
+    {
+        // The caller holds a ready idle turn.
+        var record = Record(state);
+#if COPPERFS_FFS_HANDLER
+        if (APTR.ReadUInt32(record, Control) == 0) Initialize(state);
+#endif
+        var control = APTR.FromPointer(APTR.ReadUInt32(record, Control));
+        if (control.IsNull) { Suspend(state); return APTR.Null; }
+        if (APTR.ReadUInt32(record, Queried) == 0)
+        {
+            var p = new NativeFileSystemPlatform(state);
+            if (!NativeAmigaFileSystem.BufferFitsMask(control.Raw, AmigaScsiUnmap.BatchControlBytes, p.Geometry.Mask))
+            { Suspend(state); return APTR.Null; }
+            APTR.WriteUInt32(record, DiscoveryCount, APTR.ReadUInt32(record, DiscoveryCount) + 1);
+            if (!p.QueryDiscard(control, out var discovered) || !discovered.Valid || discovered.Granularity > 4096)
+            { Suspend(state); return APTR.Null; }
+            APTR.WriteUInt32(record, Maximum, discovered.MaximumBlocks < 4096 ? discovered.MaximumBlocks : 4096);
+            APTR.WriteUInt32(record, Granularity, discovered.Granularity);
+            APTR.WriteUInt32(record, Alignment, discovered.Alignment);
+            APTR.WriteUInt32(record, Descriptors, AmigaScsiUnmap.MaximumDescriptors(ref p, control));
+            APTR.WriteUInt32(record, Queried, 1);
+        }
+        return control;
+    }
+
     internal static void Service(APTR state)
     {
         if (!Ready(state) || APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0) return;
@@ -111,29 +196,27 @@ internal static class NativeAutomaticTrim
         // Its ordinary write timer owns commit; TRIM must not force it early.
         if (NativeAmigaFileSystem.HasBufferedWrites(state))
         { APTR.WriteUInt32(Record(state), Eligible, 0); return; }
+        var control = DiscardControl(state);
+        if (control.IsNull) return;
         var p = new NativeFileSystemPlatform(state);
         var record = Record(state); var batch = Batch(state);
-#if COPPERFS_FFS_HANDLER
-        if (APTR.ReadUInt32(record, Control) == 0) Initialize(state);
-#endif
-        var control = APTR.FromPointer(APTR.ReadUInt32(record, Control));
-        if (control.IsNull) { Suspend(state); return; }
-        if (APTR.ReadUInt32(record, Queried) == 0)
-        {
-            if (!NativeAmigaFileSystem.BufferFitsMask(control.Raw, AmigaScsiUnmap.BatchControlBytes, p.Geometry.Mask))
-            { Suspend(state); return; }
-            APTR.WriteUInt32(record, DiscoveryCount, APTR.ReadUInt32(record, DiscoveryCount) + 1);
-            if (!p.QueryDiscard(control, out var discovered) || !discovered.Valid || discovered.Granularity > 4096)
-            { Suspend(state); return; }
-            APTR.WriteUInt32(record, Maximum, discovered.MaximumBlocks < 4096 ? discovered.MaximumBlocks : 4096);
-            APTR.WriteUInt32(record, Granularity, discovered.Granularity);
-            APTR.WriteUInt32(record, Alignment, discovered.Alignment);
-            APTR.WriteUInt32(record, Descriptors, AmigaScsiUnmap.MaximumDescriptors(ref p, control));
-            APTR.WriteUInt32(record, Queried, 1);
-        }
         var generation = APTR.ReadUInt32(record, Generation);
         if (APTR.ReadUInt32(batch, AmigaAutomaticTrimBatch.Inputs) == 0)
         {
+#if COPPERFS_FFS_HANDLER
+            if (p.ReadUInt32(record, Eligible) == 1)
+            {
+                // Sort a long queue once after the timer fires. Give packets
+                // another turn before validating any bitmap or issuing UNMAP.
+                p.WriteUInt32(record, Eligible, 2);
+                var queue = Queue(state);
+                if (AmigaFreedRangeQueue.Count(ref p, queue) > AmigaAutomaticTrimBatch.Capacity)
+                {
+                    AmigaFreedRangeQueue.Coalesce(ref p, queue);
+                    return;
+                }
+            }
+#endif
             var limits = new AmigaFileSystemDiscardLimits
             {
                 MaximumBlocks = APTR.ReadUInt32(record, Maximum),

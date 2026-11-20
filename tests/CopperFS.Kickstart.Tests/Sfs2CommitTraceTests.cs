@@ -6,7 +6,7 @@ namespace CopperFS.Kickstart.Tests;
 
 public sealed partial class OriginalHandlerCorrectnessTests
 {
-    private sealed class CommitTrace(uint marker) : WritableHook
+    private sealed class CommitTrace(uint? marker) : WritableHook
     {
         public readonly List<object> Events = [];
         public readonly List<bool> DirtyAtBoundaryReply = [];
@@ -31,10 +31,14 @@ public sealed partial class OriginalHandlerCorrectnessTests
         }
         public override void Flush(FileStream backing)
         {
-            Span<byte> header = stackalloc byte[16]; backing.Position = (long)marker * 512;
-            backing.ReadExactly(header);
-            Events.Add(new { Kind = "flush", MarkerTag = BinaryPrimitives.ReadUInt32BigEndian(header).ToString("X8"),
-                Next = BinaryPrimitives.ReadUInt32BigEndian(header[12..]), WriteBytes });
+            if (marker.HasValue)
+            {
+                Span<byte> header = stackalloc byte[16]; backing.Position = (long)marker.Value * 512;
+                backing.ReadExactly(header);
+                Events.Add(new { Kind = "flush", MarkerTag = BinaryPrimitives.ReadUInt32BigEndian(header).ToString("X8"),
+                    Next = BinaryPrimitives.ReadUInt32BigEndian(header[12..]), WriteBytes });
+            }
+            else Events.Add(new { Kind = "flush", WriteBytes });
             base.Flush(backing);
             dirty = false;
         }

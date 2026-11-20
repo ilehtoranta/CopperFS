@@ -22,7 +22,13 @@ internal static class NativeFfsSequentialRead
         APTR.ReadUInt32(file, Count) == Warmup && APTR.ReadUInt32(file, Next) == position;
 
     internal static bool NeedsWarmup(APTR state, APTR file) => APTR.ReadUInt32(file, Count) < Warmup &&
-        APTR.ReadUInt32(file, Mode) != Disabled && APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset) != 0;
+        APTR.ReadUInt32(file, Mode) != Disabled && APTR.ReadUInt32(state, NativeAmigaFileSystem.AdaptiveReadTimerOffset) != 0;
+
+    internal static void ResetForSeek(APTR file)
+    {
+        if (APTR.ReadUInt32(file, Count) != 0 || APTR.ReadUInt32(file, Mode) != 0 ||
+            APTR.ReadUInt32(file, Minimum) != uint.MaxValue) Reset(file);
+    }
 
     internal static void Reset(APTR file)
     {
@@ -68,7 +74,7 @@ internal static class NativeFfsSequentialRead
         if (APTR.ReadUInt32(file, Count) == 0)
         {
             Reset(file);
-            var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset));
+            var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeAmigaFileSystem.AdaptiveReadTimerOffset));
             var timer = request.IsNull ? 0u : APTR.ReadUInt32(request, 20);
             if (timer == 0 || APTR.ReadUInt16(APTR.FromPointer(timer), 20) < 36)
             { APTR.WriteUInt32(file, Mode, Disabled); APTR.WriteUInt32(file, Clock, 0); return 1; }

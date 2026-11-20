@@ -6,6 +6,9 @@ public static partial class NativeAmigaFileSystem
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void DispatchAdaptiveReadPacket(APTR state, APTR packet)
     {
+#if COPPERFS_FFS_HANDLER
+        APTR.WriteUInt32(state, FfsCursorsCleared, 0);
+#endif
         var file = Object(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset), true);
         var result = -1;
         var error = DOS.Error.InvalidLock;

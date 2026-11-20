@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <IsTestProject>true</IsTestProject><IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="Copper68k" Version="[1.5.4]" />
+    <Using Include="Xunit" />
+    <ProjectReference Include="$(CopperSharp68kRoot)/Targets.Amiga/CopperSharp.Targets.Amiga.csproj" />
+    <!-- Compile the exact standalone kernels. No prototype or OS-handler runtime dependency. -->
+    <Compile Include="../CopperFS.Prototype/WideMath32.cs" Link="Kernels/WideMath32.cs" />
+  </ItemGroup>
+</Project>
