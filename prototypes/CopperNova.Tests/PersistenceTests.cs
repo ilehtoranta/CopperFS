@@ -57,6 +57,40 @@ public class PersistenceTests(ITestOutputHelper output)
             }
         }
     }
+    [Fact]
+    public void CoalescedPayloadIsDurableAtFirstBarrierAndRootPublishesAtSecond()
+    {
+        var h = new Harness(NovaImage.FormatPacked(2 * 1024 * 1024, reusableObjects: true));
+        h.Mount();
+        uint handle = h.Open("payload");
+        byte[] bytes = Enumerable.Range(0, 8192).Select(Harness.Initial).ToArray();
+        h.Write(handle, bytes);
+        h.Flush();
+        byte[] initial = (byte[])h.Disk.Clone();
+        var events = Capture(h);
+        foreach (int at in new[] { 1023, 4093 })
+        {
+            Assert.NotEqual(uint.MaxValue, h.Packet(1008, handle, (uint)at, uint.MaxValue));
+            byte[] edit = Enumerable.Repeat((byte)81, 769).ToArray();
+            h.Write(handle, edit);
+            edit.CopyTo(bytes, at);
+        }
+        Assert.Empty(events);
+        h.Close(handle);
+        h.Flush();
+        Assert.Equal(2, events.Count(e => e.Barrier));
+        string digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        foreach (var cut in Crashes(initial, events))
+        {
+            var recovered = new Harness(cut.Disk);
+            recovered.Mount();
+            var view = NovaImage.CheckPacked(cut.Disk);
+            Assert.Contains(view.Generation, new uint[] { 1, 2 });
+            if (cut.Barriers > 0) Assert.Equal(digest, Assert.Single(view.Entries).Sha256);
+            if (cut.Barriers == 2) Assert.Equal(2u, view.Generation);
+        }
+    }
+
     [Fact] public void BufferedDeleteAndReusePublishTogetherAcrossPowerCuts()
     {
         var h=new Harness(NovaImage.FormatPacked(2*1024*1024,reusableObjects:true)); h.Mount();

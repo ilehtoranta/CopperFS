@@ -10,7 +10,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         {
             case 100:
                 if(R(Blocks)<4096||R(Blocks)>65536) return Fatal();
-                W(Poison,0); W(Mounted,0); W(Index,0); W(DirtyCount,0); W(Epoch,R(Epoch)+1);
+                W(PartialDirty,0); W(Poison,0); W(Mounted,0); W(Index,0); W(DirtyCount,0); W(Epoch,R(Epoch)+1);
                 return Next(R(CrcReady)==Magic?102u:101u);
             case 101:
                 for(uint n=0;n<32;n++)
@@ -184,6 +184,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         switch(phase)
         {
             case 200:
+                if (R(PartialDirty) != 0) return DrainPartial(200);
                 if(R(DirtyCount)==0) return Issue(IoKind.Flush,0,0,0,215);
                 if(R(DataFloor)==1394) return Next(1200);
                 if(R(DirtyCount)>48||R(Generation)==uint.MaxValue) return Fatal();
