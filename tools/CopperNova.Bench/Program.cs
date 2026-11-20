@@ -51,7 +51,9 @@ internal static class Program
             if (!File.Exists(path)) throw new FileNotFoundException("Required benchmark input is unavailable.", path);
 
         bool packed=Environment.GetEnvironmentVariable("NOVA_PACKED")=="1";
-        byte[] nova = packed?NovaImage.FormatPacked(DiskBytes):CachePressure?File.ReadAllBytes(Input("NOVA_CACHE_SEED")):NovaImage.Format(DiskBytes);
+        bool reusableObjects = Environment.GetEnvironmentVariable("NOVA_BENCH_REUSABLE_OBJECTS") == "1";
+        if (reusableObjects && !packed) throw new ArgumentException("Reusable objects require a packed candidate");
+        byte[] nova = packed?NovaImage.FormatPacked(DiskBytes,reusableObjects):CachePressure?File.ReadAllBytes(Input("NOVA_CACHE_SEED")):NovaImage.Format(DiskBytes);
         File.WriteAllBytes(Path.Combine(ArtifactRoot, "nova-empty-16m.hdf"), nova);
         var ffs = CreateEmptyFfs();
         File.WriteAllBytes(Path.Combine(ArtifactRoot, "ffs-empty-16m.hdf"), ffs);
@@ -77,7 +79,9 @@ internal static class Program
             bool packedBaseline = Environment.GetEnvironmentVariable("NOVA_BENCH_BASELINE_PACKED") == "1";
             if(packedBaseline && !packed) throw new ArgumentException("A packed baseline requires a packed comparison");
             string baselineName = packedBaseline ? "Qualified CNP2" : packed ? "Current CopperNova prototype (execution core)" : "Current CopperNova prototype (CLOCK)";
-            var baselineArm = new Arm(baselineName, baselineHandler, packed && !packedBaseline ? NovaImage.Format(DiskBytes) : nova, 0, packedBaseline);
+            byte[] baselineMedia = packed && !packedBaseline ? NovaImage.Format(DiskBytes)
+                : packedBaseline && reusableObjects ? NovaImage.FormatPacked(DiskBytes) : nova;
+            var baselineArm = new Arm(baselineName, baselineHandler, baselineMedia, 0, packedBaseline);
             order=[baselineArm,arms[0],arms[1],arms[2],arms[2],arms[1],arms[0],baselineArm];
         }
         // The original SFS 1.279 HUNK requires a 68020.
@@ -136,6 +140,7 @@ internal static class Program
             },
             Inputs = new
             {
+                CandidatePackedRootVersion = packed ? (reusableObjects ? 2 : 1) : 0,
                 PrototypeHandlerSha256 = Hash(File.ReadAllBytes(CpxHandler)),
                 BaselinePrototypeHandlerSha256 = string.IsNullOrEmpty(baselineHandler)?null:Hash(File.ReadAllBytes(baselineHandler)),
                 FfsHandlerSha256 = Hash(File.ReadAllBytes(FfsHandler)),

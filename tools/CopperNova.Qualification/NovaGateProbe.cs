@@ -7,6 +7,9 @@ public static class NovaGateProbe
     private static APTR data;
     private static APTR port;
 
+    private static bool namespaceProbe;
+    public static int NamespaceEntry() { namespaceProbe=true; return Entry(); }
+
     public static int Entry()
     {
         APTR dos = Exec.OpenLibraryRaw(CString.FromLiteral("dos.library"), 37);
@@ -60,6 +63,7 @@ public static class NovaGateProbe
         Report(225);
 
         Report(220);
+        if(namespaceProbe && !CheckNamespace()) return Fail(60);
         var dir = DOS.CreateDir("CPX0:Bench");
         if (!dir.HasValue) return Fail(10);
         DOS.UnLock(dir.Value);
@@ -131,6 +135,22 @@ public static class NovaGateProbe
         Report(233);
         Report(210);
         return 0;
+    }
+
+    private static bool CheckNamespace()
+    {
+        var sub=DOS.CreateDir("CPX0:Sub");
+        if(!sub.HasValue) return false;
+        DOS.UnLock(sub.Value);
+        var f=DOS.Open("CPX0:T",DOS.FileMode.NewFile);
+        if(!f.HasValue||DOS.Write(f.Value,data,512)!=512||DOS.Close(f.Value)==0) return false;
+        if(DOS.Rename("CPX0:T","CPX0:Sub/U")==0) return false;
+        sub=DOS.Lock("CPX0:Sub",(DOS.LockMode)(-2));
+        if(!sub.HasValue||DOS.Examine(sub.Value,data)==0||DOS.ExNext(sub.Value,data)==0||
+            APTR.ReadUInt32(data,124)!=512||APTR.ReadUInt8(data,8)!=85) return false;
+        DOS.UnLock(sub.Value);
+        if(DOS.DeleteFile("CPX0:Sub/U")==0||DOS.DeleteFile("CPX0:Sub")==0) return false;
+        return true;
     }
 
     private static byte Initial(int index) => (byte)(index * 17 + (index >> 9) * 31 + 3);

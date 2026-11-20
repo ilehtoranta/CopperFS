@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Rom,
     [string]$Handler='', [string]$ArtifactRoot='', [switch]$PrototypeOnly,
     [string]$BaselineHandler='', [switch]$Packed, [string]$BenchAssembly='',
-    [switch]$ChipOnly, [switch]$PackedBaseline
+    [switch]$ChipOnly, [switch]$PackedBaseline, [switch]$ReusableObjects
 )
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
@@ -20,6 +20,8 @@ $expectedProbe=if($Workload -eq 'mixed') {'0984E37B49A652D20E62ED24A524713C228E1
 if((Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash -ne $expectedProbe) { throw 'Frozen guest probe hash mismatch' }
 if((Get-FileHash -LiteralPath $Rom -Algorithm SHA256).Hash -ne '8C8A0CF04F91B88EAF0C4F1126041987067E2286A8EE590BDBAE447A8000C5EE') { throw 'Kickstart 3.1 ROM hash mismatch' }
 if($PackedBaseline -and (!$Packed -or !$BaselineHandler)) { throw 'PackedBaseline requires Packed and BaselineHandler' }
+if($ReusableObjects -and !$Packed) { throw 'ReusableObjects requires Packed' }
+$env:NOVA_BENCH_REUSABLE_OBJECTS=if($ReusableObjects) {'1'} else {$null}
 $env:NOVA_BENCH_BASELINE_PACKED=if($PackedBaseline) {'1'} else {$null}
 $env:NOVA_BENCH_MACHINE=if($ChipOnly) {'68000-chip'} else {$null}
 $env:NOVA_PACKED=if($Packed) {'1'} else {$null}

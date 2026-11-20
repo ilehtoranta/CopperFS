@@ -40,7 +40,7 @@ public static class NativeNovaHandler
                     NativeCpxTransport.EnableQuickIo(arena);
                     BindDirect(arena,request,APTR.ReadUInt32(env,48),start,blocks,maximum,mask);
                     var engine=new NovaEngine<NativeCpxMemory>(new NativeCpxMemory(),arena);
-                    engine.Bind(blocks,port.Raw,0);
+                    engine.Bind(blocks,port.Raw,0,APTR.ReadUInt32(startup,0));
                     if(engine.BeginMount()==CpxError.None&&Drive(arena,ioPort,task,ref engine)&&engine.IsMounted)
                     {
                         volume=DOS.MakeDosEntry(CString.FromLiteral("CopperNovaPrototype"),(int)DosListType.Volume);
@@ -49,7 +49,7 @@ public static class NativeNovaHandler
                             APTR.WriteUInt32(volume,8,port.Raw); APTR.WriteUInt32(volume,32,engine.VolumeMagic);
                             node=APTR.FromPointer(APTR.ReadUInt32(packet,28)<<2);
                             if(node.IsNotNull) APTR.WriteUInt32(node,8,port.Raw);
-                            engine.Bind(blocks,port.Raw,volume.Raw);
+                            engine.Bind(blocks,port.Raw,volume.Raw,APTR.ReadUInt32(startup,0));
                             Reply(message,packet,port,uint.MaxValue,0);
                             bool registered=DOS.AddDosEntry(volume)!=0;
                             Run(arena,port,ioPort,task,node,ref engine);
