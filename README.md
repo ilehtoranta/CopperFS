@@ -11,6 +11,10 @@ abbreviation is **CNFS**. **CPX4** identifies its experimental version 4
 on-disk format. The standalone handler for that format is `CopperCPX4`.
 See the [CopperNova design](docs/new-filesystem-design.md).
 
+Use AmigaDOS `Version <handler-file> FILE FULL` to read the embedded version of
+a standalone CopperFFS, CopperSFS or CNP2 handler. The CNP2 build produces
+`CopperNovaPrototype` and identifies itself as `CopperNova 1.0`.
+
 | Component | Location |
 | --- | --- |
 | OFS/FFS core | `src/CopperFFS.Core` |
