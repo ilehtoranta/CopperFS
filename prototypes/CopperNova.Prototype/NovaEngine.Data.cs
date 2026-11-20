@@ -3,6 +3,17 @@ namespace CopperNova.Prototype;
 
 public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
 {
+    // Occupies the gap between the sixteen packed encoder rows and BitmapImage.
+    private const uint PartialWindow = Rows + 16 * 224;
+    private const uint PartialWindowSectors = (BitmapImage - PartialWindow) / 512;
+    private const uint PartialStart = 576, PartialSectors = 580, PartialDirty = 584, PartialResume = 588;
+
+    private StepResult DrainPartial(uint resume)
+    {
+        W(PartialResume, resume);
+        return Issue(IoKind.Write, R(PartialStart), Ptr(PartialWindow), R(PartialDirty) << 9, 306);
+    }
+
     private void MarkBitmapRange(uint window,uint bit,uint count)
     {
         uint state=Arena+State;
@@ -43,13 +54,46 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     if(take>remaining) take=remaining;
                     if(!write&&take>size-position) take=size-position;
                     if(take>65536) take=65536;
+                    uint dirty = R(PartialDirty);
+                    if (write && (intra != 0 || take < 512) && take == remaining && take <= 4096 &&
+                        remaining <= size - position && R(DataFloor) == 1394)
+                    {
+                        uint sectors = (intra + take + 511) >> 9;
+                        uint start = R(PartialStart), capacity = R(PartialSectors);
+                        uint skip = disk - start;
+                        if (dirty != 0 && (skip >= capacity || sectors > capacity - skip))
+                            return DrainPartial(300);
+
+                        W(DataTake, take);
+                        W(DataIntra, intra);
+                        W(DataPhysical, disk);
+                        W(NewAllocation, 0);
+                        if (dirty != 0) return Next(305);
+
+                        // Only prefetch mapped sectors of this file, including its partial tail.
+                        capacity = (size - position + intra + 511) >> 9;
+                        if (capacity > available) capacity = available;
+                        if (capacity > PartialWindowSectors) capacity = PartialWindowSectors;
+                        W(PartialStart, disk);
+                        W(PartialSectors, capacity);
+                        return Issue(IoKind.Read, disk, Ptr(PartialWindow), capacity << 9, 305);
+                    }
+                    if (dirty != 0)
+                    {
+                        uint start = R(PartialStart);
+                        uint end = start + (write ? R(PartialSectors) : dirty);
+                        // A bulk write must also invalidate clean prefetched sectors so
+                        // a later merge cannot write an older copy of a sector in the gap.
+                        if (disk < end && start < disk + ((intra + take + 511) >> 9))
+                            return DrainPartial(300);
+                    }
                     if(intra!=0||take<512)
                     {
-                        if(m.Read32(state+DataFloor)==1394&&intra!=0&&take>512-intra) {
+                        if(dirty==0&&m.Read32(state+DataFloor)==1394&&intra!=0&&take>512-intra) {
                             if(take>4096-intra) take=4096-intra;
                             uint bytes=(intra+take+511)&~511u;
                             m.Write32(state+DataTake,take); m.Write32(state+DataIntra,intra); m.Write32(state+DataPhysical,disk); m.Write32(state+NewAllocation,0);
-                            return Issue(IoKind.Read,disk,Arena+66560,bytes,303);
+                            return Issue(IoKind.Read,disk,(Arena+PartialWindow+512),bytes,303);
                         }
                         if(take>512-intra) take=512-intra;
                         m.Write32(state+DataTake,take); m.Write32(state+DataIntra,intra); m.Write32(state+DataPhysical,disk); m.Write32(state+NewAllocation,0);
@@ -72,7 +116,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 m.Copy((Arena+Scratch)+m.Read32(state+DataIntra),m.Read32(state+DataBuffer)+progress,m.Read32(state+DataTake));
                 return Issue(IoKind.Write,m.Read32(state+DataPhysical),(Arena+Scratch),512,304);
             case 303:
-                uint span=Arena+66560,offset=m.Read32(state+DataIntra),length=m.Read32(state+DataTake),external=m.Read32(state+DataBuffer)+progress;
+                uint span=(Arena+PartialWindow+512),offset=m.Read32(state+DataIntra),length=m.Read32(state+DataTake),external=m.Read32(state+DataBuffer)+progress;
                 if(!write) { m.Copy(external,span+offset,length); goto case 304; }
                 m.Copy(span+offset,external,length);
                 return Issue(IoKind.Write,m.Read32(state+DataPhysical),span,(offset+length+511)&~511u,304);
@@ -102,6 +146,18 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 m.Write32(handle+8,end); m.Write32(state+DataProgress,progress+take);
                 return take==remaining||(!write&&end>=m.Read32(inode+68))?Finish(progress+take):Next(300);
             }
+            case 305:
+            {
+                uint windowOffset = ((R(DataPhysical) - R(PartialStart)) << 9) + R(DataIntra);
+                uint take = R(DataTake);
+                m.Copy(Ptr(PartialWindow) + windowOffset, R(DataBuffer) + progress, take);
+                uint end = (windowOffset + take + 511) >> 9;
+                if (end > R(PartialDirty)) W(PartialDirty, end);
+                goto case 304;
+            }
+            case 306:
+                W(PartialDirty, 0);
+                return Next(R(PartialResume));
             case 310:
                 if(m.Read16(m.Read32(state+Loaded)+6)!=3) return Fatal();
                 m.Write32(state+Group,m.Read32(state+Loaded)); goto case 311;
@@ -157,6 +213,9 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         switch(phase)
         {
             case 400:
+                // Drain before retiring any extent. A pending image must never
+                // outlive its allocation, even if a later packet reuses the blocks.
+                if (R(PartialDirty) != 0) return DrainPartial(400);
                 m.Write32(state+Group,m.Read32(state+Loaded));
                 if(m.Read16(m.Read32(state+Group)+6)!=3) return Fatal();
                 m.Write32(state+ExtentIndex,0); m.Write32(state+ResizeFree,0); m.Write32(state+ResizeCursor,0); goto case 401;
