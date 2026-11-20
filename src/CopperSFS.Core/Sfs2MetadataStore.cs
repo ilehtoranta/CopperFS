@@ -489,33 +489,53 @@ public static class Sfs2MetadataStore
     // The single-owner append path pins only images already in the accepted
     // arena. It performs every fallible check and payload I/O before changing
     // these images; its final scalar publication contains memory writes only.
-    internal static bool ReserveAcceptedScalar<T>(ref T p, APTR arena, uint block, uint id, out Handle handle)
+    internal static bool ReserveAcceptedScalar<T>(ref T p, APTR arena, uint block, uint id, APTR scratch,
+        bool materialize, out Handle handle, out APTR addedBucket)
         where T : struct, IAmigaFileSystemPlatform
     {
         handle = default;
-        if (p.ReadUInt32(arena, 24) != 0 || !Acquire(ref p, arena, block, id, out handle)) return false;
-        if (p.ReadUInt32(handle.Slot, 12) != 1 || handle.Revision == uint.MaxValue)
-        { Release(ref p, ref handle); return false; }
-        handle.Mount = p.Sfs2Context; handle.MountEpoch = p.ReadUInt32(handle.Mount, 8);
-        handle.Checksum = p.ReadUInt32(handle.Image, 4); handle.TracksChecksum = true;
-        return true;
-    }
-
-    internal static bool MaterializeAcceptedBeforeImage<T>(ref T p, APTR arena, uint block, uint id, APTR scratch,
-        out APTR addedBucket) where T : struct, IAmigaFileSystemPlatform
-    {
         addedBucket = APTR.Null;
-        if (p.ReadUInt32(arena, 24) != 0 || p.ReadUInt32(arena) >= p.ReadUInt32(arena, 4) ||
-            Find(ref p, arena, block).IsNotNull) return false;
+        if (p.ReadUInt32(arena, 24) != 0) return false;
         var bucket = Bucket(ref p, arena, block);
-        if (bucket.IsNull || p.ReadUInt32(bucket) != 0) return false;
-        var before = ReadView(ref p, block, id, scratch);
-        if (before.IsNull || !Store(ref p, arena, block, before, id)) return false;
-        var image = Find(ref p, arena, block);
-        p.WriteUInt32(APTR.FromPointer(image.Raw - SlotBytes), 16, 0);
-        // This was the empty end of a probe chain. With no intervening accepted
-        // store, rolling back additions in reverse order restores the old index.
-        addedBucket = bucket; return true;
+        if (bucket.IsNull) return false;
+        var offset = p.ReadUInt32(bucket);
+        APTR slot, image;
+        uint revision;
+        if (offset != 0)
+        {
+            slot = APTR.FromPointer(arena.Raw + offset);
+            image = APTR.FromPointer(slot.Raw + SlotBytes);
+            revision = p.ReadUInt32(slot, 8);
+            if (revision == uint.MaxValue || p.ReadUInt32(slot, 12) != 0 ||
+                VerifyView(ref p, arena, image, block, id).IsNull) return false;
+        }
+        else
+        {
+            var count = p.ReadUInt32(arena);
+            if (!materialize || block >= 0x80000000 || count >= p.ReadUInt32(arena, 4)) return false;
+            var before = ReadView(ref p, block, id, scratch);
+            var bytes = p.ReadUInt32(arena, 8) & ~Format;
+            if (before.IsNull || !p.IsMapped(before, bytes)) return false;
+            slot = Slot(ref p, arena, count);
+            image = APTR.FromPointer(slot.Raw + SlotBytes);
+            p.Copy(before, image, bytes);
+            revision = 1;
+            p.WriteUInt32(slot, 0, block);
+            p.WriteUInt32(slot, 4, id);
+            p.WriteUInt32(slot, 8, revision);
+            p.WriteUInt32(slot, 16, 0);
+            p.WriteUInt32(bucket, 0, slot.Raw - arena.Raw);
+            p.WriteUInt32(arena, 0, count + 1);
+            // Rolling back these additions in reverse order restores the
+            // original probe chains and accepted slot count.
+            addedBucket = bucket;
+        }
+        p.WriteUInt32(slot, 12, 1);
+        var mount = p.Sfs2Context;
+        handle = new Handle { Arena = arena, Slot = slot, Image = image, Block = block, Type = id,
+            Epoch = p.ReadUInt32(arena, 28), Revision = revision, Mount = mount,
+            MountEpoch = p.ReadUInt32(mount, 8), Checksum = p.ReadUInt32(image, 4), TracksChecksum = true };
+        return true;
     }
 
     internal static void CancelAcceptedScalar<T>(ref T p, ref Handle handle) where T : struct, IAmigaGuestMemory

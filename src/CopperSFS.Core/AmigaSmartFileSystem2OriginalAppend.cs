@@ -48,10 +48,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
             (w.RootContainer + 2 >= first && w.RootContainer + 2 - first < count) || w.AdminReservation != 0) return false;
         if (!BitmapPosition(ref p, ref w, first, out var map, out var mapOffset, out _)) return false;
         var oldCount = p.ReadUInt32(active);
-        if (!ReserveOriginalAppend(ref p, active, w.ExtentRoot, TreeId, w.Meta, firstExtent, out tree, out treeBucket) ||
-            !ReserveOriginalAppend(ref p, active, map, BitmapId, w.Bitmap, firstExtent, out bitmap, out bitmapBucket) ||
-            !ReserveOriginalAppend(ref p, active, info.ObjectBlock, ObjectId, w.Meta, firstExtent, out obj, out objectBucket)) goto Decline;
-        if (info.ObjectBlock != w.RootContainer && !ReserveOriginalAppend(ref p, active, w.RootContainer,
+        if (!Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, w.ExtentRoot, TreeId, w.Meta, firstExtent, out tree, out treeBucket) ||
+            !Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, map, BitmapId, w.Bitmap, firstExtent, out bitmap, out bitmapBucket) ||
+            !Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, info.ObjectBlock, ObjectId, w.Meta, firstExtent, out obj, out objectBucket)) goto Decline;
+        if (info.ObjectBlock != w.RootContainer && !Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, w.RootContainer,
             ObjectId, w.Meta, firstExtent, out root, out rootBucket)) goto Decline;
         if (!OriginalDataRangeAvailable(ref p, active, first, count)) goto Decline;
         var treeCount = p.ReadUInt16(tree.Image, 12);
@@ -169,16 +169,6 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (treeBucket.IsNotNull) p.WriteUInt32(treeBucket, 0, 0);
         p.WriteUInt32(active, 0, oldCount);
         return false;
-    }
-
-    private static bool ReserveOriginalAppend<T>(ref T p, APTR arena, uint block, uint id, APTR scratch,
-        bool materialize, out Sfs2MetadataStore.Handle handle, out APTR bucket)
-        where T : struct, IAmigaWritableFileSystemPlatform
-    {
-        bucket = APTR.Null;
-        if (Sfs2MetadataStore.ReserveAcceptedScalar(ref p, arena, block, id, out handle)) return true;
-        return materialize && Sfs2MetadataStore.MaterializeAcceptedBeforeImage(ref p, arena, block, id, scratch, out bucket) &&
-            Sfs2MetadataStore.ReserveAcceptedScalar(ref p, arena, block, id, out handle);
     }
 
     private static bool ReservedOriginalAppendCurrent<T>(ref T p, in Sfs2MetadataStore.Handle handle)
