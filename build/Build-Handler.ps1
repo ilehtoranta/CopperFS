@@ -160,4 +160,6 @@ foreach ($method in $requiredMethods) {
         throw "Standalone SFS handler is missing $method; check the standalone build profile."
     }
 }
+$name = if ($Ffs) { 'CopperFFS' } else { 'CopperSFS' }
+& (Join-Path $PSScriptRoot 'Add-HandlerVersion.ps1') -Path $output -VersionTag ('$VER: ' + $name + ' 1.0 (20.11.126)')
 Write-Output "Built $output; install the selected handler in L: on an AmigaOS boot volume."
