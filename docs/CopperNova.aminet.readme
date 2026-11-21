@@ -1,0 +1,64 @@
+Short:        CopperNova CNP2 filesystem preview
+Author:       Ilkka Lehtoranta
+Uploader:     ilkleht@gmail.com (Ilkka Lehtoranta)
+Type:         disk/misc
+Version:      1.0-preview.3
+Requires:     Kickstart and Workbench 3.1, 68000 or newer
+Architecture: m68k-amigaos >= 3.1
+
+CopperNova is a new MIT-licensed Amiga filesystem written in C#.
+This preview uses CNP2 root version 3 with wide extents and multi-group
+allocation. It needs a TD64-capable device for the supplied disk image.
+It supports creating, deleting and moving files and directories, file
+reads and writes, enumeration, and explicit Flush.
+
+Archive contents
+
+CopperNovaPrototype  Native 68000 handler, embedded version CopperNova 1.0
+BlankCNP2.rdb.gz     Freshly formatted 4 GiB + 64 MiB CNP2 partition
+CopperNova.readme    This README
+LICENSE.txt         MIT license
+THIRD-PARTY-NOTICES.txt  CopperSharp license
+
+Installation
+
+1. Decompress BlankCNP2.rdb.gz on the host. Allow at least 4.1 GiB for
+   the decompressed disk image. Keep a clean copy to start over if needed.
+2. Boot Kickstart and Workbench 3.1 from your usual system disk. Attach
+   the decompressed image as a second writable RDB hardfile or disk.
+   The image already contains an installed copy of the handler and a
+   formatted, nonbootable CNP0: partition with DOS type 0x434E5032 (CNP2).
+3. Reboot if needed and check that CNP0: appears. Copy a test file to it,
+   cleanly shut down, then boot again and verify the file.
+
+Use a spare image or disk for the preview. Writing the full RDB image
+to a physical disk overwrites its partition table and volume contents.
+The preformatted image is the installation route exercised by the
+Workbench test. A native DOS Format command and in-place conversion from
+OFS, FFS, SFS or SFS2 are outside this preview.
+
+Current limitations
+
+- 512-byte sectors. The included full-disk partition is 4 GiB + 64 MiB.
+  Larger geometries and physical controllers have yet to be qualified.
+- Up to 1,022 live objects. Names are ASCII, with up to 168 bytes per
+  component and a 255-byte DOS path. Each directory has 192 bytes for
+  name records, which can limit it to a few entries with long names.
+- Up to eight extents and 2 GiB minus one byte per file. A fragmented file
+  can reach the extent limit before the disk fills.
+- Links, sparse growth, grow-by-resize, extended attributes, notifications,
+  record locking, automatic TRIM and removable-media change handling are
+  outside this preview.
+- Writes can be buffered. Use a clean shutdown or a successful explicit
+  Flush before removing the volume. An interrupted in-place overwrite
+  before Flush can leave a partially updated payload.
+- Experimental images may need to be recreated for future releases.
+  Keep independent copies of your files.
+
+Qualification covers emulated Kickstart and Workbench 3.1, including RDB
+discovery, TD64 transfers across 4 GiB, explicit Flush, cuts before both
+publication barriers, and cold reads from durable sectors. The independent
+checker verified allocation ownership and payload contents. Physical
+hardware and storage qualification remain open.
+
+Source code is at https://github.com/ilehtoranta/CopperFS

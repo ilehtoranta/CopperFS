@@ -147,8 +147,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         // Root stamping touches the header and counts. Bitmap decoding also
         // rewrites the virtual header and window base in the first 68 bytes.
         uint prior=0,mask=0;
-        if(type==30&&(R(ProofMask)&(1u<<(int)(1-sector)))!=0) { prior=Arena+ProofImages+((1-sector)<<9); mask=5|R(RootChanges); }
-        if(type==34&&R(BitmapProof)==owner+1) { prior=Arena+BitmapImage; mask=7|R(BitmapChanges); }
+        if(!WideVolume&&type==30&&(R(ProofMask)&(1u<<(int)(1-sector)))!=0) { prior=Arena+ProofImages+((1-sector)<<9); mask=5|R(RootChanges); }
+        if(!WideVolume&&type==34&&R(BitmapProof)==owner+1) { prior=Arena+BitmapImage; mask=7|R(BitmapChanges); }
         if(prior!=0) m.Write32(p+8,PatchedCrc(p,prior,mask));
         else if(type==32) m.Write32(p+8,LeafWriteCrc(p,p+m.Read16(p+32)));
         else Seal(p);
@@ -156,16 +156,28 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(type==34) { W(BitmapChanges,0); m.Copy(Arena+BitmapImage,p,512); W(BitmapProof,owner+1); }
         if(type==30||type==32) RememberPage(p,type==30?sector:2u);
     }
-    private bool RootValid(uint p,uint bank)=>m.Read32(p)==PackedMagic&&m.Read16(p+4) is 1 or 2&&m.Read16(p+6)==30&&m.Read32(p+12)==bank&&
-        (m.Read32(p+16)&1)==bank&&m.Read32(p+20)==0&&m.Read32(p+64)==R(Blocks)&&m.Read32(p+68)==1394&&
-        m.Read32(p+72)<=R(Blocks)-1394&&m.Read32(p+76) is >=1 and <=1023&&m.Read32(p+88)<=m.Read32(p+76)&&m.Read32(p+88)!=1&&(m.Read16(p+4)==2||m.Read32(p+88)==0)&&CheckPageCrc(p,30,bank);
+    private bool RootValid(uint p,uint bank)
+    {
+        uint version=m.Read16(p+4),blocks=R(Blocks),floor=version==3?WideDataFloor:1394;
+        return m.Read32(p)==PackedMagic&&version is >=1 and <=3&&m.Read16(p+6)==30&&m.Read32(p+12)==bank&&
+            (m.Read32(p+16)&1)==bank&&m.Read32(p+20)==0&&m.Read32(p+64)==blocks&&m.Read32(p+68)==floor&&
+            floor<blocks&&(version==3?Pair(m.Read16(p+96),WideTopStart):blocks<=65536)&&
+            m.Read32(p+72)<=blocks-floor&&m.Read32(p+76) is >=1 and <=1023&&m.Read32(p+88)<=m.Read32(p+76)&&
+            m.Read32(p+88)!=1&&(version>=2||m.Read32(p+88)==0)&&CheckPageCrc(p,30,bank);
+    }
     private StepResult SelectRoot(uint p)
     {
         bool first=RootValid(p,0),second=RootValid(p+512,1);
         if(!first&&!second||first&&second&&(m.Read16(p+4)!=m.Read16(p+516)||m.Read32(p+24)!=m.Read32(p+536)||m.Read32(p+28)!=m.Read32(p+540))) return Fatal();
         uint bank=second&&(!first||m.Read32(p+528)>m.Read32(p+16))?1u:0;
-        p+=bank*512; W(BitmapProof,0); W(RootChanges,0); m.Copy(Root(),p,512); W(DataFloor,1394); W(Bank,bank); W(Generation,m.Read32(p+16));
+        p+=bank*512; W(BitmapProof,0); W(RootChanges,0); m.Copy(Root(),p,512); W(DataFloor,m.Read32(p+68)); W(Bank,bank); W(Generation,m.Read32(p+16));
         W(IdentityHi,m.Read32(p+24)); W(IdentityLo,m.Read32(p+28)); Zero(Arena+State+RawKeys,12);
+        W(WideTopDirty,0);
+        if(WideVolume)
+        {
+            Zero(Ptr(WideIndex),128);
+            return Issue(IoKind.Read,m.Read16(p+96),Ptr(WideTopImage),512,1122);
+        }
         return Next(115);
     }
     private StepResult Fetch(uint sector,uint type,uint owner,uint next)
@@ -185,7 +197,13 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         uint id=m.Read16(rec),kind=m.Read8(rec+2),len=m.Read16(rec+4),count=m.Read8(rec+3),size=m.Read32(rec+8);
         if(id<=previous||id>=1024||(id>>4)!=group||count>8||len<24||len>left||len>216||(len&3)!=0||m.Read16(rec+6) is 0 or >=1024) return false;
         if(kind==12) return ReusableIds()&&id!=1&&len==24&&count==0&&size==0&&m.Read16(rec+6)==1&&ValidNextHole(id,m.Read32(rec+12),m.Read32(Root()+76));
-        if(kind==10) return len==24&&(count==0?size==0&&m.Read16(rec+18)==0:size!=0&&ExtentOK(m.Read16(rec+16),m.Read16(rec+18)));
+        if(kind==10)
+        {
+            uint disk=WideVolume?m.Read32(rec+16):m.Read16(rec+16);
+            uint run=WideVolume?m.Read32(rec+20)&0x7fffffffu:m.Read16(rec+18);
+            if(WideVolume&&count<=1&&(m.Read32(rec+20)&0x80000000u)!=0) return false;
+            return len==24&&(count==0?size==0&&run==0:size!=0&&ExtentOK(disk,run));
+        }
         if(kind!=11||size!=0) return false;
         uint at=24,entries=0;
         while(at<len) { if(len-at<24) return false; uint name=m.Read16(rec+at+20),step=(24+name+7)&~7u;
@@ -193,7 +211,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             at+=step; entries++; }
         return entries==count;
     }
-    private bool ExtentOK(uint disk,uint run)=>disk>=1394&&disk<R(Blocks)&&run!=0&&run<=R(Blocks)-disk;
+    private bool ExtentOK(uint disk,uint run)=>disk>=DataStart&&disk<R(Blocks)&&run!=0&&run<=R(Blocks)-disk;
     private StepResult Fetched()
     {
         uint state=Arena+State;
@@ -212,12 +230,32 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         uint home=m.Read32(state+LoadHome),p=Image(m.Read32(state+LoadSlot)),root=Root(),id=home-256,group=id>>4;
         switch(phase)
         {
+            case 1120:
+                W(WideActiveSelector,R(Loaded));
+                return LoadHomePage(WideBitmapKey+R(WideMap),R(WideReturn));
+            case 1121: return LoadWidePage(phase,home,p);
+            case 1122: return PageValid(Ptr(WideTopImage),WideTopType,m.Read16(root+96),0)?Next(115):Fatal();
+            case 1123:
+            {
+                uint extra=Ptr(RawOverflow),sector=WideExtentBase(id)+m.Read32(p+WideExtentBank);
+                if(!PageValid(extra,WideExtentType,sector,id)) return Fatal();
+                uint wideLogical=m.Read32(p+336),wideCount=m.Read32(p+96);
+                for(uint i=1;i<wideCount;i++)
+                {
+                    uint at=extra+32+(i-1)*8,disk=m.Read32(at),run=m.Read32(at+4);
+                    if(!ExtentOK(disk,run)||run>uint.MaxValue-wideLogical) return Fatal();
+                    uint extent=ExtentAt(p,i); m.Write32(extent+4,wideLogical); m.Write32(extent+12,disk); m.Write32(extent+16,run);
+                    wideLogical+=run;
+                }
+                return wideLogical==(m.Read32(p+68)+511)>>9?LoadedPacked():Fatal();
+            }
             case 1100:
+                if(home>=WideSelectorKey&&WideVolume) return LoadWidePage(phase,home,p);
                 if(home is >=2000 and <2256) return LoadCommentPage(home,p);
                 if(home==128||home==129) {
                     if(home==129) Zero(p,512); Header(p,home==128?3u:5u,home,m.Read32(state+Generation)); uint last=m.Read32(root+76);
                     if(home==129) SetRange(p+128,0,last+1,true);
-                    else { m.Write32(p+64,m.Read32(state+Blocks)); m.Write32(p+68,1394); m.Write32(p+72,m.Read32(root+72)); m.Write32(p+80,1023-last); m.Write32(p+84,m.Read32(root+88)); m.Write32(p+88,m.Read32(root+80)); m.Write32(p+92,m.Read32(root+84)); }
+                    else { m.Write32(p+64,m.Read32(state+Blocks)); m.Write32(p+68,DataStart); m.Write32(p+72,m.Read32(root+72)); m.Write32(p+80,1023-last); m.Write32(p+84,m.Read32(root+88)); m.Write32(p+88,m.Read32(root+80)); m.Write32(p+92,m.Read32(root+84)); }
                     return LoadedPacked(); }
                 if(home is >=130 and <=161) { uint index=home-130,sector=m.Read16(root+96+index*2); if(!Pair(sector,2+index*2)) return Fatal(); return Issue(IoKind.Read,sector,p,512,1101); }
                 if(id==0||id>m.Read32(root+76)) return Fatal();
@@ -239,7 +277,19 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 uint kind=m.Read8(record+2),count=m.Read8(record+3),bytes=m.Read16(record+4)-24u;
                 m.Write32(p+64,0); m.Write32(p+100,0); if(kind==10) Zero(p+320,count*24); m.Write16(p+6,kind); m.Write32(p+20,home); m.Write32(p+24,1); m.Write32(p+28,id); m.Write32(p+108,m.Read16(record+6));
                 m.Write32(p+68,m.Read32(record+8)); m.Write32(p+116,m.Read32(record+12)); m.Write32(p+96,count);
+                m.Write32(p+WideExtentBank,0);
                 if(kind==11) { m.Write32(p+100,bytes); m.Copy(p+320,record+24,bytes); }
+                else if(count!=0&&WideVolume)
+                {
+                    uint runAndSide=m.Read32(record+20);
+                    m.Write32(p+332,m.Read32(record+16)); m.Write32(p+336,runAndSide&0x7fffffffu);
+                    if(count>1)
+                    {
+                        uint side=runAndSide>>31; m.Write32(p+WideExtentBank,side);
+                        return Issue(IoKind.Read,WideExtentBase(id)+side,Ptr(RawOverflow),512,1123);
+                    }
+                    if(m.Read32(p+336)!=(m.Read32(p+68)+511)>>9) return Fatal();
+                }
                 else if(count!=0) { m.Write32(p+332,m.Read16(record+16)); m.Write32(p+336,m.Read16(record+18));
                     if(count>1) return Fetch(Extra(group),33,group,1104);
                     if(m.Read32(p+336)!=(m.Read32(p+68)+511)>>9) return Fatal(); }
@@ -261,7 +311,12 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
     {
         m.Write16(rec,id); m.Write16(rec+2,(kind<<8)|(byte)count); m.Write16(rec+4,24+bytes); m.Write16(rec+6,m.Read16(p+110));
         m.Write32(rec+8,m.Read32(p+68)); m.Write32(rec+12,m.Read32(p+116)); m.Write32(rec+20,0);
-        if(kind==10&&count!=0) { m.Write16(rec+16,m.Read16(p+334)); m.Write16(rec+18,m.Read16(p+338)); }
+        if(kind==10&&count!=0&&WideVolume)
+        {
+            m.Write32(rec+16,m.Read32(p+332));
+            m.Write32(rec+20,m.Read32(p+336)|(count>1?m.Read32(p+WideExtentBank)<<31:0));
+        }
+        else if(kind==10&&count!=0) { m.Write16(rec+16,m.Read16(p+334)); m.Write16(rec+18,m.Read16(p+338)); }
         else m.Write32(rec+16,0);
         if(kind==11) m.Copy(rec+24,p+320,bytes);
     }
@@ -274,7 +329,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         for(uint id=first;id<=end;id++) {
             int slot=Find(256+id); if(slot<0) return false;
             uint inode=Image((uint)slot),type=m.Read16(inode+6),count=m.Read32(inode+96);
-            if(!ValidInodeIdentity(inode,id)||type is not (10 or 11)||count>8||(type==10&&count>1)) return false;
+            if(!ValidInodeIdentity(inode,id)||type is not (10 or 11)||count>8||(!WideVolume&&type==10&&count>1)) return false;
             uint bytes=type==11?m.Read32(inode+100):0;
             if(bytes>192||24+bytes>512-at) return false;
             EncodeRow(output+at,inode,id,type,count,bytes); at+=24+bytes;
@@ -298,12 +353,21 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     uint slot=m.Read8(Arena+DirtySlots+index),entry=Arena+CacheMeta+(slot<<5);
                     uint home=m.Read32(entry),p=Image(slot); m.Write32(state+Index,index+1);
                     if(home is >=2000 and <2256) return WriteCommentPage(home,p,gen);
+                    if(home>=WideSelectorKey&&WideVolume) return WriteWidePage(home,entry,p,gen);
                     if(!ValidHomeType(p,home)&&!(ReusableIds()&&home>=258&&home<1280&&ValidHole(p,home-256,1023))) return Fatal();
                     if(home==128) { m.Write32(root+72,m.Read32(p+72)); m.Write32(root+76,1023-m.Read32(p+80)); m.Write32(root+80,m.Read32(p+88)); m.Write32(root+84,m.Read32(p+92)); m.Write32(root+88,m.Read32(p+84)); }
                     else if(home is >=130 and <=161) { uint map=home-130,pointer=root+96+map*2,sector=Alternate(m.Read16(pointer),2+map*2);
                         m.Copy(output,p,512); Stamp(output,34,sector,map,gen); RootPointer(pointer,sector); return Issue(IoKind.Write,sector,output,512,1201); }
-                    else if(home>256) { uint key=(home-256)>>4; if(m.Read8(Arena+SeenGroups+key)==0) { uint n=m.Read32(state+BucketListCount); m.Write8(Arena+SeenGroups+key,1); m.Write8(Arena+GroupQueue+n,(byte)key); m.Write32(state+BucketListCount,n+1); } }
+                    else if(home>256) { uint key=(home-256)>>4; if(m.Read8(Arena+SeenGroups+key)==0) { uint n=m.Read32(state+BucketListCount); m.Write8(Arena+SeenGroups+key,1); m.Write8(Arena+GroupQueue+n,(byte)key); m.Write32(state+BucketListCount,n+1); }
+                        if(WideVolume&&m.Read16(p+6)==10&&m.Read32(p+96)>1) return WriteWideExtentPage(home-256,p,gen); }
                     return StepResult.Pending;
+                }
+                if(WideVolume&&R(WideTopDirty)!=0)
+                {
+                    uint top=Ptr(WideTopImage),sector=Alternate(m.Read16(root+96),WideTopStart);
+                    RootPointer(root+96,sector); W(WideTopDirty,0);
+                    Stamp(top,WideTopType,sector,0,gen);
+                    return Issue(IoKind.Write,sector,top,512,1202);
                 }
                 return Next(1202);
             case 1202:
@@ -331,7 +395,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             case 1206:
                 for(uint i=0;i<16;i++) { uint id=group*16+i; int slot=Find(256+id); uint row=Row(i);
                     if(slot>=0&&m.Read32(Meta((uint)slot)+8)!=0) { uint p=Image((uint)slot); if(m.Read32(p+100)>192) return Fatal(); EncodeRow(row,p,id); }
-                    if(m.Read16(row+4)!=0&&m.Read8(row+2)==10&&m.Read8(row+3)>1) m.Write32(state+NeedOverflow,1); }
+                    if(!WideVolume&&m.Read16(row+4)!=0&&m.Read8(row+2)==10&&m.Read8(row+3)>1) m.Write32(state+NeedOverflow,1); }
                 if(m.Read32(state+NeedOverflow)!=0&&Extra(group)!=0) return Fetch(Extra(group),33,group,1207);
                 if(m.Read32(state+NeedOverflow)!=0) Zero(Arena+OverflowWork,512);
                 return Next(1208);
@@ -357,6 +421,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 uint branch=Alternate(m.Read32(state+OldTree),BranchBase(group)); Zero(output,512); m.Copy(output+32,newLeaves,16);
                 Stamp(output,31,branch,group,gen); RootPointer(root+160+group*2,branch); return Issue(IoKind.Write,branch,output,512,1202);
             case 1212:
+                if(WideVolume) m.Write32(root+100,R(AllocationHint));
                 uint bank=1-m.Read32(state+Bank); Stamp(root,30,bank,0,gen); m.Write32(state+Bank,bank); return Issue(IoKind.Write,bank,root,512,1213);
             case 1213: return Issue(IoKind.Flush,0,0,0,1214);
             case 1214: Zero(Arena+State+RawKeys,12); return Next(211);
