@@ -8,7 +8,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
 
     private static void RememberOriginalDataCursor<T>(ref T p, APTR cursor, APTR group,
         APTR active, uint node, ulong size, uint logical, uint physical, uint count, uint first,
-        uint objectBlock, uint objectOffset)
+        uint objectBlock, uint objectOffset, uint appendExtentOffset = 0)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         var context = p.Sfs2Context; p.WriteUInt32(cursor, 0, 0);
@@ -19,7 +19,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
         p.WriteUInt32(cursor, 24, (uint)size); p.WriteUInt32(cursor, 28, (uint)(size >> 32));
         p.WriteUInt32(cursor, 32, logical); p.WriteUInt32(cursor, 36, physical); p.WriteUInt32(cursor, 40, count);
         p.WriteUInt32(cursor, 44, first);
-        p.WriteUInt32(cursor, 48, objectBlock); p.WriteUInt32(cursor, 52, objectOffset);
+        // Object offsets fit in 16 bits even on the largest supported block.
+        // An append in a terminal root can keep its record offset here too.
+        p.WriteUInt32(cursor, 48, objectBlock);
+        p.WriteUInt32(cursor, 52, objectOffset | (appendExtentOffset << 16));
         p.WriteUInt32(cursor, 0, node);
     }
 
@@ -27,16 +30,18 @@ public static partial class AmigaSmartFileSystem2WriteCore
     // cleared archive, and published these size/first scalars. The group already
     // checked mount readiness before consulting this optional descriptor.
     private static bool OriginalFileInformation<T>(ref T p, APTR cursor, APTR group, APTR active,
-        uint node, out FileInformation info) where T : struct, IAmigaWritableFileSystemPlatform
+        uint node, out FileInformation info, out uint appendExtentOffset) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        info = default; var context = p.Sfs2Context;
+        info = default; appendExtentOffset = 0; var context = p.Sfs2Context;
         if (cursor.IsNull || p.ReadUInt32(cursor) != node || p.RedoOverlay != active ||
             p.ReadUInt32(cursor, 4) != context.Raw || p.ReadUInt32(cursor, 8) != p.ReadUInt32(context, 8) ||
             p.ReadUInt32(cursor, 12) != p.ReadUInt32(context, 12) || p.ReadUInt32(cursor, 16) != group.Raw ||
             p.ReadUInt32(cursor, 20) != active.Raw) return false;
         info.Size = ((ulong)p.ReadUInt32(cursor, 28) << 32) | p.ReadUInt32(cursor, 24);
         info.First = p.ReadUInt32(cursor, 44);
-        info.ObjectBlock = p.ReadUInt32(cursor, 48); info.ObjectOffset = p.ReadUInt32(cursor, 52);
+        var offsets = p.ReadUInt32(cursor, 52);
+        info.ObjectBlock = p.ReadUInt32(cursor, 48); info.ObjectOffset = offsets & 65535;
+        appendExtentOffset = offsets >> 16;
         // Only writable/archive-clear bits are consumed from this scalar. The
         // metadata updater always reads the actual protection from its record.
         info.Protection = 15; return true;

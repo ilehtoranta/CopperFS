@@ -11,37 +11,60 @@ public static class AmigaSmartFileSystemTrstCodec
     internal static uint PlanSparse512<T>(ref T p, APTR oldImage, APTR finalImage,
         uint changed, APTR plan, out uint length) where T : struct, IAmigaGuestMemory
     {
-        uint word = 0, runs = 0; length = 0;
-        var kind = SparseKind(ref p, oldImage, finalImage, word, changed);
+        uint word = 0, start = 0, kind = 1, runs = 0, literalWords = 0;
         while (word < 128)
         {
-            var current = kind; var count = 1u; word++;
-            while (word < 128 && count < 64)
+            var next = 1u;
+            var take = 1u;
+            if ((changed & 1) != 0)
             {
-                if (current == 1 && (changed & (1u << (int)(word >> 2))) == 0)
-                {
-                    var take = 4 - (word & 3);
-                    if (take > 64 - count) take = 64 - count;
-                    word += take; count += take; continue;
-                }
-                kind = SparseKind(ref p, oldImage, finalImage, word, changed);
-                if (kind != current) break;
-                word++; count++;
+                var offset = (int)(word * 4);
+                var value = p.ReadUInt32(finalImage, offset);
+                var old = p.ReadUInt32(oldImage, offset);
+                next = value == old ? 1u : value == 0 ? 0u : value == uint.MaxValue ? 2u : 3u;
+                if ((word & 3) == 3) changed >>= 1;
             }
-            p.WriteUInt8(plan, (int)runs++, (byte)((current << 6) | (count - 1)));
-            length += current == 3 ? 1 + count * 4 : 1;
-            if (word < 128 && count == 64) kind = SparseKind(ref p, oldImage, finalImage, word, changed);
+            else if (changed == 0) take = 128 - word;
+            else
+            {
+                // Skip consecutive certified regions as one unchanged span.
+                // The mask's low bit always describes the region at word.
+                uint regions = 0;
+                if ((changed & 0xFFFF) == 0) { changed >>= 16; regions += 16; }
+                if ((changed & 0xFF) == 0) { changed >>= 8; regions += 8; }
+                if ((changed & 0xF) == 0) { changed >>= 4; regions += 4; }
+                if ((changed & 3) == 0) { changed >>= 2; regions += 2; }
+                if ((changed & 1) == 0) { changed >>= 1; regions++; }
+                take = regions * 4;
+            }
+            if (next != kind)
+            {
+                var count = word - start;
+                if (count != 0) runs = AppendSparseRun(ref p, plan, runs, kind, count);
+                if (kind == 3) literalWords += count;
+                kind = next;
+                start = word;
+            }
+            word += take;
         }
+        var finalCount = 128 - start;
+        runs = AppendSparseRun(ref p, plan, runs, kind, finalCount);
+        if (kind == 3) literalWords += finalCount;
+        length = runs + literalWords * 4;
         return runs;
     }
 
-    private static uint SparseKind<T>(ref T p, APTR oldImage, APTR finalImage, uint word, uint changed)
+    private static uint AppendSparseRun<T>(ref T p, APTR plan, uint runs, uint kind, uint count)
         where T : struct, IAmigaGuestMemory
     {
-        if ((changed & (1u << (int)(word >> 2))) == 0) return 1;
-        var value = p.ReadUInt32(APTR.FromPointer(finalImage.Raw + word * 4));
-        var old = p.ReadUInt32(APTR.FromPointer(oldImage.Raw + word * 4));
-        return value == old ? 1u : value == 0 ? 0u : value == uint.MaxValue ? 2u : 3u;
+        var code = kind << 6;
+        if (count > 64)
+        {
+            p.WriteUInt8(plan, (int)runs++, (byte)(code | 63));
+            count -= 64;
+        }
+        p.WriteUInt8(plan, (int)runs, (byte)(code | (count - 1)));
+        return runs + 1;
     }
 
     /// <summary>

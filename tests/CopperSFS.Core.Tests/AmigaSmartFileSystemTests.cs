@@ -12,7 +12,7 @@ public sealed partial class AmigaSmartFileSystemTests
     private const uint Bitmap = 0x42544D50, Admin = 0x41444D43;
     private sealed class PowerCut : Exception;
 
-    private struct Disk(byte[] image) : IAmigaWritableFileSystemPlatform, IAmigaDiscardFileSystemPlatform
+    private struct Disk(byte[] image) : IAmigaFormatFileSystemPlatform, IAmigaDiscardFileSystemPlatform
     {
         public readonly byte[] Ram = new byte[524288];
         public APTR TrimCertificate, FreedQueue;
@@ -20,6 +20,7 @@ public sealed partial class AmigaSmartFileSystemTests
         public bool TracksFreedRanges => FreedQueue.IsNotNull;
         public void ObserveFreedRange(uint first, uint count) => AmigaFreedRangeQueue.Add(ref this, FreedQueue, first, count);
         public int Writes, FailAtWrite, IoEvents, CutAfterIo, Flushes, FailAtFlush;
+        public uint RetainedRunCapacity { get; set; } = 1;
         public int GeometryReads;
         public uint SectorBytesOverride;
         public List<(uint Block, byte[] Data)>? WrittenSectors;
@@ -164,6 +165,12 @@ public sealed partial class AmigaSmartFileSystemTests
         }
         public bool WriteDataBlocks(uint block, uint count, APTR source)
         { DataWrites.Add((block, count)); return AmigaFileSystemBlockIo.Write(ref this, block, count, source); }
+        public bool WriteFormatBlock(uint block, APTR source)
+        {
+            if (block >= BlockCount || !IsMapped(source, Bytes)) return false;
+            Ram.AsSpan((int)source.Raw, Bytes).CopyTo(image.AsSpan((int)block * Bytes, Bytes));
+            return true;
+        }
         public bool WriteBlock(uint block, APTR source)
         {
             CheckView();
@@ -171,6 +178,17 @@ public sealed partial class AmigaSmartFileSystemTests
             if (WriteQueue.IsNull) return RawWriteBlock(block, source);
             return AmigaFileSystemWriteCombiner.TryStore(ref this, WriteQueue, block, 1, source) ||
                 (DrainWrites() && AmigaFileSystemWriteCombiner.TryStore(ref this, WriteQueue, block, 1, source));
+        }
+        public bool WriteRetainedRun(uint first, uint count, APTR slots)
+        {
+            for (var i = 0u; i < count; i++)
+            {
+                var slot = APTR.FromPointer(ReadUInt32(slots, (int)i * 4));
+                Assert.Equal(first + i, ReadUInt32(slot));
+                if (!WriteBlock(first + i, APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)))
+                    return false;
+            }
+            return true;
         }
         public bool DrainWrites()
         {

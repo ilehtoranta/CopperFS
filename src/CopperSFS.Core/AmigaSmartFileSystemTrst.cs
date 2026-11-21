@@ -122,6 +122,15 @@ public static partial class AmigaSmartFileSystemWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform => p.SupportsRetainedBlockWrites
             ? p.WriteRetainedBlock(block, image) : p.WriteBlock(block, image);
 
+    private static bool TrstWriteHomeSlot<T>(ref T p, uint block, APTR slot)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+#if COPPERFS_SFS_POOL
+        if (p.SupportsTrstHomeSlotWrites) return p.WriteTrstHomeSlot(slot);
+#endif
+        return TrstWriteBlock(ref p, block, APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes));
+    }
+
     // TrstSpace proves journal pages free in both the original and final
     // bitmaps. They are unpublished writes too, and need not displace hot
     // metadata or copy into the native LRU. Marker and home images still use
@@ -430,7 +439,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         for (var i = 0u; i < staged.Count; i++)
         {
             slot = AmigaSmartFileSystemRedoArena.SlotAt(ref p, staged.Arena, i);
-            if (!TrstWriteBlock(ref p, p.ReadUInt32(slot), APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)))
+            if (!TrstWriteHomeSlot(ref p, p.ReadUInt32(slot), slot))
                 return Fail(ref w, DOS.Error.DiskNotValidated);
         }
         return CompleteNative(ref p, ref w, marker);
@@ -462,7 +471,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             while (count < capacity && count < staged.Count - i &&
                 p.ReadUInt32(APTR.FromPointer(p.ReadUInt32(slots, (int)count * 4))) == first + count) count++;
             var success = count == 1
-                ? TrstWriteBlock(ref p, first, APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes))
+                ? TrstWriteHomeSlot(ref p, first, slot)
                 : p.WriteRetainedRun(first, count, slots);
             if (!success) return Fail(ref w, DOS.Error.DiskNotValidated);
             i += count;

@@ -178,6 +178,12 @@ public interface IAmigaWritableFileSystemPlatform : IAmigaFileSystemPlatform
     // unavailable cache slot leaves the ordinary read/modify/write to the core.
     bool TryPatchClassicOfsForwardLink(uint key, uint successor, out bool written)
     { written = false; return false; }
+#if COPPERFS_SFS_POOL
+    /// <summary>Whether the platform can preserve verification on a sealed redo home write.</summary>
+    bool SupportsTrstHomeSlotWrites => false;
+    /// <summary>Install the sealed slot after durable journal publication. A false result is a write failure.</summary>
+    bool WriteTrstHomeSlot(APTR slot) => false;
+#endif
     /// <summary>Maximum adjacent TRST home images the platform can gather using
     /// existing storage. Each entry in slots points at a redo slot, with its
     /// image at SlotHeaderBytes. Only called after durable journal publication.</summary>

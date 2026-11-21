@@ -17,15 +17,17 @@ public sealed class SfsOverwriteProfileTheoryAttribute : TheoryAttribute
 public sealed partial class OriginalHandlerCorrectnessTests
 {
     [SfsOverwriteProfileTheory]
-    [InlineData("sfs")]
-    public async System.Threading.Tasks.Task ProfileSfsOverwriteAndFlush(string profile)
+    [InlineData("sfs", false)]
+    [InlineData("sfs", true)]
+    public async System.Threading.Tasks.Task ProfileSfsOverwriteAndFlush(string profile, bool chip)
     {
         var path = Environment.GetEnvironmentVariable("COPPERFS_CORRECTNESS_MANIFEST")!;
         var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(path))!;
         var pair = manifest.Profiles.Single(p => p.Name == profile);
         var initial = File.ReadAllBytes(manifest.ClassicBase);
-        var root = Path.Combine(Path.GetDirectoryName(path)!, "overwrite-profile");
-        var written = await Run(root, profile, "candidate", pair.Candidate, initial, true, "LargeWriteProbe::Sfs");
+        var root = Path.Combine(Path.GetDirectoryName(path)!, chip ? "overwrite-profile-chip" : "overwrite-profile");
+        var entry = chip ? "LargeWriteProbe::SfsChip" : "LargeWriteProbe::Sfs";
+        var written = await Run(root, profile, "candidate", pair.Candidate, initial, true, entry);
         var file = SfsImageChecker.Check(new MemoryStream(written), reservedBlocks: 2).Entries.Single(e => e.Path == "/Large");
         Assert.Equal(Hash(Enumerable.Repeat((byte)0xD4, 98304).ToArray()), file.Sha256);
     }

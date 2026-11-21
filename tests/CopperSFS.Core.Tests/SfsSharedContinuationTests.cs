@@ -4,18 +4,123 @@ namespace CopperSFS.Tests;
 public sealed partial class AmigaSmartFileSystemTests
 {
     [Theory]
-    [InlineData(false, 1000)] [InlineData(true, 2000)]
+    [InlineData(1u)]
+    [InlineData(2u)]
+    public void SharedPoolHomeWriteFailureUpdatesCaller(uint runCapacity)
+    {
+        const uint first = 2000, lastHome = first + 14;
+        var seed = ContinuationSeed((int)first);
+        var baseline = Stage();
+        var work = TrstWork();
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref baseline, ref work, GroupAddress));
+        var homeWriteIndex = baseline.WrittenSectors!.FindIndex(write => write.Block == lastHome);
+        Assert.True(homeWriteIndex >= 0);
+        Assert.Equal(baseline.WrittenSectors.Count, baseline.Writes);
+
+        var disk = Stage();
+        disk.FailAtWrite = homeWriteIndex + 1;
+        work = TrstWork();
+        Assert.False(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        Assert.Equal(DOS.Error.DiskNotValidated, work.Error);
+        Assert.Equal(disk.FailAtWrite, disk.Writes);
+        Assert.Equal(homeWriteIndex, disk.WrittenSectors!.Count);
+        Assert.DoesNotContain(disk.WrittenSectors, write => write.Block == lastHome);
+
+        disk.FailAtWrite = 0;
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        Assert.Equal(baseline.Snapshot(), disk.Snapshot());
+
+        Disk Stage()
+        {
+            var staged = new Disk(seed.Image.ToArray()) { RetainedRunCapacity = runCapacity };
+            Assert.True(AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref staged, GroupAddress, 9756));
+            Assert.True(GroupWrite(ref staged, 3, 0, new byte[1024]));
+            var scratch = TrstWork().Meta;
+            // Stage widely spaced payload sectors so the retained-run path still has single-block homes.
+            for (var block = first + 4; block <= lastHome; block += 2)
+            {
+                Assert.True(staged.ReadBlock(block, scratch));
+                staged.WriteUInt8(scratch, 0, (byte)block);
+                Assert.True(staged.WriteBlock(block, scratch));
+            }
+            Assert.InRange(staged.ReadUInt32(staged.RedoOverlay), 6u, 64u);
+            staged.Writes = 0;
+            staged.WrittenSectors = [];
+            return staged;
+        }
+    }
+
+    [Fact]
+    public void OverlappingSuccessorCannotCertifyTwoPhysicalSourceRuns()
+    {
+        // The checksum and bitmap are consistent, but four live blocks
+        // belong to both extent records.
+        var seed = ContinuationSeed(5994, nextExtent: true, length: 42);
+        var disk = new Disk(seed.Image.ToArray()) { Buffered = true, CheckReadOnlyViews = true };
+        Assert.True(AmigaSmartFileSystemWriteCore.InitializeSharedTrstGroup(ref disk, GroupAddress, 9756));
+        var payload = Enumerable.Repeat((byte)0x5B, 1024).ToArray();
+        var accepted = 0;
+        while (accepted < 10 * 512 && GroupWrite(ref disk, 3, (uint)accepted, payload))
+            accepted += payload.Length;
+        Assert.InRange(accepted, 0, 4 * 512);
+        var cut = new Disk(disk.Snapshot());
+        Assert.Equal(seed.Bytes, GroupRead(ref cut, 3));
+        Assert.Equal("hello"u8.ToArray(), GroupRead(ref cut, 4));
+    }
+    [Fact]
+    public void FailedPacketCrossingTwoSourcesCanRetryBeforeExplicitFlush()
+    {
+        var seed = ContinuationSeed(5000, nextExtent: true, length: 42);
+        var expected = seed.Bytes.ToArray();
+        var disk = StageTrstProof(seed.Image, expected, 1024, shared: true);
+        disk.FreedQueue = APTR.FromPointer((uint)disk.Ram.Length - 4096);
+        var work = TrstWork();
+        foreach (int offset in new[] { 3072, 4096 })
+        {
+            int length = offset == 3072 ? 1024 : 2048;
+            var payload = Enumerable.Repeat((byte)(offset / 512), length).ToArray();
+            payload.CopyTo(disk.Ram, 4000);
+            var request = new AmigaSmartFileSystemWriteCore.Request { Node = 3, Position = (uint)offset,
+                Buffer = APTR.FromPointer(4000), Length = (uint)length };
+            if (offset == 4096)
+            {
+                disk.FailAtWrite = disk.Writes + 2;
+                Assert.False(AmigaSmartFileSystemWriteCore.TryContinueTrstGroup(ref disk, GroupAddress,
+                    work.Meta, APTR.Null, ref request, out var accepted, out _, true));
+                Assert.False(accepted);
+                Assert.Equal(1u, AmigaFreedRangeQueue.Count(ref disk, disk.FreedQueue));
+                disk.FailAtWrite = 0;
+            }
+            Assert.True(AmigaSmartFileSystemWriteCore.TryContinueTrstGroup(ref disk, GroupAddress,
+                work.Meta, APTR.Null, ref request, out var handled, out _, true));
+            Assert.True(handled);
+            payload.CopyTo(expected, offset);
+        }
+        Assert.True(AmigaFreedRangeQueue.Take(ref disk, disk.FreedQueue, 128, 0, out var start, out var count));
+        Assert.Equal((5006u, 4u), (start, count));
+        Assert.True(AmigaFreedRangeQueue.Take(ref disk, disk.FreedQueue, 128, 0, out start, out count));
+        Assert.Equal((6000u, 2u), (start, count));
+        var cut = new Disk(disk.Snapshot());
+        Assert.Equal(seed.Bytes, GroupRead(ref cut, 3));
+        Assert.True(AmigaSmartFileSystemWriteCore.FlushTrstGroup(ref disk, ref work, GroupAddress));
+        var remount = new Disk(disk.Snapshot());
+        Assert.Equal(expected, GroupRead(ref remount, 3));
+        Assert.Equal("hello"u8.ToArray(), GroupRead(ref remount, 4));
+    }
+    [Theory]
+    [InlineData(false, 1000)] [InlineData(true, 2000)] [InlineData(true, 5000)]
     public void WholeExtentContinuationRepairsSuccessorBeforeStartingItsNewProof(bool deferred, int first)
     {
         const int packet = 1024;
         var seed = ContinuationSeed(first, nextExtent: true, length: 42);
         var expected = seed.Bytes.ToArray();
         var disk = StageTrstProof(seed.Image, expected, packet, shared: true);
+        if (first == 5000) disk.FreedQueue = APTR.FromPointer((uint)disk.Ram.Length - 4096);
         var arena = disk.RedoOverlay;
         var payload = Enumerable.Repeat((byte)0xDB, packet).ToArray();
         for (var at = 3 * packet; at < expected.Length; at += packet)
         {
-            if (at < 5 * packet)
+            if (at < 5 * packet || first == 5000)
             {
                 var request = new AmigaSmartFileSystemWriteCore.Request { Node = 3, Position = (uint)at,
                     Buffer = APTR.FromPointer(4000), Length = packet };
@@ -27,6 +132,15 @@ public sealed partial class AmigaSmartFileSystemTests
             }
             else Assert.True(GroupWrite(ref disk, 3, (uint)at, payload));
             payload.CopyTo(expected, at);
+        }
+        if (first == 5000)
+        {
+            // Tracking starts after the three staged two-sector packets.
+            Assert.Equal(2u, AmigaFreedRangeQueue.Count(ref disk, disk.FreedQueue));
+            Assert.True(AmigaFreedRangeQueue.Take(ref disk, disk.FreedQueue, 128, 0, out var start, out var count));
+            Assert.Equal((5006u, 4u), (start, count));
+            Assert.True(AmigaFreedRangeQueue.Take(ref disk, disk.FreedQueue, 128, 0, out start, out count));
+            Assert.Equal((6000u, 32u), (start, count));
         }
         var durable = new Disk(disk.Snapshot());
         Assert.Equal(seed.Bytes, GroupRead(ref durable, 3));
