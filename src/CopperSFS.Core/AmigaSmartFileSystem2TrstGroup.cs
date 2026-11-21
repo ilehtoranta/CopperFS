@@ -77,9 +77,11 @@ public static partial class AmigaSmartFileSystem2WriteCore
                 Overlap(originalCursor, OriginalDataCursorBytes, w.Journal, bytes) ||
                 Overlap(originalCursor, OriginalDataCursorBytes, p.Sfs2Context, p.ReadUInt32(p.Sfs2Context, 44))))
                 return Fail(ref w, DOS.Error.NoFreeStore);
-            var handled = TryWriteUnchangedOriginalPacket(ref p, ref w, ref r, group, active, span, state, out actual, out prepared, out info, originalCursor);
+            var handled = TryWriteUnchangedOriginalPacket(ref p, ref w, ref r, group, active, span, state,
+                out actual, out prepared, out info, originalCursor, out var appendExtentOffset);
             if (handled || w.Error != DOS.Error.None) return handled;
-            if (prepared && TryAppendOriginalPacket(ref p, ref w, ref r, group, active, state, ref info, originalCursor, out actual)) return true;
+            if (prepared && TryAppendOriginalPacket(ref p, ref w, ref r, group, active, state, ref info,
+                originalCursor, appendExtentOffset, out actual)) return true;
             if (w.Error != DOS.Error.None) return false;
         }
         var trial = APTR.FromPointer(active.Raw == group.Raw + GroupHeader ? active.Raw + span : group.Raw + GroupHeader);

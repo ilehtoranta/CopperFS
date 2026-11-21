@@ -5,6 +5,47 @@ namespace CopperSFS.Tests;
 
 public sealed partial class AmigaSmartFileSystemTests
 {
+    [Fact]
+    public void AlignedAppendReusesAcceptedImagesAndRejectsShortTransfers()
+    {
+        var disk = new Disk(new byte[8192 * 512]) { BorrowRedoImages = true };
+        var work = TrstWork();
+        Assert.True(AmigaSmartFileSystemFormatCore.Format(ref disk, Root, disk.Name("Append"), 6, 0, work.Meta, out _));
+        var create = new Request { Directory = 1, Name = disk.Name("Growth"), Length = 6 };
+        Assert.True(Create(ref disk, ref work, ref create, false));
+        Assert.True(InitializeSharedTrstGroup(ref disk, GroupAddress, 9756));
+        var request = new Request { Node = create.Node, Buffer = APTR.FromPointer(4000), Length = 1024 };
+        disk.Ram.AsSpan(4000, 1024).Fill(0xA1);
+        Assert.True(ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write, GroupAddress, out _));
+        var accepted = disk.RedoOverlay;
+        var slots = disk.ReadUInt32(accepted);
+        var flushes = disk.Flushes;
+        request.Position = 1024;
+        disk.Ram.AsSpan(4000, 1024).Fill(0xB2);
+        disk.FailAtWrite = disk.Writes + 2;
+        Assert.False(ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write, GroupAddress, out var actual));
+        Assert.Equal(0u, actual);
+        Assert.Equal(accepted, disk.RedoOverlay);
+        Assert.Equal(Enumerable.Repeat((byte)0xA1, 1024).ToArray(), GroupRead(ref disk, create.Node));
+        disk.FailAtWrite = 0;
+        disk.Ram.AsSpan(4000, 1024).Fill(0xB3);
+        Assert.True(ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write, GroupAddress, out actual));
+        Assert.Equal(1024u, actual);
+        Assert.Equal(accepted, disk.RedoOverlay);
+        Assert.Equal(slots, disk.ReadUInt32(accepted));
+        request.Position = 2048;
+        disk.Ram.AsSpan(4000, 1024).Fill(0xC4);
+        Assert.True(ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write, GroupAddress, out _));
+        Assert.Equal(accepted, disk.RedoOverlay);
+        Assert.Equal(flushes, disk.Flushes);
+        Assert.True(FlushTrstGroup(ref disk, ref work, GroupAddress));
+        Assert.Equal(flushes + 4, disk.Flushes);
+        var reopened = new Disk(disk.Snapshot());
+        var expected = Enumerable.Repeat((byte)0xA1, 1024).Concat(Enumerable.Repeat((byte)0xB3, 1024))
+            .Concat(Enumerable.Repeat((byte)0xC4, 1024)).ToArray();
+        Assert.Equal(expected, GroupRead(ref reopened, create.Node));
+    }
+
     [Theory]
     [InlineData(false)] [InlineData(true)]
     public void AcceptedAttributesPreserveRollbackAndExplicitFlush(bool borrowed)
