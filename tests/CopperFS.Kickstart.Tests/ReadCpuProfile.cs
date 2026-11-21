@@ -26,6 +26,44 @@ internal sealed class ReadCpuProfile
     private long recognizedMoveBytes;
     private readonly List<object> ioRequests = [];
     private readonly List<object> deviceCalls = [];
+    private readonly List<object> dosCalls = [];
+    private uint dosReturn, dosStack, dosBase;
+    private int dosVector;
+    private long dosStart, dosHandler, dosRom;
+    private readonly Dictionary<uint, long> dosHandlerPcs = [];
+
+    // Observe library-vector entry and the matching guest RTS. No guest
+    // instruction, timer, DMA request or packet is added to either handler.
+    private void ObserveDosCall(uint pc, long cycle)
+    {
+        if (dosReturn != 0)
+        {
+            if (pc != dosReturn || core.State.A[7] != dosStack) return;
+            dosCalls.Add(new { Vector = dosVector, Start = dosStart - start, Cycles = cycle - dosStart,
+                Handler = dosHandler, Kickstart = dosRom, Result = core.State.D[0], Methods = DosHandlerMethods() });
+            dosReturn = 0;
+        }
+        var library = core.State.A[6];
+        var vector = unchecked((int)(pc - library));
+        if (vector is not (Amiga.DosLvo.Write or Amiga.DosLvo.Close or Amiga.DosLvo.DoPkt or Amiga.DosLvo.DeviceProc)) return;
+        if (dosBase == 0)
+        {
+            const uint nodeNameOffset = 10;
+            if (library == 0 || Memory(library, 14).Length != 14 ||
+                !Memory(ReadLong(library + nodeNameOffset), 12).SequenceEqual("dos.library\0"u8)) return;
+            dosBase = library;
+        }
+        if (library != dosBase || Memory(core.State.A[7], 4).Length != 4) return;
+        dosReturn = ReadLong(core.State.A[7]); dosStack = core.State.A[7] + 4;
+        dosStart = cycle; dosHandler = dosRom = 0; dosVector = vector; dosHandlerPcs.Clear();
+    }
+    private object DosHandlerMethods() => dosHandlerPcs.GroupBy(pair =>
+    {
+        var offset = pair.Key - codeBase;
+        return symbols.FirstOrDefault(s => offset >= s.Offset && offset - s.Offset < s.Size).Name ?? "<unmapped-handler>";
+    }).Select(group => new { Name = group.Key, Cycles = group.Sum(pair => pair.Value) })
+      .OrderByDescending(method => method.Cycles).ToArray();
+
     private readonly List<object> copyEntries = [];
     private readonly List<object> interruptEntries = [];
     private uint copyEntry;
@@ -120,6 +158,7 @@ internal sealed class ReadCpuProfile
         blockCopyEntry = codeBase + blockCopy.Offset; blockCopyBytes = blockCopy.Size;
         blockCopyCallers.Clear();
         transactionCalls.Clear(); blockTransfers.Clear(); deviceCalls.Clear(); interruptEntries.Clear();
+        dosCalls.Clear(); dosReturn = dosBase = 0;
         cacheReturn = cacheReturnStack = 0; cacheHits = cacheLookups = 0;
         uint Entry(string method) => codeBase + symbols.FirstOrDefault(s => s.Name.Contains("::" + method + "<") ||
             s.Name.EndsWith("::" + method, StringComparison.Ordinal)).Offset;
@@ -149,7 +188,7 @@ internal sealed class ReadCpuProfile
             Methods = rows.GroupBy(r => r.Name).Select(g => new { Name = g.Key, Cycles = g.Sum(r => r.Cycles), Instructions = g.Sum(r => r.Instructions) }).OrderByDescending(r => r.Cycles),
             Regions = rows.GroupBy(r => r.Region).Select(g => new { Region = g.Key, Cycles = g.Sum(r => r.Cycles), Instructions = g.Sum(r => r.Instructions) }),
             RecognizedMoveBytesToCaller = recognizedMoveBytes, IoRequests = ioRequests, CopyEntries = copyEntries,
-            TransactionCalls = transactionCalls, BlockTransfers = blockTransfers, DeviceCalls = deviceCalls,
+            TransactionCalls = transactionCalls, BlockTransfers = blockTransfers, DeviceCalls = deviceCalls, DosCalls = dosCalls,
             CacheIndexLookups = cacheLookups, CacheIndexHits = cacheHits,
             BlockCopyCallers = blockCopyCallers.Select(p => new
             {
@@ -279,6 +318,7 @@ internal sealed class ReadCpuProfile
                 if (DispatchInterrupt()) continue;
                 if (cpu.Halted || cpu.Stopped) break;
                 var pc = cpu.ProgramCounter; var before = cpu.Cycles;
+                if (phase == "overwrite") ObserveDosCall(pc, before);
                 if (callDirectory != null)
                 {
                     while (activeCalls.TryPeek(out var frame) && pc == frame.Return && core.State.A[7] == frame.Stack)
@@ -355,6 +395,16 @@ internal sealed class ReadCpuProfile
                 if (cpu.Cycles <= before) throw new InvalidOperationException("CPU clock did not advance.");
                 if (measuredPhase != null && measuredPhase == phase)
                 {
+                    if (dosReturn != 0)
+                    {
+                        if (pc >= codeBase && pc - codeBase < codeBytes)
+                        {
+                            var elapsed = cpu.Cycles - before;
+                            dosHandler += elapsed;
+                            dosHandlerPcs[pc] = dosHandlerPcs.GetValueOrDefault(pc) + elapsed;
+                        }
+                        else if (pc >= 0xF80000 && pc < 0x1000000) dosRom += cpu.Cycles - before;
+                    }
                     var value = counts.GetValueOrDefault(pc);
                     counts[pc] = (value.Cycles + cpu.Cycles - before, value.Instructions + 1);
                     if (pc >= blockCopyEntry && pc - blockCopyEntry < blockCopyBytes)

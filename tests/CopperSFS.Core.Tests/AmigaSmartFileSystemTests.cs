@@ -20,6 +20,7 @@ public sealed partial class AmigaSmartFileSystemTests
         public bool TracksFreedRanges => FreedQueue.IsNotNull;
         public void ObserveFreedRange(uint first, uint count) => AmigaFreedRangeQueue.Add(ref this, FreedQueue, first, count);
         public int Writes, FailAtWrite, IoEvents, CutAfterIo, Flushes, FailAtFlush;
+        public uint RetainedRunCapacity { get; set; } = 1;
         public int GeometryReads;
         public uint SectorBytesOverride;
         public List<(uint Block, byte[] Data)>? WrittenSectors;
@@ -171,6 +172,17 @@ public sealed partial class AmigaSmartFileSystemTests
             if (WriteQueue.IsNull) return RawWriteBlock(block, source);
             return AmigaFileSystemWriteCombiner.TryStore(ref this, WriteQueue, block, 1, source) ||
                 (DrainWrites() && AmigaFileSystemWriteCombiner.TryStore(ref this, WriteQueue, block, 1, source));
+        }
+        public bool WriteRetainedRun(uint first, uint count, APTR slots)
+        {
+            for (var i = 0u; i < count; i++)
+            {
+                var slot = APTR.FromPointer(ReadUInt32(slots, (int)i * 4));
+                Assert.Equal(first + i, ReadUInt32(slot));
+                if (!WriteBlock(first + i, APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes)))
+                    return false;
+            }
+            return true;
         }
         public bool DrainWrites()
         {

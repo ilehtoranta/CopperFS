@@ -207,9 +207,13 @@ public static partial class AmigaSmartFileSystemCore
         APTR scratch, out int offset) where T : struct, IAmigaFileSystemPlatform
     {
         offset = 0;
-        var shift = 0;
-        while ((1u << shift) < bytes) shift++;
-        var childShift = shift - 5;
+        var childShift = 4;
+        if (bytes != 512)
+        {
+            var shift = 0;
+            while ((1u << shift) < bytes) shift++;
+            childShift = shift - 5;
+        }
         var index = root;
         for (var depth = 0u; depth < blockCount; depth++)
         {
@@ -218,13 +222,15 @@ public static partial class AmigaSmartFileSystemCore
             var first = p.ReadUInt32(buffer, 12);
             var stride = p.ReadUInt32(buffer, 16);
             if (stride == 0 || node < first) return APTR.Null;
-            var entry = (node - first) / stride;
+            var relative = node - first;
             if (stride == 1)
             {
-                if (entry >= (bytes - 20) / 10) return APTR.Null;
-                offset = 20 + (int)entry * 10;
+                var capacity = bytes == 512 ? 49u : (bytes - 20) / 10;
+                if (relative >= capacity) return APTR.Null;
+                offset = 20 + (int)relative * 10;
                 return buffer;
             }
+            var entry = relative < stride ? 0u : relative / stride;
             if (entry >= (bytes - 20) / 4) return APTR.Null;
             index = p.ReadUInt32(buffer, 20 + (int)entry * 4) >> childShift;
             if (index == 0) return APTR.Null;
@@ -289,18 +295,18 @@ public static partial class AmigaSmartFileSystemCore
         {
             if (p.ReadUInt8(name, (int)start) == '/')
             {
-                view = ObjectViewFromRoots(ref p, directory, rootContainer, nodeRoot,
-                    blockCount, blockBytes, metadata, out _);
+                view = record.IsNotNull ? record : ObjectViewFromRoots(ref p, directory, rootContainer, nodeRoot, blockCount, blockBytes, metadata, out _);
                 if (view.IsNull)
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 var parent = p.ReadUInt32(view, 12);
-                directory = parent == 0 ? RootNode : parent; start++; continue;
+                directory = parent == 0 ? RootNode : parent; record = APTR.Null; start++; continue;
             }
             var end = start;
             while (end < length && p.ReadUInt8(name, (int)end) != '/') end++;
             if (end - start > 100) { error = DOS.Error.InvalidComponentName; return 0; }
-            view = ObjectViewFromRoots(ref p, directory, rootContainer, nodeRoot,
-                blockCount, blockBytes, metadata, out var at);
+            view = record.IsNotNull ? record : ObjectViewFromRoots(ref p, directory, rootContainer, nodeRoot,
+                blockCount, blockBytes, metadata, out recordOffset);
+            var at = recordOffset;
             if (view.IsNull) { error = DOS.Error.DiskNotValidated; return 0; }
             if ((p.ReadUInt8(view, at + 24) & 128) == 0) { error = DOS.Error.ObjectWrongType; return 0; }
             var next = p.ReadUInt32(view, at + 16);
@@ -315,6 +321,8 @@ public static partial class AmigaSmartFileSystemCore
                 // The hash lookup already checked the node, container and
                 // complete object record. No second traversal is needed.
                 if (start == length) return directory;
+                // A root lookup always uses the selected root container.
+                if (directory == RootNode) record = APTR.Null;
                 continue;
             }
             for (var visited = 0u; next != 0 && visited < blockCount; visited++)
@@ -344,6 +352,8 @@ public static partial class AmigaSmartFileSystemCore
             if (matched == 0) { error = next != 0 ? DOS.Error.DiskNotValidated : DOS.Error.ObjectNotFound; return 0; }
             directory = matched; start = end < length ? end + 1 : end;
             if (start == length) return directory;
+            // The linear lookup has not checked the child's node index.
+            record = APTR.Null;
         }
         record = ObjectViewFromRoots(ref p, directory, rootContainer, nodeRoot, blockCount,
             blockBytes, metadata, out recordOffset);

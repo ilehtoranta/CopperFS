@@ -192,7 +192,8 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
             var sfs2ThroughputProfile = entry.StartsWith("Sfs2ThroughputProbe::", StringComparison.Ordinal) &&
                 Environment.GetEnvironmentVariable("COPPERFS_PERFORMANCE_PROFILE") == "1";
-            var overwriteProfile = entry == "LargeWriteProbe::Sfs" && Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
+            var overwriteProfile = (entry is "LargeWriteProbe::Sfs" or "LargeWriteProbe::SfsChip") &&
+                Environment.GetEnvironmentVariable("COPPERFS_OVERWRITE_PROFILE") == "1";
             var classicMutationProfile = label == "candidate" && (entry is "CorrectnessProbe::TraceCommitFfs" or "CorrectnessProbe::TraceCommitOfs") &&
                 Environment.GetEnvironmentVariable("COPPERFS_TRIM_DELETE_PROFILE") == "1";
             var writeProfile = Environment.GetEnvironmentVariable("COPPERFS_WRITE_PROFILE") == "1" &&

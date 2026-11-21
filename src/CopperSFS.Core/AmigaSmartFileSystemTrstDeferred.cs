@@ -143,11 +143,12 @@ public static partial class AmigaSmartFileSystemWriteCore
         var bytes = p.ReadUInt32(group, 52); var count = p.ReadUInt32(group, TrstDeferredCount);
         var hint = APTR.FromPointer(group.Raw + TrstGroupContinuation);
         var proof = APTR.FromPointer(group.Raw + TrstGroupProof);
+        var tailLength = p.ReadUInt32(hint, 12);
         var tail = p.ReadUInt32(hint, 8); var destination = p.ReadUInt32(hint, 16) + p.ReadUInt32(hint, 20);
         if (p.ReadUInt32(proof) != arena.Raw || p.ReadUInt32(hint, 44) != arena.Raw ||
             tail < p.ReadUInt32(proof, 12) || destination < p.ReadUInt32(proof, 16) ||
-            count > p.ReadUInt32(hint, 12) || p.ReadUInt32(hint, 20) > ushort.MaxValue - count ||
-            (count == p.ReadUInt32(hint, 12) && !SfsSharedImagePool.IsPool(ref p, arena))) return false;
+            tailLength == 0 || p.ReadUInt32(hint, 20) > ushort.MaxValue - count ||
+            (count >= tailLength && !SfsSharedImagePool.IsPool(ref p, arena))) return false;
         var progress = tail - p.ReadUInt32(proof, 12);
         var limit = p.ReadUInt32(proof, 20);
         if (progress != destination - p.ReadUInt32(proof, 16) || progress > limit || count > limit - progress) return false;
@@ -159,11 +160,29 @@ public static partial class AmigaSmartFileSystemWriteCore
         if (oldBitmap.IsNull || newBitmap.IsNull) return false;
         var oldAt = 12 + (int)((p.ReadUInt32(proof, 64) + progress) >> 5) * 4;
         var newAt = 12 + (int)((p.ReadUInt32(proof, 68) + progress) >> 5) * 4;
-        if (!TrstBitmapRange(ref p, oldBitmap, oldAt, tail & 31, count, false) ||
+        var firstCount = count < tailLength ? count : tailLength;
+        var secondCount = count - firstCount;
+        var successorBit = 0u;
+        if (secondCount != 0)
+        {
+            var successor = p.ReadUInt32(hint, 24);
+            var afterAt = (int)p.ReadUInt32(hint, 40);
+            successorBit = successor - (p.ReadUInt32(proof, 12) - p.ReadUInt32(proof, 64));
+            var bits = (bytes - 12) * 8;
+            if (successor == 0 || successorBit >= bits || secondCount > bits - successorBit ||
+                p.ReadUInt32(leaf, afterAt + 4) != 0 || p.ReadUInt16(leaf, afterAt + 12) < secondCount ||
+                !TrstBitmapRange(ref p, oldBitmap, 12 + (int)(successorBit >> 5) * 4, successorBit & 31, secondCount, false)) return false;
+        }
+        if (!TrstBitmapRange(ref p, oldBitmap, oldAt, tail & 31, firstCount, false) ||
             !TrstBitmapRange(ref p, newBitmap, newAt, destination & 31, count, true)) return false;
         p.WriteUInt32(arena, 8, p.ReadUInt32(arena, 8) & ~AmigaSmartFileSystemRedoArena.Deferred); p.WriteUInt32(arena, 12, 0);
-        ApplyTrstContinuation(ref p, hint, leaf, oldBitmap, newBitmap, count, oldAt, newAt,
-            bytes == 512 ? count << 9 : count * bytes, bytes);
+        var followingBit = p.ReadUInt32(proof, 68) + progress + firstCount;
+        ApplyTrstContinuation(ref p, hint, leaf, oldBitmap, newBitmap, firstCount, oldAt, newAt,
+            bytes == 512 ? firstCount << 9 : firstCount * bytes, bytes);
+        if (secondCount != 0)
+            ApplyTrstContinuation(ref p, hint, leaf, oldBitmap, newBitmap, secondCount,
+                12 + (int)(successorBit >> 5) * 4, 12 + (int)(followingBit >> 5) * 4,
+                bytes == 512 ? secondCount << 9 : secondCount * bytes, bytes);
         for (var at = TrstDeferredCount; at <= TrstDeferredSeal; at += 4) p.WriteUInt32(group, at, 0);
         return true;
     }

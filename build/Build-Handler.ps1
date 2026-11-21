@@ -22,6 +22,7 @@ param(
     [switch]$SkipCompilerBuild,
     [switch]$SkipCilica,
     [switch]$CilicaInlining,
+    [ValidateSet('HotMethods','Writer')][string]$SfsCoreCilica,
     [switch]$GroupedSfs2Trst,
     [switch]$GroupedSfsTrst,
     [switch]$SharedSfsPool,
@@ -37,6 +38,9 @@ $ErrorActionPreference = 'Stop'
 if ($FfsTrimLayoutControl -and (!$Ffs -or $NoSpecialization -or $SharedDispatch -or $Cpx4)) { throw 'FfsTrimLayoutControl requires the specialized FFS entry.' }
 if ($CilicaInlining -and ($SkipCilica -or $Cpx4)) { throw 'CilicaInlining requires this script''s CILica stage and excludes Cpx4.' }
 if ($SfsInPlaceOverwrite -and (!$SharedSfsPool -or $Cpx4)) { throw 'SfsInPlaceOverwrite requires the SFS shared-pool profile.' }
+if ($SfsCoreCilica -and (!$SharedSfsPool -or $SkipCilica -or $Cpx4)) {
+    throw 'SfsCoreCilica requires the shared SFS pool and CILica.'
+}
 if ($SfsExtraKiB -ne 0 -and (!$SharedSfsPool -or $Cpx4)) { throw 'SfsExtraKiB requires the SFS shared-pool profile.' }
 if ($Cpx4) {
     if ($Ffs -or $Sfs2 -or $FfsOnly -or $SmartOnly -or $OwnedSfs2 -or $GroupedSfs2Trst -or $Sfs2OriginalDataWrites) { throw 'Cpx4 is an isolated handler profile.' }
@@ -98,6 +102,7 @@ dotnet build $dosProject -t:Rebuild -c $Configuration "-p:CopperSharp68kRoot=$Co
 if ($LASTEXITCODE -ne 0) { throw 'Standalone SFS handler input build failed.' }
 $compiler = Join-Path $CopperSharpRoot "Compiler.Cli/bin/$Configuration/net10.0/CopperSharp.Compiler.Cli.dll"
 $dos = Join-Path $inputRoot 'CopperFS.Amiga.dll'
+$core = Join-Path $inputRoot 'CopperSFS.Core.dll'
 if (!$SkipCilica) {
     # This build drives copper68kc directly rather than importing CopperSharp.Sdk.
     # Run the SDK's restricted CILica stage explicitly, retaining original inputs
@@ -115,6 +120,24 @@ if (!$SkipCilica) {
     $report = Get-Content -LiteralPath "$optimizedDos.cilica.json" -Raw | ConvertFrom-Json
     if ($report.EnableInlining -ne [bool]$CilicaInlining -or $report.EnableScalarReplacement -ne $true) { throw 'Unexpected CILica optimization profile.' }
     $dos = $optimizedDos
+    if ($SfsCoreCilica) {
+        $driver = Join-Path $repositoryRoot 'tools/CopperSFS.Cilica/CopperSFS.Cilica.csproj'
+        $driverBuild = Join-Path $ArtifactRoot 'core-optimizer'
+        dotnet build $driver -c $Configuration --artifacts-path $driverBuild "-p:CopperSharp68kRoot=$CopperSharpRoot" --verbosity quiet -m:1
+        if ($LASTEXITCODE -ne 0) { throw 'SFS core optimizer build failed.' }
+        $tool = Join-Path $driverBuild "bin/CopperSFS.Cilica/$($Configuration.ToLowerInvariant())/CopperSFS.Cilica.dll"
+        $outputDirectory = Join-Path $ArtifactRoot 'cilica-core'
+        if ($SfsCoreCilica -eq 'HotMethods' -and $CilicaInlining) {
+            $scalarDirectory = Join-Path $outputDirectory 'scalar'
+            dotnet $tool $core $scalarDirectory off cold $inputRoot
+            if ($LASTEXITCODE -ne 0) { throw 'SFS core scalar replacement failed.' }
+            dotnet $tool (Join-Path $scalarDirectory 'CopperSFS.Core.dll') $outputDirectory on hot $inputRoot
+        } else {
+            dotnet $tool $core $outputDirectory $inliningMode writer $inputRoot
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'SFS core CILica optimization failed.' }
+        $core = Join-Path $outputDirectory 'CopperSFS.Core.dll'
+    }
 }
 $output = Join-Path $ArtifactRoot $(if ($Ffs) { 'CopperFFS' } else { 'CopperSFS' })
 $entry = if ($Ffs) { 'CopperStart.Dos.NativeSfsStandaloneHandler::FfsEntry' } else { 'CopperStart.Dos.NativeSfsStandaloneHandler::Entry' }
@@ -134,7 +157,7 @@ $arguments = @($compiler, $dos, '--entry', $entry,
     '--compatibility-report', (Join-Path $ArtifactRoot 'CopperSFS.compatibility.json'))
 foreach ($assembly in @('CopperSFS.Core.dll', 'CopperSharp.Sdk.Amiga.dll',
     'CopperSharp.Sdk.Amiga.Support.dll', 'CopperSharp.Compiler.dll')) {
-    $file = Join-Path $inputRoot $assembly
+    $file = if ($assembly -eq 'CopperSFS.Core.dll') { $core } else { Join-Path $inputRoot $assembly }
     if (!(Test-Path -LiteralPath $file)) { throw "Missing standalone handler input $file" }
     $arguments += @('--managed-assembly', $file)
 }

@@ -51,6 +51,11 @@ public static partial class AmigaSmartFileSystemWriteCore
             var successorAt = (int)p.ReadUInt32(hint, 40);
             if (!TrstRootExtentValid(ref p, ref w, leaf, successorAt))
                 return Fail(ref w, DOS.Error.DiskNotValidated);
+            // Both live source intervals must represent distinct physical
+            // blocks. Bitmap occupancy alone cannot distinguish aliases.
+            var successorLength = (uint)p.ReadUInt16(leaf, successorAt + 12);
+            if (successor >= tail ? successor - tail < limit : tail - successor < successorLength)
+                return Fail(ref w, DOS.Error.DiskNotValidated);
             if (p.ReadUInt32(leaf, successorAt + 4) == 0 && p.ReadUInt32(hint, 28) != w.ExtentRoot)
             {
                 var last = successor + p.ReadUInt16(leaf, successorAt + 12) - 1;
@@ -60,6 +65,23 @@ public static partial class AmigaSmartFileSystemWriteCore
                     limit--;
                     if (count > limit) return true;
                 }
+            }
+        }
+        // The destination proof may outlive this source extent. Admit only
+        // the terminal successor already routed into this same owned leaf and
+        // the same source bitmap. Current allocation is checked again on use.
+        if (successor != 0 && limit == p.ReadUInt32(hint, 12))
+        {
+            var afterAt = (int)p.ReadUInt32(hint, 40);
+            var nextBit = successor - (tail - sourceBit);
+            if (p.ReadUInt32(leaf, afterAt + 4) == 0 && nextBit < bits)
+            {
+                var extra = (uint)p.ReadUInt16(leaf, afterAt + 12);
+                if (extra > bits - nextBit) extra = bits - nextBit;
+                limit += extra;
+                if (limit > maximum) limit = maximum;
+                if (limit > bits - destinationBit) limit = bits - destinationBit;
+                if (limit > w.BlockCount - 1 - destination) limit = w.BlockCount - 1 - destination;
             }
         }
         var oldBitmap = AmigaSmartFileSystemRedoArena.MetadataView(ref p, active, oldMap, BitmapId, false, out found);

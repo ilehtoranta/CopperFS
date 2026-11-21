@@ -31,7 +31,7 @@ public sealed class CopyInstructionTests
         Assert.Empty(compiled.FrameworkAnalysis.ManagedAllocationSites);
         for (var sourceAlignment = 0u; sourceAlignment < 4; sourceAlignment++)
         for (var targetAlignment = 0u; targetAlignment < 4; targetAlignment++)
-        foreach (var length in new uint[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 31, 32, 33, 511, 512, 513 })
+        foreach (var length in new uint[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 31, 32, 33, 255, 256, 257, 511, 512, 513 })
         {
             var bus = new CopyBus { Unaligned = unaligned }; compiled.Code.CopyTo(bus.Memory, 0x10000);
             bus.Put(4, 0x2000);
