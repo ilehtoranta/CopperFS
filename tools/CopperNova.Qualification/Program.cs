@@ -20,6 +20,7 @@ if(args.Length==5 && args[0]=="workbench-full-bench") { await WorkbenchGate.Run(
 if(args.Length==5 && args[0]=="workbench-full-retire") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4],fullDisk:true,retirement:true); return; }
 if(args.Length==3 && args[0]=="prepare-wide-cnp2") { WorkbenchGate.PrepareWideMedia(args[1],args[2]); return; }
 if(args.Length==6 && args[0]=="workbench-full-preview") { await WorkbenchGate.Run(args[1],args[2],args[3],args[5],fullDisk:true,preparedMedia:args[4]); return; }
+if(args.Length==6 && args[0]=="workbench-format") { await WorkbenchGate.RunFormat(args[1],args[2],args[3],args[4],args[5]); return; }
 if(args.Length==6 && args[0]=="workbench-compare")
 {
     await WorkbenchGate.Run(args[2],args[3],args[4],args[5],benchmark:true,comparison:args[1]); return;

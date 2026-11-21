@@ -9,6 +9,27 @@ public static class WorkbenchProbe
     public static int FullDiskEntry()=>FullDiskWorkload(FullDiskPayload,false,false);
     public static int FullDiskRetireEntry()=>FullDiskWorkload(RetirementPayload,true,false);
     public static int SyncedDiskEntry()=>FullDiskWorkload(FullDiskPayload,false,true);
+    public static int FormatEntry()=>FormatWorkload(false);
+    public static int FormatRejectEntry()=>FormatWorkload(true);
+
+    private static int FormatWorkload(bool reject)
+    {
+        var dos=Exec.OpenLibraryRaw("dos.library",37);
+        if(dos.IsNull) { Mark(240); return 20; }
+        DOS.DOSLibraryBase=dos;
+        APTR.WriteUInt32(Exec.FindTask(CString.FromPointer(0)),184,uint.MaxValue);
+        var segment=DOS.LoadSeg("SYS:CopperNovaFormat");
+        if(!segment.HasValue) { Mark(241); return 20; }
+        Mark(180);
+        const string arguments="CNP0: INITIALIZE\n";
+        int result=DOS.RunCommand(segment.Value,4096,APTR.FromPointer(CString.FromLiteral(arguments)),arguments.Length);
+        DOS.UnLoadSeg(segment.Value);
+        var root=DOS.Lock("CNP0:",(DOS.LockMode)(-2));
+        if(root.HasValue) DOS.UnLock(root.Value);
+        if(result!=(reject?20:0)||!root.HasValue) { Mark(242); return 20; }
+        Mark(reject?(byte)215:(byte)214);
+        return 0;
+    }
 
     private static int FullDiskWorkload(int payload,bool retire,bool synchronizedStart)
     {

@@ -13,7 +13,7 @@ using CopperSharp.Targets.Amiga;
 using FastFileSystemVolume=Hst.Amiga.FileSystems.FastFileSystem.FastFileSystemVolume;
 using AmigaFileMode = Hst.Amiga.FileSystems.FileMode;
 
-internal static class WorkbenchGate
+internal static partial class WorkbenchGate
 {
     private const uint DosType=0x434e5032;
     private const int PartitionOffset=4*32768;
@@ -366,6 +366,8 @@ internal static class WorkbenchGate
         public int Reads,Writes,Barriers;
         public int Td64Reads,Td64Writes;
         public bool WroteBelowBoundary,WroteAboveBoundary,ReadAboveBoundary;
+        public long PayloadStart=long.MaxValue;
+        public bool WrotePayloadBelowBoundary,WrotePayloadAboveBoundary;
         public long FirstPayloadGroup=long.MaxValue,LastPayloadGroup=-1;
         public bool FlushOnDispose=>false;
         public void ObserveOpen(int unit) {}
@@ -397,6 +399,11 @@ internal static class WorkbenchGate
             CheckRange(offset,bytes.Length);
             if(offset<start) throw new IOException("Unexpected write outside the CNP2 partition");
             Writes++; WroteBelowBoundary|=offset<Td64Boundary; WroteAboveBoundary|=offset+bytes.Length>Td64Boundary;
+            if(offset>=PayloadStart)
+            {
+                WrotePayloadBelowBoundary|=offset<Td64Boundary;
+                WrotePayloadAboveBoundary|=offset+bytes.Length>Td64Boundary;
+            }
             if(offset>=Td64Boundary-1024)
             {
                 FirstPayloadGroup=Math.Min(FirstPayloadGroup,(offset-start)>>25);

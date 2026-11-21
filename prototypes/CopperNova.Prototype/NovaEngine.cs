@@ -54,9 +54,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     public void Bind(uint blocks,uint port,uint volume,uint unit) { W(Blocks,blocks); W(Port,port); W(Volume,volume); W(UnitNumber,unit); }
     private const uint ActiveHandles=528,ActiveLocks=532,ComponentHash=536,CacheUsed=540,CrcLow=544,CrcHigh=548;
     public bool HasResources=>R(ActiveHandles)!=0||R(ActiveLocks)!=0;
-    public CpxError BeginMount()
+    public CpxError BeginMount() => BeginMount(false);
+    public CpxError BeginMount(bool probeBlankCnp2)
     {
         if(Busy||HasOutstandingIo||HasResources||R(DirtyCount)!=0) return CpxError.Busy;
+        W(FormatState,probeBlankCnp2?1u:0u);
         W(Packet,0); W(BusyAt,1); W(Phase,100); W(MountReturn,900); return CpxError.None;
     }
     public CpxError BeginPacket(uint packet)
@@ -130,6 +132,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult Dispatch(uint phase)
     {
         if(phase<100) return PacketStep(phase);
+        if(phase>=1300) return FormatStep(phase);
         if(phase>=1100) return PackedStep(phase);
         if(phase>=100&&phase<200) return MountStep(phase);
         if(phase>=200&&phase<300) return FlushStep(phase);

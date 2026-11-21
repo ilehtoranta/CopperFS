@@ -32,6 +32,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             case 103:
             {
                 if(m.Read32(controls)==PackedMagic||m.Read32(controls+512)==PackedMagic) return SelectRoot(controls);
+                if(R(FormatState)==1&&BlankRootSectors(controls)) W(FormatState,2);
                 if(R(Blocks)>65536) return Fatal();
                 W(ProofMask,0); W(DataFloor,1280);
                 uint selected=0;
