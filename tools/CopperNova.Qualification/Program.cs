@@ -14,6 +14,17 @@ using CopperSharp.Targets.Amiga;
 if(args.Length==4 && args[0]=="prepare-workbench") { await WorkbenchGate.Prepare(args[1],args[2],args[3]); return; }
 if(args.Length==2 && args[0]=="check-workbench") { using var disk=File.OpenRead(args[1]); WorkbenchGate.Verify(disk); Console.WriteLine("Readback ownership and payload verified."); return; }
 if(args.Length==5 && args[0]=="workbench") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4]); return; }
+if(args.Length==5 && args[0]=="workbench-td64") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4],wide:true); return; }
+if(args.Length==5 && args[0]=="workbench-full") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4],fullDisk:true); return; }
+if(args.Length==5 && args[0]=="workbench-full-bench") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4],fullDisk:true,benchmark:true); return; }
+if(args.Length==5 && args[0]=="workbench-full-retire") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4],fullDisk:true,retirement:true); return; }
+if(args.Length==3 && args[0]=="prepare-wide-cnp2") { WorkbenchGate.PrepareWideMedia(args[1],args[2]); return; }
+if(args.Length==6 && args[0]=="workbench-full-preview") { await WorkbenchGate.Run(args[1],args[2],args[3],args[5],fullDisk:true,preparedMedia:args[4]); return; }
+if(args.Length==6 && args[0]=="workbench-format") { await WorkbenchGate.RunFormat(args[1],args[2],args[3],args[4],args[5]); return; }
+if(args.Length==6 && args[0]=="workbench-compare")
+{
+    await WorkbenchGate.Run(args[2],args[3],args[4],args[5],benchmark:true,comparison:args[1]); return;
+}
 
 if(args.Length!=3) throw new ArgumentException("Usage: CopperNova.Qualification <handler> <ROM> <output directory>");
 string handler=Path.GetFullPath(args[0]),rom=Path.GetFullPath(args[1]),root=Path.GetFullPath(args[2]);

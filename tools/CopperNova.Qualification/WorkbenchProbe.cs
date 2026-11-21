@@ -3,6 +3,102 @@ using Amiga;
 // Invoked from the Workbench startup-sequence after LoadWB. RDB supplies the handler.
 public static class WorkbenchProbe
 {
+    public const int FullDiskPayload=2*1024*1024;
+    public const int RetirementPayload=48*1024*1024;
+
+    public static int FullDiskEntry()=>FullDiskWorkload(FullDiskPayload,false,false);
+    public static int FullDiskRetireEntry()=>FullDiskWorkload(RetirementPayload,true,false);
+    public static int SyncedDiskEntry()=>FullDiskWorkload(FullDiskPayload,false,true);
+    public static int FormatEntry()=>FormatWorkload(false);
+    public static int FormatRejectEntry()=>FormatWorkload(true);
+
+    private static int FormatWorkload(bool reject)
+    {
+        var dos=Exec.OpenLibraryRaw("dos.library",37);
+        if(dos.IsNull) { Mark(240); return 20; }
+        DOS.DOSLibraryBase=dos;
+        APTR.WriteUInt32(Exec.FindTask(CString.FromPointer(0)),184,uint.MaxValue);
+        var segment=DOS.LoadSeg("SYS:CopperNovaFormat");
+        if(!segment.HasValue) { Mark(241); return 20; }
+        Mark(180);
+        const string arguments="CNP0: INITIALIZE\n";
+        int result=DOS.RunCommand(segment.Value,4096,APTR.FromPointer(CString.FromLiteral(arguments)),arguments.Length);
+        DOS.UnLoadSeg(segment.Value);
+        var root=DOS.Lock("CNP0:",(DOS.LockMode)(-2));
+        if(root.HasValue) DOS.UnLock(root.Value);
+        if(result!=(reject?20:0)||!root.HasValue) { Mark(242); return 20; }
+        Mark(reject?(byte)215:(byte)214);
+        return 0;
+    }
+
+    private static int FullDiskWorkload(int payload,bool retire,bool synchronizedStart)
+    {
+        var dos=Exec.OpenLibraryRaw(CString.FromLiteral("dos.library"),37);
+        if(dos.IsNull) { Mark(240); return 20; }
+        DOS.DOSLibraryBase=dos;
+        APTR.WriteUInt32(Exec.FindTask(CString.FromPointer(0)),184,uint.MaxValue);
+        var buffer=APTR.FromPointer(Exec.AllocMem(65536,Exec.MemoryFlags.Public|Exec.MemoryFlags.Fast));
+        var port=DOS.DeviceProc("CNP0:");
+        if(buffer.IsNull||port.IsNull) { Mark(240); return 20; }
+        var existing=DOS.Open("CNP0:Dst/Keep",DOS.FileMode.OldFile);
+        if(existing.HasValue)
+        {
+            if(retire)
+            {
+                if(DOS.Close(existing.Value)==0) { Mark(243); return 20; }
+                Mark(181);
+                if(DOS.DeleteFile("CNP0:Dst/Keep")==0) { Mark(252); return 20; }
+                Mark(213); return 0;
+            }
+            Mark(182);
+            for(int offset=0;offset<payload;offset+=65536)
+            {
+                if(DOS.Read(existing.Value,buffer,65536)!=65536) { Mark(241); return 20; }
+                for(int at=0;at<65536;at+=511)
+                    if(APTR.ReadUInt8(buffer,at)!=(byte)(at^0x6d)) { Mark(242); return 20; }
+            }
+            if(DOS.Read(existing.Value,buffer,1)!=0||DOS.Close(existing.Value)==0) { Mark(243); return 20; }
+            Mark(211); return 0;
+        }
+
+        if(retire)
+        {
+            var surviving=DOS.Open("CNP0:Dst/Gap",DOS.FileMode.OldFile);
+            if(surviving.HasValue)
+            {
+                if(DOS.Read(surviving.Value,buffer,512)!=512||DOS.Close(surviving.Value)==0) { Mark(241); return 20; }
+                for(int at=0;at<512;at++)
+                    if(APTR.ReadUInt8(buffer,at)!=(byte)(at^0x6d)) { Mark(242); return 20; }
+                Mark(211); return 0;
+            }
+        }
+        for(int i=0;i<65536;i++) APTR.WriteUInt8(buffer,i,(byte)(i^0x6d));
+        if(synchronizedStart)
+        {
+            // Port 1 is separate from Workbench's mouse. Waiting here leaves
+            // regular CIA, raster and input.device interrupts running.
+            Mark(179);
+            var joy1=APTR.FromPointer(0xdff00c);
+            while((APTR.ReadUInt16(joy1,0)&2)==0) { }
+        }
+        Mark(181);
+        var directory=DOS.CreateDir("CNP0:Dst");
+        if(!directory.HasValue) { Mark(244); return 20; }
+        DOS.UnLock(directory.Value);
+        var keep=DOS.Open("CNP0:Dst/Keep",DOS.FileMode.NewFile);
+        if(!keep.HasValue||DOS.Write(keep.Value,buffer,65536)!=65536) { Mark(245); return 20; }
+        // Force an additional extent for Keep so cold readback exercises
+        // both the inline wide address and the published extent page.
+        var gap=DOS.Open("CNP0:Dst/Gap",DOS.FileMode.NewFile);
+        if(!gap.HasValue||DOS.Write(gap.Value,buffer,512)!=512||DOS.Close(gap.Value)==0) { Mark(246); return 20; }
+        for(int written=65536;written<payload;written+=65536)
+            if(DOS.Write(keep.Value,buffer,65536)!=65536) { Mark(247); return 20; }
+        if(DOS.Close(keep.Value)==0) { Mark(250); return 20; }
+        Mark(183);
+        if(DOS.DoPkt(port,27,0,0,0,0,0)==0) { Mark(251); return 20; }
+        Mark(210); return 0;
+    }
+
     private static void Mark(byte value)
     {
         APTR.WriteUInt8(APTR.FromPointer(0xbfe301), 0, 255);

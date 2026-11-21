@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../prototypes/CopperNova.Native/NativeNovaHandler.cs" />
+    <Compile Include="../../prototypes/CopperNova.Native/NativeNovaFormat.cs" />
     <Compile Include="Cpx4/NativeCpxMemory.cs" /><Compile Include="Cpx4/NativeCpxIo.cs" />
     <Compile Include="Cpx4/NativeCpxTransport.cs" /><Compile Include="Cpx4/NativeCpxUnmap.cs" />
     <ProjectReference Include="../../prototypes/CopperNova.Prototype/CopperNova.Prototype.csproj" />

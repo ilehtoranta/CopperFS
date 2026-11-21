@@ -17,7 +17,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
     private void MarkBitmapRange(uint window,uint bit,uint count)
     {
         uint state=Arena+State;
-        if(m.Read32(state+DataFloor)!=1394||m.Read32(state+BitmapProof)!=window+1) return;
+        if(WideVolume||!PackedVolume||m.Read32(state+BitmapProof)!=window+1) return;
         uint first=4+(bit>>8),last=4+((bit+count-1)>>8);
         uint mask=((2u<<(int)(last-first))-1)<<(int)first;
         m.Write32(state+BitmapChanges,m.Read32(state+BitmapChanges)|mask);
@@ -56,7 +56,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     if(take>65536) take=65536;
                     uint dirty = R(PartialDirty);
                     if (write && (intra != 0 || take < 512) && take == remaining && take <= 4096 &&
-                        remaining <= size - position && R(DataFloor) == 1394)
+                        remaining <= size - position && PackedVolume)
                     {
                         uint sectors = (intra + take + 511) >> 9;
                         uint start = R(PartialStart), capacity = R(PartialSectors);
@@ -89,7 +89,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     }
                     if(intra!=0||take<512)
                     {
-                        if(dirty==0&&m.Read32(state+DataFloor)==1394&&intra!=0&&take>512-intra) {
+                        if(dirty==0&&PackedVolume&&intra!=0&&take>512-intra) {
                             if(take>4096-intra) take=4096-intra;
                             uint bytes=(intra+take+511)&~511u;
                             m.Write32(state+DataTake,take); m.Write32(state+DataIntra,intra); m.Write32(state+DataPhysical,disk); m.Write32(state+NewAllocation,0);
@@ -103,7 +103,10 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     return Issue(write?IoKind.Write:IoKind.Read,disk,m.Read32(state+DataBuffer)+progress,take,304);
                 }
                 if(!write||position!=size||(position&511)!=0) return Fatal();
-                if(m.Read32(state+DirtyCount)>45) return StartFlush(300);
+                // The durable pre-truncate image may still own freed blocks.
+                // Wide volumes retire that group before searching for space.
+                if(m.Read32(state+DirtyCount)>(WideVolume?44u:45u)||WideVolume&&R(FreePending)!=0)
+                    return StartFlush(300);
                 m.Write32(state+Wanted,remaining>65536?128u:(remaining+511)>>9);
                 uint count=m.Read32(inode+96),candidate=m.Read32(state+AllocationHint);
                 if(count!=0) { uint last=ExtentAt(inode,count-1); candidate=m.Read32(last+12)+m.Read32(last+16); }
@@ -130,7 +133,14 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                         uint units=m.Read32(state+AllocationUnits),physical=m.Read32(state+DataPhysical),logical=position>>9;
                         uint bitmap=m.Read32(state+Bitmap),group=m.Read32(state+Group),bit=physical&2047;
                         MarkBitmapRange(physical>>11,bit,units); SetRange(bitmap+128,bit,units,true);
-                        Dirty(bitmap); m.Write32(group+72,m.Read32(group+72)-units); Dirty(group);
+                        if(WideVolume)
+                        {
+                            uint selector=m.Read32(state+WideActiveSelector);
+                            DirtyWideBitmap(bitmap,physical>>11,selector);
+                            ReleaseWideAllocation(bitmap,selector);
+                        }
+                        else Dirty(bitmap);
+                        m.Write32(group+72,m.Read32(group+72)-units); Dirty(group);
                         uint count=m.Read32(inode+96),last=count==0?0:ExtentAt(inode,count-1);
                         if(last!=0&&m.Read32(last+4)+m.Read32(last+16)==logical&&m.Read32(last+12)+m.Read32(last+16)==physical)
                             m.Write32(last+16,m.Read32(last+16)+units);
@@ -163,34 +173,52 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 m.Write32(state+Group,m.Read32(state+Loaded)); goto case 311;
             case 311:
                 if(m.Read32(state+Searched)>=m.Read32(state+Blocks)-DataStart||m.Read32(m.Read32(state+Group)+72)==0) return TransferError(221);
-                return Load(130+(m.Read32(state+Candidate)>>11),312);
+                return Load(BitmapHome(m.Read32(state+Candidate)),312);
             case 312:
             {
-                uint bitmap=m.Read32(state+Loaded),candidate=m.Read32(state+Candidate),window=candidate>>11,limit=(window+1)<<11;
+                uint bitmap=m.Read32(state+Loaded),candidate=m.Read32(state+Candidate),window=candidate>>11;
                 uint blocks=m.Read32(state+Blocks),searched=m.Read32(state+Searched),bits=bitmap+128;
-                uint quarantine=m.Read32(Arena+State+QuarantineTags+window*4)==m.Read32(state+QuarantineEpoch)?Arena+Quarantine+(window<<8):0;
+                bool wide=WideVolume;
+                uint quarantine=!wide&&m.Read32(Arena+State+QuarantineTags+window*4)==m.Read32(state+QuarantineEpoch)?Arena+Quarantine+(window<<8):0;
                 if(m.Read16(bitmap+6)!=4||m.Read32(bitmap+64)!=(window<<11)) return Fatal();
-                if(limit>blocks) limit=blocks;
+                uint limit=blocks-candidate<2048-(candidate&2047)?blocks:candidate+2048-(candidate&2047);
                 // At most 256 allocation bits are examined per continuation.
                 uint budget=256;
-                while(candidate<limit&&budget!=0&&(Bit(bits,candidate&2047)||quarantine!=0&&Bit(quarantine,candidate&2047)))
-                { candidate++; searched++; budget--; }
+                if(wide)
+                {
+                    uint available=limit-candidate;
+                    uint skip=WideBitmapRun(bits,candidate&2047,available<budget?available:budget,uint.MaxValue);
+                    candidate+=skip; searched+=skip; budget-=skip;
+                }
+                else
+                    while(candidate<limit&&budget!=0&&(Bit(bits,candidate&2047)||quarantine!=0&&Bit(quarantine,candidate&2047)))
+                    { candidate++; searched++; budget--; }
                 m.Write32(state+Searched,searched);
                 if(candidate==limit||budget==0)
                 {
+                    if(wide) ReleaseWideAllocation(bitmap,m.Read32(state+WideActiveSelector));
                     m.Write32(state+Candidate,candidate>=blocks?DataStart:candidate); return Next(311);
                 }
                 uint units=0,wanted=m.Read32(state+Wanted);
-                while(units+32<=wanted&&candidate+units+32<=limit&&((candidate+units)&31)==0&&
-                    m.Read32(bits+(((candidate+units)&2047)>>3))==0&&(quarantine==0||m.Read32(quarantine+(((candidate+units)&2047)>>3))==0)) units+=32;
-                while(units+8<=wanted&&candidate+units+8<=limit&&((candidate+units)&7)==0&&
-                    m.Read8(bits+(((candidate+units)&2047)>>3))==0&&(quarantine==0||m.Read8(quarantine+(((candidate+units)&2047)>>3))==0)) units+=8;
-                while(units<wanted&&candidate+units<limit&&!Bit(bits,(candidate+units)&2047)&&(quarantine==0||!Bit(quarantine,(candidate+units)&2047))) units++;
+                if(wide)
+                {
+                    uint available=limit-candidate;
+                    units=WideBitmapRun(bits,candidate&2047,available<wanted?available:wanted,0);
+                }
+                else
+                {
+                    while(units+32<=wanted&&units+32<=limit-candidate&&((candidate+units)&31)==0&&
+                        m.Read32(bits+(((candidate+units)&2047)>>3))==0&&(quarantine==0||m.Read32(quarantine+(((candidate+units)&2047)>>3))==0)) units+=32;
+                    while(units+8<=wanted&&units+8<=limit-candidate&&((candidate+units)&7)==0&&
+                        m.Read8(bits+(((candidate+units)&2047)>>3))==0&&(quarantine==0||m.Read8(quarantine+(((candidate+units)&2047)>>3))==0)) units+=8;
+                    while(units<wanted&&candidate+units<limit&&!Bit(bits,(candidate+units)&2047)&&(quarantine==0||!Bit(quarantine,(candidate+units)&2047))) units++;
+                }
                 if(units==0) return Fatal();
                 uint count=m.Read32(inode+96),last=count==0?0:ExtentAt(inode,count-1),logical=m.Read32(handle+8)>>9;
                 bool append=last!=0&&m.Read32(last+4)+m.Read32(last+16)==logical&&m.Read32(last+12)+m.Read32(last+16)==candidate;
                 if(!append&&count==8) return TransferError(221);
-                if(m.Read32(m.Read32(state+Group)+72)<units||m.Read32(state+DirtyCount)>45) return Fatal();
+                if(m.Read32(m.Read32(state+Group)+72)<units||m.Read32(state+DirtyCount)>(wide?44u:45u))
+                    return TransferError(221);
                 uint take=units<<9; if(take>remaining) take=remaining;
                 m.Write32(state+Bitmap,bitmap); m.Write32(state+DataPhysical,candidate); m.Write32(state+AllocationUnits,units); m.Write32(state+DataTake,take); m.Write32(state+NewAllocation,1);
                 if((take&511)!=0)
@@ -218,6 +246,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if (R(PartialDirty) != 0) return DrainPartial(400);
                 m.Write32(state+Group,m.Read32(state+Loaded));
                 if(m.Read16(m.Read32(state+Group)+6)!=3) return Fatal();
+                W(WideRetirePages,0);
                 m.Write32(state+ExtentIndex,0); m.Write32(state+ResizeFree,0); m.Write32(state+ResizeCursor,0); goto case 401;
             case 401:
             {
@@ -229,7 +258,9 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if(cursor>=run) { m.Write32(state+ExtentIndex,m.Read32(state+ExtentIndex)+1); m.Write32(state+ResizeCursor,0); return Next(401); }
                 uint first=disk+cursor,take=2048-(first&2047); if(take>run-cursor) take=run-cursor;
                 m.Write32(state+ResizeCursor,cursor+take);
-                uint home=130+(first>>11); int cached=Find(home);
+                uint home=BitmapHome(first);
+                if(WideVolume) return Load(home,402);
+                int cached=Find(home);
                 if(cached<0) return Load(home,402);
                 m.Write32(Meta((uint)cached)+12,m.Read32(state+Epoch));
                 if(m.Read16(Image((uint)cached)+6)!=4) return Fatal();
@@ -237,6 +268,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             }
             case 402:
                 if(m.Read16(m.Read32(state+Loaded)+6)!=4) return Fatal();
+                if(WideVolume&&!AdmitWideRetirement(R(Loaded))) return BeginWideRetirement();
                 // All pages are pinned and admitted before the first resize mutation.
                 return Next(401);
             case 410:
@@ -247,19 +279,28 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 uint cursor=m.Read32(state+ResizeCursor); if(cursor<retained) cursor=retained;
                 if(cursor>=run) { m.Write32(state+ExtentIndex,m.Read32(state+ExtentIndex)+1); m.Write32(state+ResizeCursor,0); return Next(410); }
                 uint first=disk+cursor,take=2048-(first&2047); if(take>run-cursor) take=run-cursor;
-                int slot=Find(130+(first>>11)); if(slot<0) return Fatal();
+                int slot=Find(BitmapHome(first)); if(slot<0) return Fatal();
                 uint bitmap=Image((uint)slot);
                 if(m.Read32(state+DirtyCount)>=48&&m.Read32(Meta((uint)slot)+8)==0) return Fatal();
-                for(uint n=0;n<take;n++)
+                bool wide=WideVolume;
+                uint selector=0;
+                if(wide)
                 {
-                    uint block=first+n; if(!Bit(bitmap+128,block&2047)) return Fatal();
+                    int selected=FindWide(WideSelectorKey+(first>>22));
+                    if(selected<0||WideBitmapRun(bitmap+128,first&2047,take,uint.MaxValue)!=take) return Fatal();
+                    selector=Image((uint)selected);
                 }
-                uint tag=Arena+State+QuarantineTags+(first>>11)*4,epoch=m.Read32(state+QuarantineEpoch),quarantine=Arena+Quarantine+((first>>11)<<8);
-                // One bounded 256-byte window is initialized on its first free
-                // in this retirement epoch. Other windows remain untouched.
-                if(m.Read32(tag)!=epoch) { Zero(quarantine,256); m.Write32(tag,epoch); }
-                MarkBitmapRange(first>>11,first&2047,take); SetRange(bitmap+128,first&2047,take,false); SetRange(quarantine,first&2047,take,true);
-                Dirty(bitmap); m.Write32(state+ResizeFree,m.Read32(state+ResizeFree)+take); m.Write32(state+ResizeCursor,cursor+take); m.Write32(state+FreePending,1);
+                else
+                {
+                    for(uint n=0;n<take;n++) if(!Bit(bitmap+128,(first+n)&2047)) return Fatal();
+                    uint tag=Arena+State+QuarantineTags+(first>>11)*4,epoch=R(QuarantineEpoch),quarantine=Arena+Quarantine+((first>>11)<<8);
+                    if(m.Read32(tag)!=epoch) { Zero(quarantine,256); m.Write32(tag,epoch); }
+                    MarkBitmapRange(first>>11,first&2047,take);
+                    SetRange(quarantine,first&2047,take,true);
+                }
+                SetRange(bitmap+128,first&2047,take,false);
+                if(wide) DirtyWideBitmap(bitmap,first>>11,selector); else Dirty(bitmap);
+                m.Write32(state+ResizeFree,m.Read32(state+ResizeFree)+take); m.Write32(state+ResizeCursor,cursor+take); m.Write32(state+FreePending,1);
                 if(cursor+take==run) { uint next=m.Read32(state+ExtentIndex)+1; m.Write32(state+ExtentIndex,next); m.Write32(state+ResizeCursor,0); if(next==count) goto case 412; }
                 return Next(410);
             }
@@ -275,8 +316,10 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 }
                 m.Write32(inode+96,newCount); m.Write32(inode+68,m.Read32(state+ResizeLength)); Dirty(inode);
                 m.Write32(m.Read32(state+Group)+72,m.Read32(m.Read32(state+Group)+72)+m.Read32(state+ResizeFree)); Dirty(m.Read32(state+Group));
-                return Next(m.Read32(state+Resume));
+                uint resume=R(Resume);
+                return R(WideStreaming)!=0&&resume!=67?FinishWideRetirement(resume):Next(resume);
             }
+            case 420: case 421: case 422: case 423: return StreamWideRetirement(phase);
             default: return Fatal();
         }
     }

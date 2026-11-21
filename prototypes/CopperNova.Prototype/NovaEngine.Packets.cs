@@ -99,7 +99,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if(action is not (22 or 1004 or 1006)) return Error(205);
                 uint required=(24+end-at+7)&~7u;
                 if(required>192-m.Read32(directory+100)||m.Read32(directory+96)>=8) return Error(221);
-                return m.Read32(state+DataFloor)==1394?Load(128,31):Load(129,30);
+                return PackedVolume?Load(128,31):Load(129,30);
             }
             uint target=m.Read32(entry+4);
             if(action==8) return MakeLock(target);
@@ -175,7 +175,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                         uint l=FreeResource(false); if(l==0) return Error(103);
                         m.Write32(state+ReservedResource,l); return StartPath(m.Read32(args+0),m.Read32(args+4),0);
                     case 28:
-                        if(m.Read32(state+DataFloor)!=1394) return Error(209);
+                        if(!PackedVolume) return Error(209);
                         if(m.Read32(args+12)==0||m.Read32(args+12)>0x3fffffff||!ExternalRange(m.Read32(args+12)<<2,1)) return Error(115);
                         uint comment=m.Read8(m.Read32(args+12)<<2); if(comment>79) return Error(220);
                         if(!ExternalRange(m.Read32(args+12)<<2,comment+1)) return Error(115);
@@ -184,22 +184,22 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                         if(!ReusableIds()) return Error(209);
                         return StartPath(Arg(0),Arg(1),0);
                     case 19:
-                        if(R(DataFloor)!=1394) return Error(209);
+                        if(!PackedVolume) return Error(209);
                         if(!LockSlot(Arg(0),out uint duplicate)) return Error(211);
                         return MakeLock(duplicate);
                     case 29:
-                        if(R(DataFloor)!=1394) return Error(209);
+                        if(!PackedVolume) return Error(209);
                         if(!LockSlot(Arg(0),out uint child)) return Error(211);
                         if(child==1) return Finish(0);
                         return Load(256+child,68);
                     case 25: case 26:
-                        if(R(DataFloor)!=1394) return Error(209);
+                        if(!PackedVolume) return Error(209);
                         if(action==26&&!LockSlot(Arg(0),out _)) return Error(211);
                         uint info=Arg(action==25?0u:1u);
                         if(info==0||info>0x3fffffff||!ExternalRange(info<<2,36)) return Error(115);
                         return Load(128,69);
                     case 24: case 23:
-                        if(m.Read32(state+DataFloor)!=1394) return Error(209);
+                        if(!PackedVolume) return Error(209);
                         if(!LockSlot(m.Read32(args+0),out uint examine)) return Error(211);
                         if(m.Read32(args+4)==0||m.Read32(args+4)>0x3fffffff||!ExternalRange(m.Read32(args+4)<<2,260)) return Error(115);
                         m.Write32(state+Target,examine); return Load(256+examine,action==24?60u:54u);
@@ -245,7 +245,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     W(Group,group); W(Target,head); return Load(256+head,61);
                 }
                 if(free==0) return Error(221);
-                if(m.Read32(state+DataFloor)==1394) { if(free>1022) return Fatal(); m.Write32(state+Target,1024-free); }
+                if(PackedVolume) { if(free>1022) return Fatal(); m.Write32(state+Target,1024-free); }
                 return CreateAdmitted(group,false);
             }
             case 61:
@@ -268,7 +268,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             {
                 uint parent=m.Read32(state+Parent),home=m.Read32(parent+20),entry=m.Read32(state+Entry);
                 if(home!=m.Read32(state+SourceParent)) {
-                    if(R(DataFloor)!=1394) return Error(209);
+                    if(!PackedVolume) return Error(209);
                     if(entry!=0) return Error(203);
                     uint size=(24+R(ComponentBytes)+7)&~7u;
                     if(size>192-m.Read32(parent+100)) return Error(221);
@@ -326,12 +326,12 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         uint inode=Image((uint)reserved),slot=m.Read32(state+Target),parent=m.Read32(state+Parent),used=m.Read32(parent+100);
         uint nextHole=reuse?m.Read32(inode+116):0;
         // All fallible admission is complete before the first edit.
-        if(m.Read32(state+DataFloor)==1394) {
+        if(PackedVolume) {
             m.Write16(inode+6,action==22?11u:10u); m.Write32(inode+20,256+slot); m.Write32(inode+24,1); m.Write32(inode+28,slot);
             m.Write32(inode+64,0); m.Write32(inode+68,0); m.Write32(inode+96,0); m.Write32(inode+100,0); m.Write32(inode+116,0);
         } else { Zero(inode,512); Header(inode,action==22?11u:10u,256+slot,m.Read32(state+Generation)+1,slot); m.Write32(inode+76,1); m.Write32(inode+104,1); }
         m.Write32(inode+108,m.Read32(parent+28));
-        if(m.Read32(state+DataFloor)!=1394) { uint bitmap=m.Read32(state+Bitmap); SetBit(bitmap+128,slot,true); Dirty(bitmap); }
+        if(!PackedVolume) { uint bitmap=m.Read32(state+Bitmap); SetBit(bitmap+128,slot,true); Dirty(bitmap); }
         uint serialLo=m.Read32(group+92)+1,serialHi=m.Read32(group+88)+(serialLo==0?1u:0u);
         m.Write32(group+88,serialHi); m.Write32(group+92,serialLo); if(reuse) m.Write32(group+84,nextHole); else m.Write32(group+80,m.Read32(group+80)-1); Dirty(group);
         WriteEntry(parent+320+used,slot,serialHi,serialLo,(Arena+Path)+m.Read32(state+ComponentAt),m.Read32(state+ComponentBytes),m.Read32(state+ComponentHash));

@@ -1,0 +1,71 @@
+Short:        CopperNova CNP2 filesystem preview
+Author:       Ilkka Lehtoranta
+Uploader:     ilkleht@gmail.com (Ilkka Lehtoranta)
+Type:         disk/misc
+Version:      1.0-preview.4
+Requires:     AmigaOS 2.04, 68000 or newer, TD64-capable disk driver
+Architecture: m68k-amigaos >= 2.04
+
+CopperNova is a new MIT-licensed Amiga filesystem written in C#.
+This preview uses CNP2 root version 3 with wide extents and multi-group
+allocation. The disk driver must support TD64 reads and writes and
+CMD_UPDATE for Flush, including on partitions below 4 GiB.
+It supports creating, deleting and moving files and directories, file
+reads and writes, enumeration, and explicit Flush.
+
+Archive contents
+
+CopperNovaPrototype  Native 68000 CNP2 handler
+CopperNovaFormat     Amiga Shell command for initializing a CNP2 partition
+CopperNova.readme    This README
+LICENSE.txt         MIT license
+THIRD-PARTY-NOTICES.txt  CopperSharp license
+
+Installation
+
+1. Use HDToolBox or your controller's RDB tool on a spare disk or image.
+   Create a fresh, empty partition larger than 2 MiB with 512-byte
+   filesystem blocks.
+   Leave Bootable off. Use your controller's Mask and MaxTransfer values.
+2. In HDToolBox, open Partition Drive, enable Advanced Options and use
+   Add/Update to add CopperNovaPrototype to the RDB. Set its identifier
+   to 0x434E5032 (CNP2) and version/revision to 1/0 if asked. Under
+   Change, select the newly added filesystem or set that same identifier
+   as the custom filesystem type for the partition. Save and reboot.
+3. From an Amiga Shell, run the formatter with the partition's device
+   name and the INITIALIZE keyword. For a partition named CNP0:
+
+       CopperNovaFormat CNP0: INITIALIZE
+
+   Use this command only on a new, empty partition. The command requires
+   both CNP2 root sectors to be zero and refuses a mounted CNP2 volume.
+   After successful initialization you can use CNP0:. The display
+   volume name in this preview is CopperNovaPrototype.
+
+The optional CopperNovaDemo archive contains a preformatted emulator
+hardfile. Converting another filesystem in place is outside this preview.
+
+Current limitations
+
+- 512-byte sectors. The demo partition is 4 GiB + 64 MiB.
+  Larger geometries and physical controllers have yet to be qualified.
+- Up to 1,022 live objects. Names are ASCII, with up to 168 bytes per
+  component and a 255-byte DOS path. Each directory has 192 bytes for
+  name records, which can limit it to a few entries with long names.
+- Up to eight extents and 2 GiB minus one byte per file. A fragmented file
+  can reach the extent limit before the disk fills.
+- Links, sparse growth, grow-by-resize, extended attributes, notifications,
+  record locking, automatic TRIM and removable-media change handling are
+  outside this preview.
+- Writes can be buffered. Use a clean shutdown or a successful explicit
+  Flush before removing the volume. An interrupted in-place overwrite
+  before Flush can leave a partially updated payload.
+- Experimental images may need to be recreated for future releases.
+  Keep independent copies of your files.
+
+The preview was tested with a fresh HDToolBox install on Kickstart
+2.04, including TD64 writes across 4 GiB, explicit Flush, and recovery
+after simulated power cuts. Physical hardware and storage qualification
+remain open.
+
+Source code is at https://github.com/ilehtoranta/CopperFS

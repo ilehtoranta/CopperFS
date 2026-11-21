@@ -4,6 +4,159 @@ using static CopperNova.Tests.FilesystemTests;
 namespace CopperNova.Tests;
 public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Fact]
+    public void PackedStreamChecksPayloadFromThePartitionOffset()
+    {
+        var h=new Harness(NovaImage.FormatPacked(2*1024*1024));
+        h.Mount();
+        uint file=h.Open("payload");
+        var payload=new byte[20000];
+        new Random(23).NextBytes(payload);
+        h.Write(file,payload);
+        h.Close(file);
+        h.Flush();
+
+        using var disk=new MemoryStream();
+        const int partitionOffset=32768;
+        disk.Position=partitionOffset;
+        disk.Write(h.Disk);
+        var expected=NovaImage.CheckPacked(h.Disk);
+        var actual=NovaImage.CheckPacked(disk,partitionOffset,h.Disk.Length);
+        Assert.Equal(expected.Generation,actual.Generation);
+        Assert.Equal(expected.Entries.ToArray(),actual.Entries.ToArray());
+        Assert.Throws<InvalidDataException>(()=>NovaImage.CheckPacked(disk,partitionOffset,h.Disk.Length+512L));
+    }
+
+    [Fact]
+    public void WideExtentsAndRetiredBitmapsPublishWithTheRoot()
+    {
+        const int length=33*1024*1024;
+        const uint groupBoundary=65536;
+        var disk=new byte[length];
+        using(var output=new MemoryStream(disk))
+            NovaImage.FormatPackedWide(output,0,length,groupBoundary-2);
+        var h=new Harness(disk);
+        h.Mount();
+        var data=new byte[65536];
+        new Random(423).NextBytes(data);
+        var writes=new List<uint>();
+        h.BeforeIo=io=>
+        {
+            if(io.Kind==IoKind.Write) writes.Add(io.Sector.Low);
+        };
+        uint file=h.Open("keep");
+        h.Write(file,data);
+        uint gap=h.Open("gap");
+        h.Write(gap,new byte[512]);
+        h.Close(gap);
+        h.Write(file,data);
+        h.Close(file);
+        Assert.Equal(new[]{groupBoundary-2,groupBoundary,groupBoundary+126,groupBoundary+127},writes);
+
+        byte[]? unpublished=null;
+        h.BeforeIo=io=> { if(io.Kind==IoKind.Flush&&unpublished==null) unpublished=(byte[])disk.Clone(); };
+        h.Flush();
+        Assert.Empty(NovaImage.CheckPacked(Assert.IsType<byte[]>(unpublished)).Entries);
+        var cold=new Harness(disk);
+        cold.Mount();
+        file=cold.Open("keep",1005);
+        for(int i=0;i<2;i++)
+        {
+            Assert.Equal((uint)data.Length,cold.Packet(82,file,Harness.Data,(uint)data.Length));
+            Assert.Equal(data,cold.Memory.Bytes.AsSpan((int)Harness.Data,data.Length).ToArray());
+        }
+        cold.Close(file);
+
+        cold.Bstr(Harness.NameAt,"keep");
+        Assert.Equal(uint.MaxValue,cold.Packet(16,0,Harness.NameAt>>2));
+        int retireBarriers=0;
+        cold.BeforeIo=io=>
+        {
+            if(io.Kind==IoKind.Flush&&retireBarriers++==0)
+                Assert.Equal(257u,NovaImage.CheckPacked(disk).DataSectors);
+        };
+        cold.Flush();
+        Assert.Equal(2,retireBarriers);
+        var after=NovaImage.CheckPacked(disk);
+        Assert.Equal(2u,after.Generation);
+        Assert.Equal("/gap",Assert.Single(after.Entries).Path);
+        Assert.Equal(1u,after.DataSectors);
+    }
+
+    [Fact]
+    public void WideScanAndRetirementCanExceedTheMetadataCache()
+    {
+        const int length=75*1024*1024, fileLength=66*1024*1024;
+        const uint hint=4096;
+        var disk=new byte[length];
+        using(var target=new MemoryStream(disk))
+            NovaImage.FormatPackedWide(target,0,length,hint);
+        var h=new Harness(disk);
+        h.Mount();
+        uint file=h.Open("large");
+        var data=new byte[65536];
+        for(int offset=0;offset<fileLength;offset+=data.Length) h.Write(file,data);
+        h.Close(file);
+        h.Flush();
+
+        // Model a wrapped cursor at the start of the now-full run.
+        h.Memory.Write32(4096+8192+180,hint);
+        file=h.Open("after");
+        uint start=0;
+        h.BeforeIo=io=> { if(io.Kind==IoKind.Write) start=io.Sector.Low; };
+        h.Write(file,new byte[512]);
+        Assert.Equal(hint+fileLength/512,start);
+        h.Close(file);
+        h.Flush();
+        uint generation=NovaImage.CheckPacked(disk).Generation;
+
+        int barriers=0;
+        h.BeforeIo=io=>
+        {
+            if(io.Kind==IoKind.Flush&&barriers++==0)
+            {
+                var old=NovaImage.CheckPacked(disk);
+                Assert.Equal(generation,old.Generation);
+                Assert.Equal(fileLength,old.Entries.Single(e=>e.Path=="/large").Size);
+            }
+        };
+        h.Bstr(Harness.NameAt,"large");
+        Assert.Equal(uint.MaxValue,h.Packet(16,0,Harness.NameAt>>2));
+        Assert.Equal(2,barriers);
+        var after=NovaImage.CheckPacked(disk);
+        Assert.Equal(generation+1,after.Generation);
+        Assert.Equal("/after",Assert.Single(after.Entries).Path);
+        Assert.Equal(1u,after.DataSectors);
+    }
+
+    [Fact]
+    public void WideAllocationStopsAtAnOccupiedBitInsideAByte()
+    {
+        const uint first=4096+9,occupied=first+4;
+        var disk=new byte[4*1024*1024];
+        using(var target=new MemoryStream(disk))
+            NovaImage.FormatPackedWide(target,0,disk.Length,occupied);
+        var h=new Harness(disk);
+        h.Mount();
+        uint neighbor=h.Open("neighbor");
+        var sentinel=Enumerable.Repeat((byte)0xac,512).ToArray();
+        h.Write(neighbor,sentinel);
+        h.Close(neighbor);
+        h.Flush();
+
+        h.Memory.Write32(4096+8192+180,first);
+        uint file=h.Open("grown");
+        var writes=new List<(uint Sector,uint Bytes)>();
+        h.BeforeIo=io=> { if(io.Kind==IoKind.Write) writes.Add((io.Sector.Low,io.Bytes)); };
+        h.Write(file,new byte[12*512]);
+        Assert.Equal(new[]{(first,4u*512),(occupied+1,8u*512)},writes);
+        h.Close(file);
+        h.Flush();
+        var cold=NovaImage.CheckPacked(disk);
+        Assert.Equal(13u,cold.DataSectors);
+        Assert.Equal(sentinel,disk.AsSpan((int)occupied*512,512).ToArray());
+    }
+
     [Fact] public void CompareBitmapProbesWithAlignedInitialAllocationHint()
     {
         (long Bytes,long Words,string Hash) Trace(uint hint) {

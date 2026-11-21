@@ -7,7 +7,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     // These packet-local pointers reference cache slots pinned for this packet's epoch.
     private const uint DeleteComment = 564, AncestorSteps = 568, UnitNumber = 572;
 
-    private bool ReusableIds() => R(DataFloor) == 1394 && m.Read16(Root() + 4) == 2;
+    private bool ReusableIds() => PackedVolume && m.Read16(Root() + 4) >= 2;
     private bool ValidNextHole(uint id, uint next, uint last) =>
         next == 0 || (next >= 2 && next <= last && next != id);
     private bool ValidHole(uint page, uint id, uint last) =>
@@ -125,7 +125,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
                 m.Write32(inode + 116, m.Read32(group + 84));
                 m.Write32(group + 84, id);
                 Dirty(inode); Dirty(group);
-                return Finish(uint.MaxValue);
+                return R(WideStreaming)!=0?FinishWideRetirement(10):Finish(uint.MaxValue);
             default: return Fatal();
         }
     }

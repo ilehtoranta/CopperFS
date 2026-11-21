@@ -9,7 +9,42 @@ namespace CopperNova.Amiga;
 
 public static class NativeNovaHandler
 {
+    private const uint StackBytes=4096, StackAllocation=StackBytes+12;
+
     public static uint Entry()
+    {
+        APTR task=Exec.FindTask(CString.FromPointer(0));
+        uint lower=APTR.ReadUInt32(task,ExecLayout.Task.StackLower),upper=APTR.ReadUInt32(task,ExecLayout.Task.StackUpper);
+        if(upper>=lower&&upper-lower>=StackBytes) return RunEntry();
+
+        // HDToolBox leaves the controller's default stack in place. A
+        // V37 MakeDosNode provides 600 bytes, enough only for this wrapper.
+        APTR exec=APTR.FromPointer(APTR.ReadUInt32(APTR.FromPointer(4),0));
+        uint error=APTR.ReadUInt16(exec,ExecLayout.Library.Version)<37?209u:103u;
+        if(error==103)
+        {
+            uint block=Exec.AllocMem(StackAllocation,Exec.MemoryFlags.Public);
+            if(block!=0)
+            {
+                APTR swap=APTR.FromPointer(block);
+                APTR.WriteUInt32(swap,ExecLayout.StackSwapStruct.Lower,block+12);
+                APTR.WriteUInt32(swap,ExecLayout.StackSwapStruct.Upper,block+StackAllocation);
+                APTR.WriteUInt32(swap,ExecLayout.StackSwapStruct.Pointer,block+StackAllocation);
+                int result=DosRunCommandCallbacks.ExecuteOnStack(swap,APTR.ExportAddress("coppernova.handler"),0,APTR.Null);
+                Exec.FreeMem(block,StackAllocation);
+                return unchecked((uint)result);
+            }
+        }
+        APTR port=APTR.FromPointer(task.Raw+92);
+        Exec.WaitPort(port);
+        APTR message=APTR.FromPointer(Exec.GetMsg(port));
+        APTR packet=message.IsNull?APTR.Null:APTR.FromPointer(APTR.ReadUInt32(message,10));
+        if(packet.IsNotNull) Reply(message,packet,port,0,error);
+        return 20;
+    }
+
+    [M68kExport("coppernova.handler")]
+    public static uint RunEntry()
     {
         APTR dos=Exec.OpenLibraryRaw(CString.FromLiteral("dos.library"),36);
         if(dos.IsNull) return 20;
@@ -38,22 +73,27 @@ public static class NativeNovaHandler
                 if(opened)
                 {
                     NativeCpxTransport.EnableQuickIo(arena);
-                    BindDirect(arena,request,APTR.ReadUInt32(env,48),start,blocks,maximum,mask);
+                    BindDirect(arena,request,APTR.ReadUInt32(env,48),start,maximum,mask);
                     var engine=new NovaEngine<NativeCpxMemory>(new NativeCpxMemory(),arena);
-                    engine.Bind(blocks,port.Raw,0,APTR.ReadUInt32(startup,0));
-                    if(engine.BeginMount()==CpxError.None&&Drive(arena,ioPort,task,ref engine)&&engine.IsMounted)
+                    uint unit=APTR.ReadUInt32(startup,0);
+                    engine.Bind(blocks,port.Raw,0,unit);
+                    bool cnp2=APTR.ReadUInt32(env,64)==NovaEngine<NativeCpxMemory>.PackedMagic;
+                    bool mounted=engine.BeginMount(cnp2)==CpxError.None&&Drive(arena,ioPort,task,ref engine)&&engine.IsMounted;
+                    if(mounted||engine.CanFormat)
                     {
                         volume=DOS.MakeDosEntry(CString.FromLiteral("CopperNovaPrototype"),(int)DosListType.Volume);
                         if(volume.IsNotNull)
                         {
-                            APTR.WriteUInt32(volume,8,port.Raw); APTR.WriteUInt32(volume,32,engine.VolumeMagic);
                             node=APTR.FromPointer(APTR.ReadUInt32(packet,28)<<2);
                             if(node.IsNotNull) APTR.WriteUInt32(node,8,port.Raw);
-                            engine.Bind(blocks,port.Raw,volume.Raw,APTR.ReadUInt32(startup,0));
+                            engine.Bind(blocks,port.Raw,volume.Raw,unit);
                             Reply(message,packet,port,uint.MaxValue,0);
-                            bool registered=DOS.AddDosEntry(volume)!=0;
-                            Run(arena,port,ioPort,task,node,ref engine);
-                            if(registered) DOS.RemDosEntry(volume);
+                            if(mounted||AwaitInitialization(arena,port,ioPort,task,node,volume,ref engine))
+                            {
+                                bool registered=mounted?RegisterVolume(port,volume,engine.VolumeMagic):true;
+                                Run(arena,port,ioPort,task,node,ref engine);
+                                if(registered) DOS.RemDosEntry(volume);
+                            }
                             failure=0;
                         }
                     }
@@ -72,6 +112,54 @@ public static class NativeNovaHandler
         if(arena!=0) Exec.FreeMem(arena,NovaEngine<NativeCpxMemory>.ArenaBytes);
         Exec.CloseLibrary(dos); return failure==0?0u:20u;
     }
+    private static bool RegisterVolume(APTR port,APTR volume,uint magic)
+    {
+        APTR.WriteUInt32(volume,8,port.Raw);
+        APTR.WriteUInt32(volume,32,magic);
+        return DOS.AddDosEntry(volume)!=0;
+    }
+    private static bool AwaitInitialization(uint arena,APTR port,APTR ioPort,APTR task,APTR node,APTR volume,
+        ref NovaEngine<NativeCpxMemory> engine)
+    {
+        while(true)
+        {
+            Exec.WaitPort(port);
+            APTR message=APTR.FromPointer(Exec.GetMsg(port));
+            if(message.IsNull) continue;
+            APTR packet=APTR.FromPointer(APTR.ReadUInt32(message,10));
+            if(packet.IsNull) continue;
+            uint action=APTR.ReadUInt32(packet,8);
+            if(action==5)
+            {
+                if(node.IsNotNull) APTR.WriteUInt32(node,8,0);
+                Reply(message,packet,port,uint.MaxValue,0);
+                return false;
+            }
+            if(action!=NovaEngine<NativeCpxMemory>.InitializeCnp2||
+                APTR.ReadUInt32(packet,20)!=NovaEngine<NativeCpxMemory>.PackedMagic||!engine.CanFormat)
+            {
+                Reply(message,packet,port,0,225);
+                continue;
+            }
+            uint mode=APTR.ReadUInt32(packet,24);
+            if(mode!=1)
+            {
+                Reply(message,packet,port,mode==0?NovaEngine<NativeCpxMemory>.PackedMagic:0u,mode==0?0u:115u);
+                continue;
+            }
+
+            APTR date=APTR.FromPointer(arena+1792);
+            DOS.DateStamp(date);
+            uint days=APTR.ReadUInt32(date,0),minutes=APTR.ReadUInt32(date,4),ticks=APTR.ReadUInt32(date,8);
+            if(engine.BeginFormat(days+1,minutes*3000+ticks)==CpxError.None&&
+                Drive(arena,ioPort,task,ref engine)&&engine.IsMounted&&RegisterVolume(port,volume,engine.VolumeMagic))
+            {
+                Reply(message,packet,port,uint.MaxValue,0);
+                return true;
+            }
+            Reply(message,packet,port,0,213);
+        }
+    }
     private static bool Geometry(APTR env,out Wide start,out uint blocks,out uint maximum,out uint mask)
     {
         start=default; blocks=maximum=mask=0;
@@ -80,21 +168,21 @@ public static class NativeNovaHandler
         if(high<low||heads==0||track==0) return false;
         Wide cylinder=Wide.Multiply(heads,track); if(cylinder.High!=0) return false;
         Wide length=Wide.Multiply(high-low+1,cylinder.Low),first=Wide.Multiply(low,cylinder.Low);
-        if(length.High!=0||length.Low<4096||length.Low>65536||!Wide.Left(first,9,out start)) return false;
+        if(length.High!=0||length.Low<4096||!Wide.Left(first,9,out start)||
+            !Wide.Add(start,new Wide(length.Low>>23,length.Low<<9),out _)) return false;
         blocks=length.Low; maximum=APTR.ReadUInt32(env,52); mask=APTR.ReadUInt32(env,56); return maximum>=512;
     }
     // Geometry and the mount's DMA class are immutable until the device closes.
     // Cache a direct-transfer capability only for masks with one contiguous
     // address range. The general transport handles holes, bouncing and splits.
     private const uint DirectIo=3072;
-    private static void BindDirect(uint arena,APTR request,uint memoryType,Wide start,uint blocks,uint maximum,uint mask)
+    private static void BindDirect(uint arena,APTR request,uint memoryType,Wide start,uint maximum,uint mask)
     {
         uint align=mask&(0u-mask),ceiling=mask|(align-1);
-        if(mask==0||(ceiling&(ceiling+1))!=0||(memoryType&0xffffu&~(uint)Exec.MemoryFlags.Public)!=0||
-            start.High!=0||blocks>(uint.MaxValue-start.Low)/512) return;
+        if(mask==0||(ceiling&(ceiling+1))!=0||(memoryType&0xffffu&~(uint)Exec.MemoryFlags.Public)!=0) return;
         APTR d=APTR.FromPointer(arena+DirectIo);
         APTR.WriteUInt32(d,0,request.Raw); APTR.WriteUInt32(d,4,ceiling); APTR.WriteUInt32(d,8,~mask|1u);
-        APTR.WriteUInt32(d,12,maximum); APTR.WriteUInt32(d,16,start.Low);
+        APTR.WriteUInt32(d,12,maximum); APTR.WriteUInt32(d,16,start.Low); APTR.WriteUInt32(d,20,start.High);
     }
     [AmigaLibrary("device",AmigaLibraryBasePolicy.CallerProvided)]
     [AmigaLvo(-30)]
@@ -112,9 +200,18 @@ public static class NativeNovaHandler
             buffer+bytes-1>APTR.ReadUInt32(d,4))))
             return NativeCpxTransport.ServiceEngineRequest(arena,out token,out actual,out _);
         token=APTR.ReadUInt32(io,20); bool flush=kind==(uint)IoKind.Flush;
-        uint offset=flush?0:APTR.ReadUInt32(d,16)+(APTR.ReadUInt32(io,8)<<9);
+        uint offset=0,high=0;
+        if(!flush)
+        {
+            // Geometry admitted the partition end, and Issue admitted this
+            // uint sector and its entire transfer. TD64 takes the upper word
+            // in io_Actual and accepts a transfer spanning a 4 GiB boundary.
+            uint sector=APTR.ReadUInt32(io,8),startLow=APTR.ReadUInt32(d,16);
+            offset=unchecked(startLow+(sector<<9));
+            high=APTR.ReadUInt32(d,20)+(sector>>23)+(offset<startLow?1u:0u);
+        }
         APTR.WriteUInt8(request,8,5); APTR.WriteUInt16(request,ExecLayout.IORequest.Command,(ushort)(flush?4:kind==(uint)IoKind.Write?25:24));
-        APTR.WriteUInt8(request,ExecLayout.IORequest.Flags,1); APTR.WriteUInt8(request,ExecLayout.IORequest.Error,0); APTR.WriteUInt32(request,ExecLayout.IOStdReq.Actual,0);
+        APTR.WriteUInt8(request,ExecLayout.IORequest.Flags,1); APTR.WriteUInt8(request,ExecLayout.IORequest.Error,0); APTR.WriteUInt32(request,ExecLayout.IOStdReq.Actual,high);
         APTR.WriteUInt32(request,ExecLayout.IOStdReq.Length,bytes); APTR.WriteUInt32(request,ExecLayout.IOStdReq.Data,buffer); APTR.WriteUInt32(request,ExecLayout.IOStdReq.Offset,offset);
         BeginDirect(APTR.FromPointer(APTR.ReadUInt32(request,ExecLayout.IORequest.Device)),request);
         if((APTR.ReadUInt8(request,ExecLayout.IORequest.Flags)&1)!=0) {
@@ -153,9 +250,11 @@ public static class NativeNovaHandler
             Exec.WaitPort(port); APTR message=APTR.FromPointer(Exec.GetMsg(port));
             if(message.IsNull) continue;
             APTR packet=APTR.FromPointer(APTR.ReadUInt32(message,10)); if(packet.IsNull) continue;
+            uint action=APTR.ReadUInt32(packet,8);
+            if(action==NovaEngine<NativeCpxMemory>.InitializeCnp2) { Reply(message,packet,port,0,202); continue; }
             if(engine.BeginPacket(packet.Raw)!=CpxError.None) { Reply(message,packet,port,0,202); continue; }
             bool succeeded=Drive(arena,ioPort,task,ref engine);
-            bool shutdown=APTR.ReadUInt32(packet,8)==5&&succeeded;
+            bool shutdown=action==5&&succeeded;
             if(shutdown&&node.IsNotNull) APTR.WriteUInt32(node,8,0);
             APTR reply=APTR.FromPointer(APTR.ReadUInt32(packet,4));
             APTR.WriteUInt32(packet,4,port.Raw); Exec.PutMsg(reply,message);

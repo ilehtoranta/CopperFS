@@ -35,6 +35,12 @@ public static partial class NovaImage
     {
         if(bytes%512!=0||bytes<4096*512||bytes>65536*512) throw new ArgumentOutOfRangeException(nameof(bytes));
         var image=new byte[bytes]; uint blocks=(uint)(bytes/512);
+        InitializeMetadata(image,blocks);
+        return image;
+    }
+
+    private static void InitializeMetadata(byte[] image,uint blocks)
+    {
         for(uint n=0;n<2;n++)
         {
             Header(image,n,1); int p=(int)n*512;
@@ -57,14 +63,23 @@ public static partial class NovaImage
         Header(image,257,11,1); Put(image,257*512+76,1); Put(image,257*512+104,1); Put(image,257*512+108,1); Seal(image,257);
         Header(image,58,20); Put(image,58*512+72,0); Seal(image,58);
         Header(image,116,22); Put(image,116*512+64,U32(image,58*512+8)); Put(image,116*512+68,58); Seal(image,116);
-        return image;
     }
     public sealed record Entry(string Path,bool Directory,uint Slot,long Size,string? Sha256) { public string? Comment {get;init;} }
-    public sealed record CheckResult(uint Generation,int AllocatedInodes,int DataSectors,uint FreeSectors,IReadOnlyList<Entry> Entries);
+    public sealed record CheckResult(uint Generation,int AllocatedInodes,uint DataSectors,uint FreeSectors,IReadOnlyList<Entry> Entries);
     public static CheckResult Check(byte[] image)
     {
         if(image.Length%512!=0) throw new InvalidDataException("Invalid image size");
-        uint blocks=(uint)(image.Length/512),generation=0;
+        using var source=new MemoryStream(image,writable:false);
+        return Check(image,(uint)(image.Length/512),source,0);
+    }
+
+    // Metadata can be a normalized prefix. File payload is always checked
+    // against the original stream, at the partition-relative extent address.
+    private static CheckResult Check(byte[] image,uint blocks,Stream source,long start,
+        uint dataFloor=1280,Action<uint,byte[]>? readWideBitmap=null)
+    {
+        uint generation=0;
+        var payload=new byte[16*1024];
         Valid(0,1); Valid(1,1);
         if(U32(image,64)!=blocks||U32(image,68)!=1280) throw new InvalidDataException("Anchor geometry mismatch");
         int commit=-1;
@@ -87,25 +102,39 @@ public static partial class NovaImage
         }
         if(!clean) throw new InvalidDataException("Image requires recovery; not independently clean");
         Valid(128,3); Valid(129,5);
-        var used=new bool[blocks]; Array.Fill(used,true,0,1280);
+        var used=new List<(uint First,uint End)> { (0,dataFloor) };
         var allocated=new HashSet<uint>();
         for(uint slot=1;slot<1024;slot++) if(Bit(129*512+128,slot)) { Valid((int)(256+slot),0); allocated.Add(slot); }
         if(!Bit(129*512+128,0)||!allocated.Contains(1)) throw new InvalidDataException("Reserved inode bits missing");
-        var visited=new HashSet<uint>(); var serials=new HashSet<ulong>(); var entries=new List<Entry>(); int dataCount=0;
+        var visited=new HashSet<uint>(); var serials=new HashSet<ulong>(); var entries=new List<Entry>(); uint dataCount=0;
         Walk(1,"",0);
         if(!allocated.SetEquals(visited)) throw new InvalidDataException("Unreachable inode allocation");
-        uint free=0;
-        for(uint map=0;map<32;map++)
+        used.Sort((left,right)=>left.First.CompareTo(right.First));
+        for(int i=1;i<used.Count;i++)
+            if(used[i].First<used[i-1].End) throw new InvalidDataException("Duplicate data ownership");
+        var actualBitmap=new byte[256]; var expectedBitmap=new byte[256];
+        int nextRange=0;
+        uint mapCount=readWideBitmap is null?32:((blocks-1)>>11)+1;
+        for(uint map=0;map<mapCount;map++)
         {
-            int home=(int)(130+map); Valid(home,4);
-            if(U32(image,home*512+64)!=map*2048) throw new InvalidDataException("Bitmap identity mismatch");
-            for(uint bit=0;bit<2048;bit++)
+            uint first=map<<11;
+            if(readWideBitmap is null)
             {
-                uint block=map*2048+bit; bool marked=Bit(home*512+128,bit),expected=block>=blocks||used[block];
-                if(marked!=expected) throw new InvalidDataException($"Allocation ownership mismatch at {block}");
-                if(block<blocks&&!marked) free++;
+                int home=(int)(130+map); Valid(home,4);
+                if(U32(image,home*512+64)!=first) throw new InvalidDataException("Bitmap identity mismatch");
+                image.AsSpan(home*512+128,256).CopyTo(actualBitmap);
             }
+            else readWideBitmap(map,actualBitmap);
+            Array.Clear(expectedBitmap);
+            uint length=first>=blocks?0:Math.Min(blocks-first,2048u),end=first+length;
+            while(nextRange<used.Count&&used[nextRange].End<=first) nextRange++;
+            for(int i=nextRange;i<used.Count&&used[i].First<end;i++)
+                MarkBits(expectedBitmap,Math.Max(first,used[i].First)-first,Math.Min(end,used[i].End)-first);
+            MarkBits(expectedBitmap,length,2048);
+            if(!actualBitmap.AsSpan().SequenceEqual(expectedBitmap))
+                throw new InvalidDataException($"Allocation ownership mismatch in window {map}");
         }
+        uint free=blocks-dataFloor-dataCount;
         if(free!=U32(image,128*512+72)||U32(image,128*512+80)!=1023-allocated.Count) throw new InvalidDataException("Free counters mismatch");
         return new(generation,allocated.Count,dataCount,free,entries);
 
@@ -146,13 +175,46 @@ public static partial class NovaImage
                 for(uint i=0;i<count;i++)
                 {
                     int e=p+320+(int)i*24; uint disk=U32(image,e+12),run=U32(image,e+16);
-                    if(U32(image,e)!=0||U32(image,e+4)!=logical||U32(image,e+8)!=0||U32(image,e+20)!=0||run==0||disk<1280||disk>=blocks||run>blocks-disk) throw new InvalidDataException("Extent invalid");
-                    for(uint n=0;n<run;n++) { if(used[disk+n]) throw new InvalidDataException("Duplicate data ownership"); used[disk+n]=true; dataCount++; }
-                    uint take=Math.Min(remaining,run*512); hash.AppendData(image.AsSpan((int)disk*512,(int)take)); remaining-=take; logical+=run;
+                    if(U32(image,e)!=0||U32(image,e+4)!=logical||U32(image,e+8)!=0||U32(image,e+20)!=0||run==0||
+                        disk<dataFloor||disk>=blocks||run>blocks-disk||(ulong)logical+run>((ulong)size+511)/512)
+                        throw new InvalidDataException("Extent invalid");
+                    used.Add((disk,disk+run));
+                    dataCount=checked(dataCount+run);
+                    uint take=(uint)Math.Min(remaining,(ulong)run*512);
+                    source.Position=checked(start+(long)disk*512);
+                    remaining-=take;
+                    while(take!=0)
+                    {
+                        int piece=(int)Math.Min(take,(uint)payload.Length);
+                        source.ReadExactly(payload.AsSpan(0,piece));
+                        hash.AppendData(payload.AsSpan(0,piece));
+                        take-=(uint)piece;
+                    }
+                    logical+=run;
                 }
-                if(remaining!=0||logical!=(size+511)/512) throw new InvalidDataException("Extent/file length mismatch");
+                if(remaining!=0||logical!=((ulong)size+511)/512) throw new InvalidDataException("Extent/file length mismatch");
                 entries.Add(new(path,false,slot,size,Convert.ToHexString(hash.GetHashAndReset())));
             }
+        }
+    }
+
+    private static void MarkBits(Span<byte> bits,uint first,uint end)
+    {
+        while(first<end&&(first&7)!=0)
+        {
+            bits[(int)(first>>3)]|=(byte)(1<<(int)(first&7));
+            first++;
+        }
+        uint wholeEnd=end&~7u;
+        if(first<wholeEnd)
+        {
+            bits.Slice((int)(first>>3),(int)((wholeEnd-first)>>3)).Fill(255);
+            first=wholeEnd;
+        }
+        while(first<end)
+        {
+            bits[(int)(first>>3)]|=(byte)(1<<(int)(first&7));
+            first++;
         }
     }
 }

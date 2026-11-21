@@ -9,8 +9,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         switch(phase)
         {
             case 100:
-                if(R(Blocks)<4096||R(Blocks)>65536) return Fatal();
-                W(PartialDirty,0); W(Poison,0); W(Mounted,0); W(Index,0); W(DirtyCount,0); W(Epoch,R(Epoch)+1);
+                if(R(Blocks)<4096) return Fatal();
+                W(PartialDirty,0); W(WideStreaming,0); W(Poison,0); W(Mounted,0); W(Index,0); W(DirtyCount,0); W(Epoch,R(Epoch)+1);
                 return Next(R(CrcReady)==Magic?102u:101u);
             case 101:
                 for(uint n=0;n<32;n++)
@@ -25,13 +25,15 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             case 102:
                 // Reset only cache/quarantine ownership, preserving I/O token and DOS serials.
                 uint used=R(CacheUsed);
-                for(uint slot=0;slot<used;slot++) { uint meta=Arena+CacheMeta+(slot<<5); m.Write8(Arena+Resident+m.Read32(meta),0); m.Write32(meta+4,0); }
+                for(uint slot=0;slot<used;slot++) { uint meta=Arena+CacheMeta+(slot<<5),home=m.Read32(meta); if(home<ResidentCount) m.Write8(Arena+Resident+home,0); m.Write32(meta+4,0); }
                 W(CacheUsed,0);
                 Zero(Arena+State+QuarantineTags,128); W(QuarantineEpoch,1); W(FreePending,0);
                 return Issue(IoKind.Read,0,controls,1024,103);
             case 103:
             {
                 if(m.Read32(controls)==PackedMagic||m.Read32(controls+512)==PackedMagic) return SelectRoot(controls);
+                if(R(FormatState)==1&&BlankRootSectors(controls)) W(FormatState,2);
+                if(R(Blocks)>65536) return Fatal();
                 W(ProofMask,0); W(DataFloor,1280);
                 uint selected=0;
                 for(uint n=0;n<2;n++)
@@ -111,6 +113,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             case 114: return Issue(IoKind.Flush,0,0,0,115);
             case 115:
                 W(AllocationHint,(DataStart+31)&~31u); W(Mounted,1);
+                if(WideVolume)
+                {
+                    uint hint=m.Read32(Root()+100);
+                    if(hint>=DataStart&&hint<R(Blocks)) W(AllocationHint,hint);
+                }
                 return Load(257,116);
             case 116:
                 if(!ValidInode(R(Loaded),1)||m.Read16(R(Loaded)+6)!=11) return Fatal();
@@ -186,7 +193,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             case 200:
                 if (R(PartialDirty) != 0) return DrainPartial(200);
                 if(R(DirtyCount)==0) return Issue(IoKind.Flush,0,0,0,215);
-                if(R(DataFloor)==1394) return Next(1200);
+                if(PackedVolume) return Next(1200);
                 if(R(DirtyCount)>48||R(Generation)==uint.MaxValue) return Fatal();
                 W(NewGeneration,R(Generation)+1); W(Bank,1-R(Bank)); W(Index,0); W(Count,0);
                 Zero(Ptr(Descriptors),1024);

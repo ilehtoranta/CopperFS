@@ -3,7 +3,7 @@ using CopperCPX;
 
 namespace CopperNova.Prototype;
 
-// Experimental one-group format. All mutable execution state is caller-owned.
+// Experimental format. All mutable execution state is caller-owned.
 // Production CPX engines are not used; only the existing memory/I/O value ABI is shared.
 public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
 {
@@ -12,7 +12,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     public const uint ArenaBytes=115200, Magic=0x434E4D31, PackedMagic=0x434E5032;
     public const uint FirstData=1280;
     private uint DataStart=>R(DataFloor);
-    public uint VolumeMagic=>R(DataFloor)==1394?PackedMagic:Magic;
+    public uint VolumeMagic=>PackedVolume?PackedMagic:Magic;
     private const uint State=8192, Handles=9216, Locks=11264, Path=12800, OtherPath=13056,
         RenameBuffer=13312, CacheMeta=14336, CacheImages=16384,
         Descriptors=49152, Controls=50176, Scratch=53248, CrcTable=90112,
@@ -54,9 +54,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     public void Bind(uint blocks,uint port,uint volume,uint unit) { W(Blocks,blocks); W(Port,port); W(Volume,volume); W(UnitNumber,unit); }
     private const uint ActiveHandles=528,ActiveLocks=532,ComponentHash=536,CacheUsed=540,CrcLow=544,CrcHigh=548;
     public bool HasResources=>R(ActiveHandles)!=0||R(ActiveLocks)!=0;
-    public CpxError BeginMount()
+    public CpxError BeginMount() => BeginMount(false);
+    public CpxError BeginMount(bool probeBlankCnp2)
     {
         if(Busy||HasOutstandingIo||HasResources||R(DirtyCount)!=0) return CpxError.Busy;
+        W(FormatState,probeBlankCnp2?1u:0u);
         W(Packet,0); W(BusyAt,1); W(Phase,100); W(MountReturn,900); return CpxError.None;
     }
     public CpxError BeginPacket(uint packet)
@@ -130,6 +132,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult Dispatch(uint phase)
     {
         if(phase<100) return PacketStep(phase);
+        if(phase>=1300) return FormatStep(phase);
         if(phase>=1100) return PackedStep(phase);
         if(phase>=100&&phase<200) return MountStep(phase);
         if(phase>=200&&phase<300) return FlushStep(phase);
@@ -150,7 +153,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private const uint Resident=55040, ResidentCount=2256;
     private int Find(uint home)
     {
-        if(home>=ResidentCount) return -1;
+        if(home>=ResidentCount) return home>=WideSelectorKey&&WideVolume?FindWide(home):-1;
         uint value=m.Read8(Arena+Resident+home);
         if(value==0) return -1;
         uint slot=value-1;
@@ -163,7 +166,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     }
     private int ReserveSlot(uint home)
     {
-        if(home>=ResidentCount) return -1;
+        if(home>=ResidentCount&&(home<WideSelectorKey||!WideVolume)) return -1;
         uint used=R(CacheUsed); int chosen=-1;
         if(used<64) { chosen=(int)used; W(CacheUsed,used+1); }
         // +12 is the existing last-access packet epoch; +16 is the epoch last
@@ -186,11 +189,24 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         }
         if(chosen<0) return -1;
         uint slot=(uint)chosen,entry=Meta(slot);
-        if(slot<used) m.Write8(Arena+Resident+m.Read32(entry),0);
+        if(slot<used)
+        {
+            uint previous=m.Read32(entry);
+            if(previous<ResidentCount) m.Write8(Arena+Resident+previous,0);
+            else UnlinkWide(previous,slot);
+        }
         m.Write32(entry,home); m.Write32(entry+4,0); m.Write32(entry+8,0); m.Write32(entry+12,R(Epoch)); m.Write32(entry+16,R(Epoch));
-        m.Write8(Arena+Resident+home,(byte)(slot+1)); return chosen;
+        if(home<ResidentCount) m.Write8(Arena+Resident+home,(byte)(slot+1));
+        else LinkWide(home,slot,entry);
+        return chosen;
     }
     private StepResult Load(uint home,uint next)
+    {
+        if(home>=WideBitmapKey&&WideVolume) return LoadWideBitmap(home,next);
+        return LoadHomePage(home,next);
+    }
+
+    private StepResult LoadHomePage(uint home,uint next)
     {
         uint state=Arena+State;
         int hit=Find(home);
@@ -202,9 +218,10 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             return StepResult.Pending;
         }
         // Reserve directly after the lookup miss.
-        int reserve=ReserveSlot(home); if(reserve<0) return Error(103);
+        int reserve=ReserveSlot(home);
+        if(reserve<0) return R(WideStreaming)!=0?Fatal():Error(103);
         m.Write32(state+LoadSlot,(uint)reserve); m.Write32(state+LoadHome,home); m.Write32(state+LoadNext,next);
-        if(m.Read32(state+DataFloor)==1394) return Next(1100);
+        if(PackedVolume) return Next(1100);
         return Issue(IoKind.Read,home,Arena+CacheImages+((uint)reserve<<9),512,1000);
     }
     private void Dirty(uint p)
