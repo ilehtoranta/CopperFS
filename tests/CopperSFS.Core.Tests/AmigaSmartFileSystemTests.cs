@@ -12,7 +12,7 @@ public sealed partial class AmigaSmartFileSystemTests
     private const uint Bitmap = 0x42544D50, Admin = 0x41444D43;
     private sealed class PowerCut : Exception;
 
-    private struct Disk(byte[] image) : IAmigaWritableFileSystemPlatform, IAmigaDiscardFileSystemPlatform
+    private struct Disk(byte[] image) : IAmigaFormatFileSystemPlatform, IAmigaDiscardFileSystemPlatform
     {
         public readonly byte[] Ram = new byte[524288];
         public APTR TrimCertificate, FreedQueue;
@@ -165,6 +165,12 @@ public sealed partial class AmigaSmartFileSystemTests
         }
         public bool WriteDataBlocks(uint block, uint count, APTR source)
         { DataWrites.Add((block, count)); return AmigaFileSystemBlockIo.Write(ref this, block, count, source); }
+        public bool WriteFormatBlock(uint block, APTR source)
+        {
+            if (block >= BlockCount || !IsMapped(source, Bytes)) return false;
+            Ram.AsSpan((int)source.Raw, Bytes).CopyTo(image.AsSpan((int)block * Bytes, Bytes));
+            return true;
+        }
         public bool WriteBlock(uint block, APTR source)
         {
             CheckView();

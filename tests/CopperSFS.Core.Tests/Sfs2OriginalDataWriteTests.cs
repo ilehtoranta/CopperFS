@@ -262,6 +262,47 @@ public sealed class Sfs2OriginalDataWriteTests
         Assert.True(sparse.Copied < full.Copied, $"Region clone copied {sparse.Copied} versus {full.Copied} bytes.");
     }
 
+    [Fact]
+    public void RetainedAppendRouteSurvivesFailedTransferAndCommitsAtFlush()
+    {
+        var seed = new StudyDisk(Empty(), 512);
+        var node = CreateFile(ref seed, "Growth");
+        var image = seed.Snapshot();
+        var disk = Mount(image, true);
+        var work = WorkFor(disk);
+        var cursor = APTR.FromPointer(disk.Payload.Raw + 800000);
+        var expected = new StudyDisk(image, 512);
+        var position = 0u;
+        for (var packet = 0; packet < 5; packet++)
+        {
+            var payload = StudyFixture.Pattern(4096, packet + 31);
+            payload.CopyTo(disk.Ram, (int)disk.Payload.Raw);
+            var request = new Request { Node = node, Position = position, Buffer = disk.Payload, Length = 4096 };
+            if (packet == 3)
+            {
+                Assert.NotEqual(0u, disk.ReadUInt32(cursor, 52) >> 16);
+                var active = disk.RedoOverlay;
+                var accepted = disk.Ram.AsSpan((int)active.Raw, (int)disk.ReadUInt32(disk.BatchBuffer, 12)).ToArray();
+                disk.FailAtEvent = disk.Events + 1;
+                Assert.False(ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write,
+                    disk.BatchBuffer, out var rejected, cursor));
+                Assert.Equal(0u, rejected);
+                Assert.Equal(active, disk.RedoOverlay);
+                Assert.Equal(accepted, disk.Ram.AsSpan((int)active.Raw, accepted.Length).ToArray());
+                disk.FailAtEvent = 0;
+            }
+            Assert.True(ExecuteTrstGroup(ref disk, ref work, ref request, TrstOperation.Write,
+                disk.BatchBuffer, out var actual, cursor), work.Error.ToString());
+            Assert.Equal(4096u, actual);
+            PutFile(ref expected, node, position, payload, true);
+            position += actual;
+        }
+        Assert.Equal(0, disk.Counts.Flushes);
+        Assert.True(FlushTrstGroup(ref disk, ref work, disk.BatchBuffer), work.Error.ToString());
+        Assert.Equal(4, disk.Counts.Flushes);
+        Assert.Equal(Manifest(expected.Snapshot()), Manifest(disk.Snapshot()));
+    }
+
     [Theory] [InlineData(false, false)] [InlineData(true, false)]
     [InlineData(false, true)] [InlineData(true, true)]
     public void OriginalAppendCommitCutsKeepOldOrAcceptedMetadata(bool retainedWrites, bool firstRun)
