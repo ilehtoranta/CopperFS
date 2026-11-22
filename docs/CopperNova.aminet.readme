@@ -2,50 +2,66 @@ Short:        CopperNova CNP2 filesystem preview
 Author:       Ilkka Lehtoranta
 Uploader:     ilkleht@gmail.com (Ilkka Lehtoranta)
 Type:         disk/misc
-Version:      1.0-preview.3
-Requires:     Kickstart and Workbench 3.1, 68000 or newer
-Architecture: m68k-amigaos >= 3.1
+Version:      1.0-preview.7
+Requires:     AmigaOS 2.04, 68000 or newer, TD64-capable disk driver
+Architecture: m68k-amigaos >= 2.04
 
 CopperNova is a new MIT-licensed Amiga filesystem written in C#.
-This preview uses CNP2 root version 3 with wide extents and multi-group
-allocation. It needs a TD64-capable device for the supplied disk image.
+CopperNovaFormat creates CNP2 v6 partitions with growing directories,
+an on-demand object index, wide extents and multi-group allocation.
+The disk driver must support
+TD64 reads and writes and CMD_UPDATE for Flush, including on partitions
+below 4 GiB.
 It supports creating, deleting and moving files and directories, file
 reads and writes, enumeration, and explicit Flush.
 
 Archive contents
 
-CopperNovaPrototype  Native 68000 handler, embedded version CopperNova 1.0
-BlankCNP2.rdb.gz     Freshly formatted 4 GiB + 64 MiB CNP2 partition
+CopperNovaPrototype  Native 68000 CNP2 handler
+CopperNovaFormat     Amiga Shell command for initializing a CNP2 partition
 CopperNova.readme    This README
 LICENSE.txt         MIT license
 THIRD-PARTY-NOTICES.txt  CopperSharp license
 
 Installation
 
-1. Decompress BlankCNP2.rdb.gz on the host. Allow at least 4.1 GiB for
-   the decompressed disk image. Keep a clean copy to start over if needed.
-2. Boot Kickstart and Workbench 3.1 from your usual system disk. Attach
-   the decompressed image as a second writable RDB hardfile or disk.
-   The image already contains an installed copy of the handler and a
-   formatted, nonbootable CNP0: partition with DOS type 0x434E5032 (CNP2).
-3. Reboot if needed and check that CNP0: appears. Copy a test file to it,
-   cleanly shut down, then boot again and verify the file.
+1. Use HDToolBox or your controller's RDB tool on a spare disk or image.
+   Create a fresh, empty partition larger than 3 MiB with 512-byte
+   filesystem blocks.
+   Leave Bootable off. Use your controller's Mask and MaxTransfer values.
+2. In HDToolBox, open Partition Drive, enable Advanced Options and use
+   Add/Update to add CopperNovaPrototype to the RDB. Set its identifier
+   to 0x434E5032 (CNP2) and version/revision to 1/0 if asked. Under
+   Change, select the newly added filesystem or set that same identifier
+   as the custom filesystem type for the partition. Save and reboot.
+3. From an Amiga Shell, run the formatter with the partition's device
+   name and the INITIALIZE keyword. For a partition named CNP0:
 
-Use a spare image or disk for the preview. Writing the full RDB image
-to a physical disk overwrites its partition table and volume contents.
-The preformatted image is the installation route exercised by the
-Workbench test. A native DOS Format command and in-place conversion from
-OFS, FFS, SFS or SFS2 are outside this preview.
+       CopperNovaFormat CNP0: INITIALIZE
+
+   Use this command only on a new, empty partition. The command requires
+   both CNP2 root sectors to be zero and refuses a mounted CNP2 volume.
+   After successful initialization you can use CNP0:. The display
+   volume name in this preview is CopperNovaPrototype.
+
+The optional CopperNovaDemo archive contains a preformatted emulator
+hardfile. Converting another filesystem in place is outside this preview.
 
 Current limitations
 
-- 512-byte sectors. The included full-disk partition is 4 GiB + 64 MiB.
+- 512-byte sectors. The demo partition is 4 GiB + 64 MiB.
   Larger geometries and physical controllers have yet to be qualified.
-- Up to 1,022 live objects. Names are ASCII, with up to 168 bytes per
-  component and a 255-byte DOS path. Each directory has 192 bytes for
-  name records, which can limit it to a few entries with long names.
-- Up to eight extents and 2 GiB minus one byte per file. A fragmented file
-  can reach the extent limit before the disk fills.
+- A fresh volume starts with one index leaf. The index and directory
+  pages grow as needed. Kickstart 2.04 tests covered 122,880 files on one
+  partition and 4,096 files in one directory.
+- To migrate a v1-v5 volume, use its matching handler to copy the files
+  to a separate, freshly initialized v6 partition.
+- Open files and locks use one 48-byte record each, allocated as needed.
+  Available RAM limits how many can be held at once.
+- ASCII names support up to 168 bytes per component and 255 per DOS path.
+- Files support up to 2 GiB minus one byte. The inode stores eight
+  extents inline. Fragmented files allocate additional 512-byte extent
+  pages as needed.
 - Links, sparse growth, grow-by-resize, extended attributes, notifications,
   record locking, automatic TRIM and removable-media change handling are
   outside this preview.
@@ -55,10 +71,11 @@ Current limitations
 - Experimental images may need to be recreated for future releases.
   Keep independent copies of your files.
 
-Qualification covers emulated Kickstart and Workbench 3.1, including RDB
-discovery, TD64 transfers across 4 GiB, explicit Flush, cuts before both
-publication barriers, and cold reads from durable sectors. The independent
-checker verified allocation ownership and payload contents. Physical
-hardware and storage qualification remain open.
+On emulated Kickstart 2.04, CopperNovaFormat initialized a blank RDB
+partition. Tests covered explicit Flush, TD64 access across 4 GiB and
+recovery after simulated power cuts before both publication barriers.
+The handler held 96 open files and 96 locks simultaneously and rejected
+resource allocation failures without changing files. Physical hardware
+and storage qualification remain open.
 
 Source code is at https://github.com/ilehtoranta/CopperFS

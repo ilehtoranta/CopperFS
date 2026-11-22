@@ -13,7 +13,7 @@ using CopperSharp.Targets.Amiga;
 using FastFileSystemVolume=Hst.Amiga.FileSystems.FastFileSystem.FastFileSystemVolume;
 using AmigaFileMode = Hst.Amiga.FileSystems.FileMode;
 
-internal static class WorkbenchGate
+internal static partial class WorkbenchGate
 {
     private const uint DosType=0x434e5032;
     private const int PartitionOffset=4*32768;
@@ -57,6 +57,9 @@ internal static class WorkbenchGate
                 using var reader=new StreamReader(file,Encoding.Latin1); startup=await reader.ReadToEndAsync();
             }
             var lines=startup.Replace("\r","").Split('\n').ToList();
+            // Workbench 2.04 normally prompts for a keymap on first use.
+            // The disposable boot copy runs the DOS probe unattended.
+            lines.RemoveAll(line=>line.Trim().Equals("PickMap sys: initial",StringComparison.OrdinalIgnoreCase));
             int load=lines.FindIndex(l=>l.Trim().Equals("C:LoadWB",StringComparison.OrdinalIgnoreCase)||l.Trim().Equals("LoadWB",StringComparison.OrdinalIgnoreCase));
             if(load<0) throw new InvalidDataException("Workbench startup has no LoadWB");
             lines.Insert(load+1,"DF1:PROBE");
@@ -83,11 +86,12 @@ internal static class WorkbenchGate
     {
         if(comparison!=null)
         {
-            if(comparison is not ("v2-low" or "v2-high" or "v3-mid" or "v3-high"))
-                throw new ArgumentException("Expected v2-low, v2-high, v3-mid or v3-high.",nameof(comparison));
-            fullDisk=comparison.StartsWith("v3-",StringComparison.Ordinal);
+            if(comparison is not ("v2-low" or "v2-high" or "v5-mid" or "v5-high"))
+                throw new ArgumentException("Expected v2-low, v2-high, v5-mid or v5-high.",nameof(comparison));
+            fullDisk=comparison is "v5-mid" or "v5-high";
             wide=comparison=="v2-high";
         }
+        int triggerFrame=int.Parse(Environment.GetEnvironmentVariable("NOVA_WORKBENCH_TRIGGER_FRAME")??"2200");
         bool streamWorkload=fullDisk||comparison!=null;
         bool synchronizedStart=comparison!=null&&Environment.GetEnvironmentVariable("NOVA_WORKBENCH_SYNC")=="1";
         int releaseOffset=synchronizedStart?int.Parse(Environment.GetEnvironmentVariable("NOVA_WORKBENCH_RELEASE_OFFSET")??"0"):0;
@@ -111,7 +115,7 @@ internal static class WorkbenchGate
         {
             // Put the first file run just below 4 GiB. The second run
             // crosses the next 65,536-sector allocation group.
-            long boundary=comparison=="v3-mid"?Td64Boundary/2:Td64Boundary;
+            long boundary=comparison is "v5-mid"?Td64Boundary/2:Td64Boundary;
             uint hint=checked((uint)((boundary-partitionStart)/512-2));
             SaveFullDisk(media,image,hint);
         }
@@ -123,7 +127,7 @@ internal static class WorkbenchGate
         var cpu=benchmark?M68kCpuModel.M68020:M68kCpuModel.M68000;
         var results=new List<object>();
         uint publishedGeneration=0;
-        bool crossesBoundary=(wide||fullDisk)&&preparedMedia==null&&comparison!="v3-mid";
+        bool crossesBoundary=(wide||fullDisk)&&preparedMedia==null&&comparison is not ("v5-mid");
         byte[] phases=retirement?[210,1,0,213,211]:crossesBoundary&&!benchmark?(fullDisk?[1,0,210,211]:[0,210,211]):[210,211];
         foreach(byte expected in phases) {
             int cutBeforeBarrier=expected switch { 1=>0, 0=>1, _=>-1 };
@@ -161,7 +165,7 @@ internal static class WorkbenchGate
                 {
                     for(int frame=0;frame<18000&&marker is not (210 or 211 or 213 or >=240);frame++)
                     {
-                        if(synchronizedStart&&expected==210&&frame==2200)
+                        if(synchronizedStart&&expected==210&&frame==triggerFrame)
                         {
                             if(!armed||mutationStart!=0) throw new InvalidDataException("The workload did not wait for its timing trigger.");
                             void Trigger()
@@ -285,30 +289,40 @@ internal static class WorkbenchGate
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    private static byte[] CreateImage(byte[] handler)
+    private static byte[] CreateImage(byte[] handler,uint stackBytes=4096)
     {
-        byte[] partition=NovaImage.FormatPacked(16*1024*1024,reusableObjects:true),disk=new byte[PartitionOffset+partition.Length];
+        byte[] partition=NovaImage.FormatPacked(16*1024*1024),disk=new byte[PartitionOffset+partition.Length];
         using var stream=new MemoryStream(disk);
         AmigaRdbSetup.Initialize(stream);
-        void Put(int block,int at,uint value)=>BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(block*512+at),value);
-        int reserved=PartitionOffset/512, segments=(handler.Length+491)/492;
+        // Larger HUNKs need longer LSEG records on the emulated controller,
+        // which supports 128 links. DOS still uses 512-byte filesystem sectors.
+        int rdbBytes=handler.Length>128*492?1024:512, payload=rdbBytes-20;
+        void Put(int block,int at,uint value)=>BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(block*rdbBytes+at),value);
+        int reserved=PartitionOffset/rdbBytes, segments=(handler.Length+payload-1)/payload;
         if(segments+3>reserved) throw new InvalidDataException("Handler exceeds the fixture RDB reservation");
         Put(0,132,(uint)(reserved-1)); Put(0,136,4); Seal(disk,0);
         AmigaRdbSetup.AddPartition(stream,"CNP0",4,(uint)(disk.Length/32768-1),DosType,false);
+        if(rdbBytes!=512)
+        {
+            int part=(int)BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan(28));
+            disk.AsSpan(part*512,512).CopyTo(disk.AsSpan(part*rdbBytes));
+            disk.AsSpan(part*512,512).Clear();
+            Put(0,16,(uint)rdbBytes);
+        }
         Put(0,32,2); Put(0,152,(uint)(2+segments)); Seal(disk,0);
         Put(2,0,0x46534844); Put(2,4,64); Put(2,16,uint.MaxValue); Put(2,32,DosType);
-        Put(2,36,0x10000); Put(2,40,0x190); Put(2,60,4096); Put(2,72,3); Put(2,76,uint.MaxValue); Seal(disk,2);
+        Put(2,36,0x10000); Put(2,40,0x190); Put(2,60,stackBytes); Put(2,72,3); Put(2,76,uint.MaxValue); Seal(disk,2,rdbBytes);
         for(int i=0;i<segments;i++) {
-            int block=3+i,bytes=Math.Min(492,handler.Length-i*492);
+            int block=3+i,bytes=Math.Min(payload,handler.Length-i*payload);
             Put(block,0,0x4c534547); Put(block,4,(uint)(5+(bytes+3)/4)); Put(block,16,i+1==segments?uint.MaxValue:(uint)(block+1));
-            handler.AsSpan(i*492,bytes).CopyTo(disk.AsSpan(block*512+20)); Seal(disk,block);
+            handler.AsSpan(i*payload,bytes).CopyTo(disk.AsSpan(block*rdbBytes+20)); Seal(disk,block,rdbBytes);
         }
         partition.CopyTo(disk,PartitionOffset); return disk;
     }
 
-    private static void Seal(byte[] disk,int block)
+    private static void Seal(byte[] disk,int block,int rdbBytes=512)
     {
-        var page=disk.AsSpan(block*512,512);
+        var page=disk.AsSpan(block*rdbBytes,rdbBytes);
         int words=(int)BinaryPrimitives.ReadUInt32BigEndian(page[4..]);
         BinaryPrimitives.WriteUInt32BigEndian(page[8..],0);
         uint sum=0;
@@ -320,13 +334,14 @@ internal static class WorkbenchGate
     {
         uint first=checked((uint)(start/32768));
         uint last=checked(first+(uint)(bytes/32768)-1);
+        int rdbBytes=(int)BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan(16));
         int partition=checked((int)BinaryPrimitives.ReadUInt32BigEndian(disk.AsSpan(28)));
         BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(64),last+1);
         BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(140),last);
-        BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(partition*512+164),first);
-        BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(partition*512+168),last);
+        BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(partition*rdbBytes+164),first);
+        BinaryPrimitives.WriteUInt32BigEndian(disk.AsSpan(partition*rdbBytes+168),last);
         Seal(disk,0);
-        Seal(disk,partition);
+        Seal(disk,partition,rdbBytes);
     }
 
     private static void SaveImage(string media,byte[] image,long start)
@@ -366,6 +381,8 @@ internal static class WorkbenchGate
         public int Reads,Writes,Barriers;
         public int Td64Reads,Td64Writes;
         public bool WroteBelowBoundary,WroteAboveBoundary,ReadAboveBoundary;
+        public long PayloadStart=long.MaxValue;
+        public bool WrotePayloadBelowBoundary,WrotePayloadAboveBoundary;
         public long FirstPayloadGroup=long.MaxValue,LastPayloadGroup=-1;
         public bool FlushOnDispose=>false;
         public void ObserveOpen(int unit) {}
@@ -397,6 +414,11 @@ internal static class WorkbenchGate
             CheckRange(offset,bytes.Length);
             if(offset<start) throw new IOException("Unexpected write outside the CNP2 partition");
             Writes++; WroteBelowBoundary|=offset<Td64Boundary; WroteAboveBoundary|=offset+bytes.Length>Td64Boundary;
+            if(offset>=PayloadStart)
+            {
+                WrotePayloadBelowBoundary|=offset<Td64Boundary;
+                WrotePayloadAboveBoundary|=offset+bytes.Length>Td64Boundary;
+            }
             if(offset>=Td64Boundary-1024)
             {
                 FirstPayloadGroup=Math.Min(FirstPayloadGroup,(offset-start)>>25);

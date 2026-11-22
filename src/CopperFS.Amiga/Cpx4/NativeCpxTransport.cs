@@ -124,7 +124,11 @@ public static class NativeCpxTransport
         completed=0; unsupported=false; APTR s=State(arena),request=APTR.FromPointer(APTR.ReadUInt32(s,16));
         APTR.WriteUInt32(s,72,0);
         if(APTR.ReadUInt32(s,64)!=0) return Quiesce(arena)==StepResult.Pending?StepResult.Pending:StepResult.Failed;
+#if COPPERNOVA
+        if(io.Kind is IoKind.Discard or IoKind.QueryDiscard) { unsupported=true; return StepResult.Failed; }
+#else
         if(io.Kind is IoKind.Discard or IoKind.QueryDiscard) return NativeCpxUnmap.Service(arena,io,out completed,out unsupported);
+#endif
         if(Waiting(arena)) return ReapTransfer(arena,s,request,in io,out completed);
         if(APTR.ReadUInt32(s,48)!=io.Token) { APTR.WriteUInt32(s,48,io.Token); APTR.WriteUInt32(s,52,0); }
         if(io.Kind==IoKind.Flush)

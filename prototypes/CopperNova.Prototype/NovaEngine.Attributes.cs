@@ -45,7 +45,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             Zero(fib,260); if(R(Action)==24) m.Write32(fib,id);
             uint type=id==1?1u:m.Read16(p+6)==11?2u:0xfffffffdu,size=m.Read32(p+68);
             m.Write32(fib+4,type); m.Write32(fib+120,type); m.Write32(fib+124,size); m.Write32(fib+128,(size+511)>>9);
-            if(id!=1) return Load(256+m.Read32(p+108),55);
+            if(GrowingObjects) m.Copy(fib+144,p+ObjectComment,(uint)m.Read8(p+ObjectComment)+1);
+            if(id!=1) return Load(ObjectHome(DynamicIndex&&m.Read32(p+NameContainer)!=0?m.Read32(p+NameContainer):m.Read32(p+108)),55);
             uint name=m.Read32(R(Volume)+40)<<2; if(name!=0) { uint len=m.Read8(name); if(len>107) return Error(210); m.Copy(fib+8,name,len+1); }
             return Finish(uint.MaxValue);
         }
@@ -54,7 +55,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             while(at<end) { if(end-at<24) return Fatal(); uint len=m.Read16(at+20),step=(24+len+7)&~7u;
                 if(step>end-at||len==0) return Fatal(); if(m.Read32(at+4)==id) { if(len>107) return Error(210);
                     m.Write8(fib+8,(byte)len); m.Copy(fib+9,at+24,len);
-                    if(CommentIndex(id>>2,false)==0) return Finish(uint.MaxValue);
+                    if(GrowingObjects||CommentIndex(id>>2,false)==0) return Finish(uint.MaxValue);
                     return Load(2000+(id>>2),56); } at+=step; } return Fatal();
         }
         uint src=p+64+(id&3)*80; m.Copy(fib+144,src,(uint)m.Read8(src)+1); return Finish(uint.MaxValue);

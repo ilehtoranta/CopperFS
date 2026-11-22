@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><IsPackable>false</IsPackable></PropertyGroup>
   <PropertyGroup Condition="'$(PackedTreeGate)'=='true'"><DefineConstants>$(DefineConstants);PACKED_TREE_GATE</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(NovaTreeComparison)'=='true'"><DefineConstants>$(DefineConstants);NOVA_TREE_COMPARISON</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(NovaTreePayload)'=='true'"><DefineConstants>$(DefineConstants);NOVA_TREE_PAYLOAD</DefineConstants></PropertyGroup>
   <ItemGroup><ProjectReference Include="../CopperNova.Bench/CopperNova.Bench.csproj" /></ItemGroup>
 </Project>

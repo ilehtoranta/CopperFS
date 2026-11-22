@@ -14,7 +14,7 @@ The separate scalar correctness gate does not supply timing results. The
 CopperHDF backend does not charge physical seek, rotation or transfer latency;
 these are emulator/backend results, not physical Amiga storage rates.
 
-The packed CNP2 prototype uses a fixed 115,200-byte arena, startup-owned I/O
+The packed CNP2 prototype uses a fixed 113,408-byte arena, startup-owned I/O
 resources and the device's DMA constraints. The 32 DOS-buffer setting does not
 equalize handler cache memory. The reference handlers retain their own policies.
 Independent post-run checks cover both prototype files, full ownership/counters,
