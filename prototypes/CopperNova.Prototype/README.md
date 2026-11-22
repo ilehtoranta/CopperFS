@@ -50,12 +50,15 @@ is used. The mixed fixture changes seven distinct metadata pages.
 
 ## Execution and durability
 
-The caller must supply a cleared, longword-aligned, exclusively owned 115,200-byte arena for a fresh
-mount. All operation state, caches, CRC tables, resource records, journal images
-and allocation quarantine live there. The native adapter obtains it at startup;
-operations allocate nothing. There are 64 cache slots, at most 48 dirty images,
-32 handles and 32 locks. One continuation examines only fixed-size structures
-or a bounded bitmap window and yields for external I/O. Files are transferred
+The caller must supply a cleared, longword-aligned, exclusively owned 113,408-byte arena for a fresh
+mount. It holds operation state, caches, CRC tables, journal images, allocation
+quarantine, and hash buckets for live handles and locks. There are 64 cache slots
+and at most 48 dirty images.
+
+The core takes a caller-owned 48-byte record for each open or lock. The Amiga
+adapter allocates these from Exec and frees them on close, unlock or packet
+failure. The number of live records is limited by available RAM. Reads, writes,
+and Flush use existing storage. Files are transferred
 in chunks no larger than 64 KiB. Path traversal processes at most four resident directories per visit. Same-parent rename resolves its destination after saving the source entry.
 
 CRC addresses and common execution fields stay local within bounded work
@@ -94,16 +97,46 @@ an earlier group before retrying admission. A request spanning multiple transfer
 can complete a prefix; a later I/O error retains that completed byte count.
 Private packet/file-handle/data-buffer aliases are rejected before I/O or edits.
 
+## CNP2 v6 namespace growth
+
+On an empty CNP2 partition, run `CopperNovaFormat CNP0: INITIALIZE`. Both formatters create v6 and the handler accepts only this CNP2 revision. Use a matching older handler to copy existing files to a fresh v6 partition.
+
+A v6 index leaf contains 60 object slots. The first leaf is part of the empty volume. The first new object in each subsequent leaf allocates four consecutive sectors for a private object pair and a shadowed index pair. Later objects in that leaf reserve one pair each. Each allocation bitmap has 32 leaf pointers after its allocation bits. These pointers let the index grow with the partition. The implementation also bounds object IDs by half the partition's sector count and by the cache-key encoding.
+
+An index entry can hold an empty file, an empty directory or a reusable slot. Objects with data, attributes or children use a private sector pair. Deleting a file releases its payload sectors and keeps the pair with the reusable object ID. Flush writes changed objects, shadow indexes and allocation pages before the first device barrier. It then publishes their common root and waits for the second barrier before acknowledging Flush.
+
+A directory first uses its 192 inline bytes for names. When needed, it links additional name pages by a case-insensitive hash with 16 chains. These internal pages consume object slots and retain their space for reuse until the directory is deleted. DOS sees the logical directory as the parent. Enumeration uses stable object IDs across renames and deletions.
+
+Explicit Flush writes changed objects and index leaves to shadow sectors, updates the shadow allocation metadata that selects those leaves, and waits for the first device barrier. It writes the common root and waits for the second barrier before acknowledging success.
+
+The Kickstart runner accepts a total file count and a maximum file count per directory. Use a fresh output directory for each command.
+
+~~~text
+CopperNova.Qualification format-scale-v6 <handler> <formatter> <ROM> <output> 64 64
+CopperNova.Qualification scale-v6 <handler> <ROM> <output> 4096 4096
+CopperNova.Qualification scale-v6 <handler> <ROM> <output> 122880 128
+CopperNova.Qualification fragmented-file <handler> <ROM> <output>
+~~~
+
+On emulated Kickstart 2.04 (68000), the native formatter initialized a v6 volume for the 64-file single-directory test. The same handler passed a 4,096-file single-directory test and a 122,880-file partition test with 128 files per directory. The partition-wide test used 2,487 index leaves. Each run checked explicit Flush, power cuts before both barriers, cold reopen and deletion, and a final cold lookup of every deleted name with zero writes. The tests verified sampled payloads. The large hardfiles exercised TD64 across 4 GiB using 512-byte filesystem sectors and 1,024-byte RDB metadata blocks. Physical hardware coverage remains open.
+
+The fragmented-file gate alternates 512-byte writes to two files, checks that each has 64 distinct extents, and cold-reads every byte. It cuts power before each publication barrier during creation and deletion, then verifies the surviving file on a fresh Kickstart 2.04 boot.
+
 ## Deliberate prototype limits
 
 This is a benchmark-capable metadata prototype, not a feature-complete filesystem:
 
-- One group, 512-byte sectors, 2–32 MiB volumes; both comparisons use 16 MiB.
-- Up to 1,022 ordinary live objects. CNM1 and CNP2 root version 1 allocate monotonically. CNP2 root version 2 reuses deleted IDs after checking live locks and handles.
-- ASCII names stored inline, at most 168 bytes per component and a 255-byte DOS
-  path. The 192-byte directory payload limits the number/length of entries.
-- Eight inline extents. Overflow directory/extent trees and string continuations
-  from the wider study are not implemented; capacity is rejected explicitly.
+- All layouts use 512-byte sectors. The single-group benchmarks use 16 MiB. Wide CNP2 volumes use multiple allocation groups.
+- Object-index leaves and directory pages grow on demand as described above.
+- ASCII names allow at most 168 bytes per component and a 255-byte DOS path.
+- CNP2 keeps the newest eight extents inline. When another run is needed,
+  it writes the full inline list to a new immutable 512-byte page. Each
+  page identifies its file and the preceding logical range. The first
+  Flush barrier covers payload, extent pages and allocation metadata. The
+  second makes the root referencing those changes durable. Shrinking a
+  file moves the surviving tail back inline and frees surplus pages.
+  Random access to older runs walks the chain. The file size limit is
+  2 GiB minus one byte.
 - Create directories/files, shared locks, open/read/write/seek, shrink, same-parent
   rename to an unused name, close, flush, inhibit/remount and shutdown are supported.
 - CNP2 also supports directory enumeration and cross-directory moves. Root version 2 adds deletion and reuse.
@@ -135,6 +168,12 @@ dotnet test prototypes/CopperNova.Tests/CopperNova.Tests.csproj -c Release
 ./build/Benchmark-NovaPrototype.ps1 -Packed -Workload stream -EvidenceRoot '<retained CopperFS artifacts>' -Rom '<licensed Kickstart 3.1 ROM>'
 $env:NOVA_PACKED='1'
 dotnet tools/CopperNova.Qualification/bin/Release/net10.0/CopperNova.Qualification.dll artifacts/nova-prototype-handler/CopperNovaPrototype '<licensed ROM>' artifacts/nova-rom-gate
+```
+
+The Kickstart 2.04 formatter replay starts with a blank partition, an RDB-installed handler with a 600-byte startup stack, and a DOS startup floppy. It runs CopperNovaFormat and checks the v6 root before exercising the namespace. It creates 3,125 files across nested directories, cuts power at both publication barriers, then cold-boots to delete the files and confirm their absence.
+
+```powershell
+dotnet run -c Release --project tools/CopperNova.Qualification -- format-object-growth artifacts/nova-prototype-handler/CopperNovaPrototype artifacts/nova-prototype-handler/CopperNovaFormat '<licensed Kickstart 2.04 ROM>' artifacts/nova-object-growth
 ```
 
 The native build checks zero reachable managed allocation sites and records

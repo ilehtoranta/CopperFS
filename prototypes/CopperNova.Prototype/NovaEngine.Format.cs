@@ -21,7 +21,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
 
     public CpxError BeginFormat(uint identityHigh, uint identityLow)
     {
-        if (!CanFormat || WideDataFloor >= R(Blocks))
+        if (!CanFormat || GrowDataFloor >= R(Blocks))
             return CpxError.InvalidArgument;
 
         // Once writes start, a failure requires a new mount and fresh root
@@ -42,12 +42,13 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         {
             case 1300:
                 Zero(page, 512);
-                m.Write16(page + 32, 64);
-                m.Write16(page + 40, 1);
-                m.Write8(page + 42, 11);
-                m.Write16(page + 44, 24);
-                m.Write16(page + 46, 1);
-                return WriteFormatPage(page, 194, 32, 0, 1301);
+                m.Write16(page + 32, 11);
+                m.Write32(page + 108, 1);
+                return WriteFormatPage(page, 194, ObjectImageType, 1, 1306);
+            case 1306:
+                Zero(page, 512);
+                m.Write32(page + 32, 194);
+                return WriteFormatPage(page, ObjectIndexStart, ObjectIndexType, 0, 1301);
             case 1301:
                 Zero(page, 512);
                 W(Index, 0);
@@ -71,7 +72,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
                     return Issue(IoKind.Flush, 0, 0, 0, 1304);
 
                 Zero(page, 512);
-                uint first = window << 11, floor = WideDataFloor, end = R(Blocks) - first;
+                uint first = window << 11, floor = GrowDataFloor, end = R(Blocks) - first;
                 if (first < floor)
                 {
                     // The metadata floor is window aligned.
@@ -85,17 +86,17 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
                     for (uint n = (end + 7) >> 3; n < 256; n++)
                         m.Write8(page + 128 + n, 255);
                 }
+                if(window==0) m.Write32(page+384,ObjectIndexStart);
                 W(Index, window + 1);
                 return WriteFormatPage(page, WideBitmapStart + window * 2, 34, window, 1303);
             }
             case 1304:
                 Zero(page, 512);
                 m.Write32(page + 64, R(Blocks));
-                m.Write32(page + 68, WideDataFloor);
-                m.Write32(page + 72, R(Blocks) - WideDataFloor);
+                m.Write32(page + 68, GrowDataFloor);
+                m.Write32(page + 72, R(Blocks) - GrowDataFloor);
                 m.Write32(page + 76, 1);
                 m.Write16(page + 96, WideTopStart);
-                m.Write16(page + 160, 194);
                 return WriteFormatPage(page, 0, 30, 0, 1305);
             case 1305:
                 return Issue(IoKind.Flush, 0, 0, 0, 100);
@@ -107,7 +108,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult WriteFormatPage(uint page, uint sector, uint type, uint owner, uint next)
     {
         m.Write32(page, PackedMagic);
-        m.Write16(page + 4, type == 30 ? 3u : 1u);
+        m.Write16(page + 4, type == 30 ? 6u : 1u);
         m.Write16(page + 6, type);
         m.Write32(page + 12, sector);
         m.Write32(page + 20, owner);

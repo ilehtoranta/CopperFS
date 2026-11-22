@@ -2,14 +2,16 @@ Short:        CopperNova CNP2 filesystem preview
 Author:       Ilkka Lehtoranta
 Uploader:     ilkleht@gmail.com (Ilkka Lehtoranta)
 Type:         disk/misc
-Version:      1.0-preview.4
+Version:      1.0-preview.7
 Requires:     AmigaOS 2.04, 68000 or newer, TD64-capable disk driver
 Architecture: m68k-amigaos >= 2.04
 
 CopperNova is a new MIT-licensed Amiga filesystem written in C#.
-This preview uses CNP2 root version 3 with wide extents and multi-group
-allocation. The disk driver must support TD64 reads and writes and
-CMD_UPDATE for Flush, including on partitions below 4 GiB.
+CopperNovaFormat creates CNP2 v6 partitions with growing directories,
+an on-demand object index, wide extents and multi-group allocation.
+The disk driver must support
+TD64 reads and writes and CMD_UPDATE for Flush, including on partitions
+below 4 GiB.
 It supports creating, deleting and moving files and directories, file
 reads and writes, enumeration, and explicit Flush.
 
@@ -24,7 +26,7 @@ THIRD-PARTY-NOTICES.txt  CopperSharp license
 Installation
 
 1. Use HDToolBox or your controller's RDB tool on a spare disk or image.
-   Create a fresh, empty partition larger than 2 MiB with 512-byte
+   Create a fresh, empty partition larger than 3 MiB with 512-byte
    filesystem blocks.
    Leave Bootable off. Use your controller's Mask and MaxTransfer values.
 2. In HDToolBox, open Partition Drive, enable Advanced Options and use
@@ -49,11 +51,17 @@ Current limitations
 
 - 512-byte sectors. The demo partition is 4 GiB + 64 MiB.
   Larger geometries and physical controllers have yet to be qualified.
-- Up to 1,022 live objects. Names are ASCII, with up to 168 bytes per
-  component and a 255-byte DOS path. Each directory has 192 bytes for
-  name records, which can limit it to a few entries with long names.
-- Up to eight extents and 2 GiB minus one byte per file. A fragmented file
-  can reach the extent limit before the disk fills.
+- A fresh volume starts with one index leaf. The index and directory
+  pages grow as needed. Kickstart 2.04 tests covered 122,880 files on one
+  partition and 4,096 files in one directory.
+- To migrate a v1-v5 volume, use its matching handler to copy the files
+  to a separate, freshly initialized v6 partition.
+- Open files and locks use one 48-byte record each, allocated as needed.
+  Available RAM limits how many can be held at once.
+- ASCII names support up to 168 bytes per component and 255 per DOS path.
+- Files support up to 2 GiB minus one byte. The inode stores eight
+  extents inline. Fragmented files allocate additional 512-byte extent
+  pages as needed.
 - Links, sparse growth, grow-by-resize, extended attributes, notifications,
   record locking, automatic TRIM and removable-media change handling are
   outside this preview.
@@ -63,9 +71,11 @@ Current limitations
 - Experimental images may need to be recreated for future releases.
   Keep independent copies of your files.
 
-The preview was tested with a fresh HDToolBox install on Kickstart
-2.04, including TD64 writes across 4 GiB, explicit Flush, and recovery
-after simulated power cuts. Physical hardware and storage qualification
-remain open.
+On emulated Kickstart 2.04, CopperNovaFormat initialized a blank RDB
+partition. Tests covered explicit Flush, TD64 access across 4 GiB and
+recovery after simulated power cuts before both publication barriers.
+The handler held 96 open files and 96 locks simultaneously and rejected
+resource allocation failures without changing files. Physical hardware
+and storage qualification remain open.
 
 Source code is at https://github.com/ilehtoranta/CopperFS

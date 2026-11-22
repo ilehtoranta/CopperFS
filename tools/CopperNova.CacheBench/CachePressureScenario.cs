@@ -14,6 +14,8 @@ public sealed class CachePressureScenario
     public byte[] Disk=NovaImage.Format();
     private readonly Ram memory=new(new byte[1048576]);
     private NovaEngine<Ram> engine;
+    private uint nextResource=0xe0000;
+    private readonly Stack<uint> freeResources=new();
     private int metadataReads,dataReads,writes,barriers,steps;
     public CachePressureScenario() { engine=new(memory,Arena); engine.Bind((uint)Disk.Length/512,0x800,0x900); }
     public void UseSeed(byte[] disk)
@@ -43,7 +45,16 @@ public sealed class CachePressureScenario
     private uint Packet(uint action,uint a=0,uint b=0,uint c=0)
     {
         memory.Write32(PacketAt+8,action); memory.Write32(PacketAt+20,a); memory.Write32(PacketAt+24,b); memory.Write32(PacketAt+28,c);
-        Require(engine.BeginPacket(PacketAt)==CpxError.None); Drive(); return engine.Result;
+        uint resource=0;
+        if(NovaEngine<Ram>.NeedsPacketResource(action)&&!freeResources.TryPop(out resource))
+        {
+            resource=nextResource;
+            nextResource+=NovaEngine<Ram>.PacketResourceBytes;
+        }
+        Require(engine.BeginPacket(PacketAt,resource)==CpxError.None);
+        Drive();
+        if(engine.ReleasedPacketResource!=0) freeResources.Push(engine.ReleasedPacketResource);
+        return engine.Result;
     }
     private void Name(string value)
     { byte[] text=Encoding.ASCII.GetBytes(value); memory.Write8(NameAt,(byte)text.Length); text.CopyTo(memory.Bytes,(int)NameAt+1); }

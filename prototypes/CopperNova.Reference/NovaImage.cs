@@ -64,7 +64,7 @@ public static partial class NovaImage
         Header(image,58,20); Put(image,58*512+72,0); Seal(image,58);
         Header(image,116,22); Put(image,116*512+64,U32(image,58*512+8)); Put(image,116*512+68,58); Seal(image,116);
     }
-    public sealed record Entry(string Path,bool Directory,uint Slot,long Size,string? Sha256) { public string? Comment {get;init;} }
+    public sealed record Entry(string Path,bool Directory,uint Slot,long Size,string? Sha256) { public string? Comment {get;init;} public int Extents {get;init;} }
     public sealed record CheckResult(uint Generation,int AllocatedInodes,uint DataSectors,uint FreeSectors,IReadOnlyList<Entry> Entries);
     public static CheckResult Check(byte[] image)
     {

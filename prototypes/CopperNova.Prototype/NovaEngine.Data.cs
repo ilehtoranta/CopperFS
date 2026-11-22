@@ -41,14 +41,22 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         bool write=m.Read32(state+Action)==87;
         switch(phase)
         {
-            case 300:
+            case 300: case 314:
             {
                 if(remaining==0) return Finish(progress);
                 uint position=m.Read32(handle+8),size=m.Read32(inode+68);
                 if(!write&&position>=size) return Finish(progress);
                 if(write&&(position>size||remaining>0x7fffffffu-position)) return Error(219);
                 uint intra=position&511;
-                if(Map(inode,position>>9,out uint disk,out uint available))
+                uint mappings=inode;
+                if(phase==314)
+                {
+                    mappings=Ptr(ExtentBuffer);
+                    if(!VerifiedPrefix(inode,mappings)) return Fatal();
+                }
+                if(GrowingObjects && (position>>9)<m.Read32(mappings+PrefixEnd))
+                    return ReadPrefix(mappings,314);
+                if(Map(mappings,position>>9,out uint disk,out uint available))
                 {
                     uint take=(available<<9)-intra;
                     if(take>remaining) take=remaining;
@@ -156,6 +164,19 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 m.Write32(handle+8,end); m.Write32(state+DataProgress,progress+take);
                 return take==remaining||(!write&&end>=m.Read32(inode+68))?Finish(progress+take):Next(300);
             }
+            case 315:
+            {
+                uint bitmap=R(Bitmap),selector=R(WideActiveSelector),sector=R(DataPhysical),group=R(Group);
+                SetRange(bitmap+128,sector&2047,1,true);
+                DirtyWideBitmap(bitmap,sector>>11,selector);
+                ReleaseWideAllocation(bitmap,selector);
+                m.Write32(group+72,m.Read32(group+72)-1); Dirty(group);
+                m.Write32(inode+PrefixLink,sector);
+                m.Write32(inode+PrefixEnd,m.Read32(handle+8)>>9);
+                Zero(inode+320,192); m.Write32(inode+96,0); Dirty(inode);
+                W(AllocationHint,sector+1);
+                return Next(300);
+            }
             case 305:
             {
                 uint windowOffset = ((R(DataPhysical) - R(PartialStart)) << 9) + R(DataIntra);
@@ -216,7 +237,19 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if(units==0) return Fatal();
                 uint count=m.Read32(inode+96),last=count==0?0:ExtentAt(inode,count-1),logical=m.Read32(handle+8)>>9;
                 bool append=last!=0&&m.Read32(last+4)+m.Read32(last+16)==logical&&m.Read32(last+12)+m.Read32(last+16)==candidate;
-                if(!append&&count==8) return TransferError(221);
+                if(!append&&count==8)
+                {
+                    if(!GrowingObjects || m.Read32(R(Group)+72)<2) return TransferError(221);
+                    uint page=Ptr(ExtentBuffer);
+                    Zero(page,512);
+                    m.Write32(page+PrefixLink,m.Read32(inode+PrefixLink));
+                    m.Write32(page+PrefixEnd,m.Read32(inode+PrefixEnd));
+                    m.Write32(page+96,8);
+                    m.Copy(page+320,inode+320,192);
+                    Stamp(page,ExtentPageType,candidate,m.Read32(inode+28),R(Generation));
+                    W(Bitmap,bitmap); W(DataPhysical,candidate);
+                    return Issue(IoKind.Write,candidate,page,512,315);
+                }
                 if(m.Read32(m.Read32(state+Group)+72)<units||m.Read32(state+DirtyCount)>(wide?44u:45u))
                     return TransferError(221);
                 uint take=units<<9; if(take>remaining) take=remaining;
@@ -246,6 +279,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if (R(PartialDirty) != 0) return DrainPartial(400);
                 m.Write32(state+Group,m.Read32(state+Loaded));
                 if(m.Read16(m.Read32(state+Group)+6)!=3) return Fatal();
+                if(GrowingObjects && m.Read32(inode+PrefixLink)!=0) return BeginPrefixRetirement();
                 W(WideRetirePages,0);
                 m.Write32(state+ExtentIndex,0); m.Write32(state+ResizeFree,0); m.Write32(state+ResizeCursor,0); goto case 401;
             case 401:
@@ -319,6 +353,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 uint resume=R(Resume);
                 return R(WideStreaming)!=0&&resume!=67?FinishWideRetirement(resume):Next(resume);
             }
+            case >=430 and <=439: return RetirePrefix(phase);
             case 420: case 421: case 422: case 423: return StreamWideRetirement(phase);
             default: return Fatal();
         }

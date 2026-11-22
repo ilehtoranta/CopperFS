@@ -15,21 +15,21 @@ public static class NativeNovaFormat
 
         DOS.DOSLibraryBase = dos;
         APTR args = DOS.AllocDosObject((uint)DosObjectType.RdArgs, APTR.Null);
-        APTR values = APTR.FromPointer(Exec.AllocMem(8, Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear));
+        APTR values = APTR.FromPointer(Exec.AllocMem(12, Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear));
         int result = 20;
         if (args.IsNotNull && values.IsNotNull)
         {
             APTR.WriteUInt32(args, DosLayout.CSource.Buffer, commandLine.Raw);
             APTR.WriteUInt32(args, DosLayout.CSource.Length, (uint)length);
             APTR.WriteUInt32(args, DosLayout.RDArgs.Flags, (uint)DosRdArgsFlags.NoPrompt);
-            APTR parsed = DOS.ReadArgs("DEVICE/A,INITIALIZE/S", values, args);
+            APTR parsed = DOS.ReadArgs("DEVICE/A,INITIALIZE/S,V6/S", values, args);
             if (parsed.IsNull || APTR.ReadUInt32(values, 4) == 0)
                 DOS.PutStr("Usage: CopperNovaFormat DEVICE <partition:> INITIALIZE\n");
             else
                 result = Initialize(APTR.FromPointer(APTR.ReadUInt32(values, 0)));
             if (parsed.IsNotNull) DOS.FreeArgs(parsed);
         }
-        if (values.IsNotNull) Exec.FreeMem(values.Raw, 8);
+        if (values.IsNotNull) Exec.FreeMem(values.Raw, 12);
         if (args.IsNotNull) DOS.FreeDosObject((uint)DosObjectType.RdArgs, args);
         Exec.CloseLibrary(dos);
         return result;
@@ -56,7 +56,7 @@ public static class NativeNovaFormat
         const int action = (int)NovaEngine<NativeCpxMemory>.InitializeCnp2;
         const int cnp2 = (int)NovaEngine<NativeCpxMemory>.PackedMagic;
         bool ready = port.IsNotNull && DOS.DoPkt2(port, action, cnp2, 0) == cnp2;
-        bool success = ready && DOS.DoPkt2(port, action, cnp2, 1) != 0;
+        bool success = ready && DOS.DoPkt2(port, action, cnp2, 6) != 0;
         DOS.Error error = DOS.IoErr();
         APTR.WriteUInt32(process, 184, window);
         if (success)

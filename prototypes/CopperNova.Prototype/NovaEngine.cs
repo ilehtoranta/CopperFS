@@ -9,14 +9,14 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
 {
     private TMemory m;
     public uint Arena;
-    public const uint ArenaBytes=115200, Magic=0x434E4D31, PackedMagic=0x434E5032;
+    public const uint ArenaBytes=113408, Magic=0x434E4D31, PackedMagic=0x434E5032;
     public const uint FirstData=1280;
     private uint DataStart=>R(DataFloor);
     public uint VolumeMagic=>PackedVolume?PackedMagic:Magic;
-    private const uint State=8192, Handles=9216, Locks=11264, Path=12800, OtherPath=13056,
+    private const uint State=8192, Path=12800, OtherPath=13056,
         RenameBuffer=13312, CacheMeta=14336, CacheImages=16384,
-        Descriptors=49152, Controls=50176, Scratch=53248, CrcTable=90112,
-        FlushList=54784, JournalImages=57344, Quarantine=81920;
+        Descriptors=49152, Controls=50176, Scratch=53248, CrcTable=88832,
+        JournalImages=56064, Quarantine=80640;
     private const uint Phase=0, BusyAt=4, Waiting=8, Token=12, NextToken=16,
         Poison=20, Mounted=24, Generation=28, Blocks=32, IdentityHi=36, IdentityLo=40,
         Packet=44, Port=48, Volume=52, ResultAt=56, ErrorAt=60, Epoch=64,
@@ -31,7 +31,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         DataIntra=204, Inode=208, NewAllocation=212, Bitmap=216, Group=220,
         Wanted=224, Candidate=228, Searched=232, AllocationUnits=236,
         OldPosition=240, FreePending=244, ResizeLength=248, ExtentIndex=252,
-        ResizeCursor=256, ResizeRemaining=260, ResizeFree=264, ResourceSerial=268,
+        ResizeCursor=256, ResizeRemaining=260, ResizeFree=264, Released=268,
         MountReturn=272, ClearAt=276, CancelAt=280, CrcReady=284, CrcWord=288, CacheHand=292,
         QuarantineEpoch=296, QuarantineTags=320, DirtySlots=13760;
 
@@ -61,14 +61,17 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         W(FormatState,probeBlankCnp2?1u:0u);
         W(Packet,0); W(BusyAt,1); W(Phase,100); W(MountReturn,900); return CpxError.None;
     }
-    public CpxError BeginPacket(uint packet)
+    public CpxError BeginPacket(uint packet,uint resource=0)
     {
         uint state=Arena+State;
         if(m.Read32(state+BusyAt)!=0||m.Read32(state+Waiting)!=0) return CpxError.Busy;
         if((packet&1)!=0||!ExternalRange(packet,48)) return CpxError.InvalidArgument;
+        uint action=m.Read32(packet+8);
+        if(resource!=0&&(!NeedsPacketResource(action)||(resource&3)!=0||!ExternalRange(resource,PacketResourceBytes)||
+            ResourceOverlaps(resource,PacketResourceBytes,packet,48))) return CpxError.InvalidArgument;
         uint epoch=m.Read32(state+Epoch); if(epoch==uint.MaxValue) return CpxError.ResourceExhausted;
-        m.Write32(state+Packet,packet); m.Write32(state+Action,m.Read32(packet+8)); m.Write32(state+BusyAt,1); m.Write32(state+Phase,0);
-        m.Write32(state+ResultAt,0); m.Write32(state+ErrorAt,0); m.Write32(state+CancelAt,0); m.Write32(state+ReservedResource,0); m.Write32(state+DataProgress,0);
+        m.Write32(state+Packet,packet); m.Write32(state+Action,action); m.Write32(state+BusyAt,1); m.Write32(state+Phase,0);
+        m.Write32(state+ResultAt,0); m.Write32(state+ErrorAt,0); m.Write32(state+CancelAt,0); m.Write32(state+ReservedResource,resource); m.Write32(state+Released,0); m.Write32(state+DataProgress,0);
         m.Write32(state+Epoch,epoch+1); return CpxError.None;
     }
     public void Cancel() { W(CancelAt,1); }
@@ -96,11 +99,14 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private bool ExternalRange(uint p,uint bytes)
     {
         if(bytes==0) return true;
-        return p!=0&&bytes<=uint.MaxValue-p&&(p>=Arena+ArenaBytes||p+bytes<=Arena);
+        return p!=0&&bytes<=uint.MaxValue-p&&(p>=Arena+ArenaBytes||p+bytes<=Arena)&&
+            ExternalToResources(p,bytes);
     }
     private StepResult Finish(uint result,uint error=0)
     {
         uint state=Arena+State,packet=m.Read32(state+Packet);
+        uint unused=m.Read32(state+ReservedResource);
+        if(unused!=0) { m.Write32(state+Released,unused); m.Write32(state+ReservedResource,0); }
         m.Write32(state+ResultAt,result); m.Write32(state+ErrorAt,error); m.Write32(state+BusyAt,0);
         if(packet!=0) { m.Write32(packet+12,result); m.Write32(packet+16,error); }
         return StepResult.Complete;
@@ -132,6 +138,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private StepResult Dispatch(uint phase)
     {
         if(phase<100) return PacketStep(phase);
+        if(phase is >=1400 and <1500) return ObjectTableStep(phase);
         if(phase>=1300) return FormatStep(phase);
         if(phase>=1100) return PackedStep(phase);
         if(phase>=100&&phase<200) return MountStep(phase);
@@ -149,11 +156,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         return PacketStep(phase);
     }
     private StepResult FailMount() { W(BusyAt,0); W(Mounted,0); return StepResult.Failed; }
-    // One byte for each possible decoded metadata address, between the flush list and journal images.
-    private const uint Resident=55040, ResidentCount=2256;
+    // One byte for each possible decoded metadata address, immediately before the journal images.
+    private const uint Resident=53760, ResidentCount=2256;
     private int Find(uint home)
     {
-        if(home>=ResidentCount) return home>=WideSelectorKey&&WideVolume?FindWide(home):-1;
+        if(home>=ResidentCount) return home>=ObjectKey&&WideVolume?FindWide(home):-1;
         uint value=m.Read8(Arena+Resident+home);
         if(value==0) return -1;
         uint slot=value-1;
@@ -166,7 +173,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     }
     private int ReserveSlot(uint home)
     {
-        if(home>=ResidentCount&&(home<WideSelectorKey||!WideVolume)) return -1;
+        if(home>=ResidentCount&&(home<ObjectKey||!WideVolume)) return -1;
         uint used=R(CacheUsed); int chosen=-1;
         if(used<64) { chosen=(int)used; W(CacheUsed,used+1); }
         // +12 is the existing last-access packet epoch; +16 is the epoch last
@@ -219,7 +226,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         }
         // Reserve directly after the lookup miss.
         int reserve=ReserveSlot(home);
-        if(reserve<0) return R(WideStreaming)!=0?Fatal():Error(103);
+        if(reserve<0) return R(WideStreaming)!=0||R(IndexSealing)!=0?Fatal():Error(103);
         m.Write32(state+LoadSlot,(uint)reserve); m.Write32(state+LoadHome,home); m.Write32(state+LoadNext,next);
         if(PackedVolume) return Next(1100);
         return Issue(IoKind.Read,home,Arena+CacheImages+((uint)reserve<<9),512,1000);
@@ -239,7 +246,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     // A row is the zero-seeded CRC contribution of the last byte of
     // one word at its final position in a 512-byte sector. Moving that
     // byte earlier by a lane advances its CRC through one more zero.
-    private const uint WordTable=98304, OnesTable=WordTable+16384;
+    // The 128 CRC words fit exactly between the 64 dirty-slot bytes and CacheMeta.
+    private const uint OnesTable=DirtySlots+64, WordTable=97024;
     private uint SectorCrc(uint page)
     {
         uint end=page+512;
@@ -317,7 +325,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             m.Read32(p+40)==R(IdentityHi)&&m.Read32(p+44)==R(IdentityLo)&&m.Read32(p+8)==Crc(p,512,true);
     }
     private bool MetadataHome(uint home)=>home is >=128 and <=161 or >=256 and <1280;
-    private bool ValidInodeIdentity(uint p,uint slot)=>slot is >0 and <1024&&m.Read32(p+24)==1&&m.Read32(p+28)==slot&&m.Read32(p+64)==0;
+    private bool ValidInodeIdentity(uint p,uint slot)=>slot>0&&slot<=LastObjectSlot&&m.Read32(p+24)==1&&m.Read32(p+28)==slot&&m.Read32(p+64)==0;
     private bool ValidInode(uint p,uint slot)=>ValidInodeIdentity(p,slot)&&m.Read16(p+6) is 10 or 11&&m.Read32(p+96)<=8;
     private uint NameHash(uint p,uint bytes) { uint value=0,end=p+bytes; while(p<end) { uint c=m.Read8(p++); if(c is >=97 and <=122)c-=32; value=unchecked((value<<5|value>>27)+c); } return value; }
     private bool NameEqual(uint a,uint b,uint bytes) { uint end=a+bytes; while(a<end) { uint x=m.Read8(a++),y=m.Read8(b++); if(x==y)continue; if(x is >=97 and <=122)x-=32; if(y is >=97 and <=122)y-=32; if(x!=y)return false; } return true; }

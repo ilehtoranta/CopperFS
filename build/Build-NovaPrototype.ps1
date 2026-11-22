@@ -7,7 +7,7 @@ $ArtifactRoot=[IO.Path]::GetFullPath($ArtifactRoot)
 New-Item -ItemType Directory -Path $ArtifactRoot -Force | Out-Null
 $inputs=Join-Path $ArtifactRoot 'inputs'
 $sourcePaths=@(Get-ChildItem -LiteralPath (Join-Path $repo 'prototypes/CopperNova.Prototype'),(Join-Path $repo 'prototypes/CopperNova.Native') -Filter '*.cs' -File)
-$sourcePaths+=@('NativeCpxMemory.cs','NativeCpxIo.cs','NativeCpxTransport.cs','NativeCpxUnmap.cs') | ForEach-Object { Get-Item -LiteralPath (Join-Path $repo "src/CopperFS.Amiga/Cpx4/$_") }
+$sourcePaths+=@('NativeCpxMemory.cs','NativeCpxIo.cs','NativeCpxTransport.cs') | ForEach-Object { Get-Item -LiteralPath (Join-Path $repo "src/CopperFS.Amiga/Cpx4/$_") }
 $sourcePaths+=Get-ChildItem -LiteralPath (Join-Path $repo 'src/CopperCPX.Core') -Filter '*.cs' -File
 $sourcePaths+=Get-Item -LiteralPath (Join-Path $repo 'prototypes/CopperFS.Prototype/WideMath32.cs')
 function SourceHashes { @($sourcePaths | Sort-Object FullName | ForEach-Object { @{Path=[IO.Path]::GetRelativePath($repo,$_.FullName);Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} }) }
@@ -20,7 +20,7 @@ dotnet build (Join-Path $repo 'src/CopperFS.Amiga/CopperNova.Prototype.Amiga.csp
 if($LASTEXITCODE -ne 0) { throw 'Prototype managed build failed' }
 $cli=Join-Path $CopperSharpRoot 'Compiler.Cli/bin/Release/net10.0/CopperSharp.Compiler.Cli.dll'
 $output=Join-Path $ArtifactRoot 'CopperNovaPrototype'
-$nativeArguments=@($cli,(Join-Path $inputs 'CopperNova.Prototype.Amiga.dll'),'--entry','CopperNova.Amiga.NativeNovaHandler::Entry','--platform','amiga','--cpu','68000','--clr','always','--peephole','fixed-point','--fpu','disabled','--exceptions','yolo','--format','hunk','--runtime','freestanding','--memory','none','--include-export','coppernova.handler','--symbols','off','--code-size-optimizations','on','--code-size-passes','ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis','--output',$output,'--compatibility-report',(Join-Path $ArtifactRoot 'compatibility.json'))
+$nativeArguments=@($cli,(Join-Path $inputs 'CopperNova.Prototype.Amiga.dll'),'--entry','CopperNova.Amiga.NativeNovaHandler::Entry','--platform','amiga','--cpu','68000','--clr','always','--peephole','fixed-point','--fpu','disabled','--exceptions','yolo','--format','hunk','--runtime','freestanding','--memory','none','--include-export','coppernova.handler','--symbols','off','--code-size-optimizations','on','--code-size-passes','ElideUnusedRegisterArguments,ReuseIncomingArgumentHomes,InlineSingleUseMethods,ForwardReadOnlyAggregateLocals,RemoveRedundantTransport,CompactPrivateStackCopies,CompactGuestMemory,NarrowOperations,EliminateRedundantInitialization,InlineMemoryHelpers,SimplifyLoopPhis,CompactFrameHomeInitialization,ShareArithmeticCores,ShareReturnSequences,ShareIdenticalMethods,ClusterInternalCalls,SizeFirstCosts','--output',$output,'--compatibility-report',(Join-Path $ArtifactRoot 'compatibility.json'))
 foreach($name in @('CopperNova.Prototype','CopperCPX.Core','CopperSharp.Sdk.Amiga','CopperSharp.Compiler')) { $nativeArguments+=@('--managed-assembly',(Join-Path $inputs "$name.dll")) }
 dotnet @nativeArguments
 if($LASTEXITCODE -ne 0) { throw 'Native prototype compilation failed' }

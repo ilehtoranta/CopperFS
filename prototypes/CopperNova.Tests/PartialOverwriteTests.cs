@@ -8,7 +8,7 @@ public class PartialOverwriteTests
 {
     private static (Harness Host, uint Handle, byte[] Bytes, uint Start) Prepare()
     {
-        var host = new Harness(NovaImage.FormatPacked(2 * 1024 * 1024, reusableObjects: true));
+        var host = new Harness(NovaImage.FormatPacked(4*1024*1024));
         host.Mount();
         uint handle = host.Open("payload");
         byte[] bytes = Enumerable.Range(0, 65536).Select(Harness.Initial).ToArray();

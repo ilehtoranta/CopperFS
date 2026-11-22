@@ -11,26 +11,33 @@ public static partial class NovaImage
     private static uint WideWindows(uint blocks)=>((blocks-1)>>11)+1;
     private static uint WideSelectorCount(uint windows)=>((windows-1)>>11)+1;
     private static uint WideBitmaps(uint windows)=>WideSelectors+WideSelectorCount(windows)*2;
-    private static uint WideFloor(uint windows)=>(WideBitmaps(windows)+windows*2+2047)&~2047u;
 
-    /// <summary>Format a designated partition as CNP2 root version 3.</summary>
+
+    /// <summary>Format a designated partition with a growing CNP2 object table with packed leaves.</summary>
     public static void FormatPackedWide(Stream target,long start,long length,uint allocationHint=0)
     {
         ValidatePackedRange(target,start,length);
         if(!target.CanWrite) throw new ArgumentException("The designated partition must be writable.",nameof(target));
-        uint blocks=(uint)(length/SectorBytes),windows=WideWindows(blocks),floor=WideFloor(windows);
+        uint blocks=(uint)(length/SectorBytes),windows=WideWindows(blocks),floor=(WideBitmaps(windows)+2*windows+2047)&~2047u;
         if(floor>=blocks) throw new ArgumentException("The allocation catalogue leaves no data space.",nameof(length));
         if(allocationHint!=0&&(allocationHint<floor||allocationHint>=blocks))
             throw new ArgumentOutOfRangeException(nameof(allocationHint));
 
-        var prefix=FormatPacked(2*1024*1024,reusableObjects:true);
-        Half(prefix,4,3); Put(prefix,64,blocks); Put(prefix,68,floor); Put(prefix,72,blocks-floor);
+        var prefix=new byte[PackedPrefixSectors*SectorBytes];
+        Put(prefix,0,Packed); Half(prefix,6,30);
+        Put(prefix,24,(uint)(Identity>>32)); Put(prefix,28,unchecked((uint)Identity)); Put(prefix,76,1);
+        Half(prefix,4,6); Put(prefix,64,blocks); Put(prefix,68,floor); Put(prefix,72,blocks-floor);
         prefix.AsSpan(96,64).Clear();
         Half(prefix,96,(ushort)WideTop); Put(prefix,100,allocationHint);
+        prefix.AsSpan(160,352).Clear();
         Seal(prefix,0);
         target.Position=start;
         target.Write(prefix.AsSpan(0,PackedPrefixSectors*SectorBytes));
         var page=new byte[SectorBytes];
+        Half(page,32,11); Put(page,108,1);
+        WritePage(194,40,1);
+        Put(page,32,194);
+        WritePage(1394,39,0);
         WritePage(WideTop,36,0);
         for(uint selector=0;selector<WideSelectorCount(windows);selector++)
             WritePage(WideSelectors+selector*2,37,selector);
@@ -39,6 +46,7 @@ public static partial class NovaImage
             uint first=window<<11,lengthInWindow=Math.Min(2048u,blocks-first);
             if(first<floor) MarkBits(page.AsSpan(128,256),0,Math.Min(2048u,floor-first));
             MarkBits(page.AsSpan(128,256),lengthInWindow,2048);
+            if(window==0) Put(page,384,1394);
             WritePage(WideBitmaps(windows)+window*2,34,window);
         }
 

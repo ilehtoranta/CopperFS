@@ -6,13 +6,13 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
 {
     // CNP2 root version 3. Fixed paired pages map each bitmap window to
     // the copy selected by its committed root. No generation-only lookup.
-    private const uint WideExtentStart = 1394, WideTopStart = 3440, WideSelectorStart = 3442;
+    private const uint ObjectIndexStart = 1394, WideTopStart = 3440, WideSelectorStart = 3442;
     private const uint WideBitmapKey = 0x80000000, WideSelectorKey = 0x40000000;
     private const uint WideTopImage = Quarantine, WideTopDirty = 592, WideMap = 596, WideReturn = 600;
     private const uint WideRetirePages = 604, WideRetireReturn = 608, WideStreaming = 612;
     private const uint WideActiveSelector = 616, WidePageSector = 620;
-    private const uint WideRetireRanges = Quarantine + 512, WideExtentBank = 120;
-    private const uint WideTopType = 36, WideSelectorType = 37, WideExtentType = 38;
+    private const uint WideRetireRanges = Quarantine + 512;
+    private const uint WideTopType = 36, WideSelectorType = 37;
 
     // Wide volumes use no narrow quarantine. Reuse 128 bytes of that arena
     // region for bucket heads and the spare byte at +28 of each cache entry
@@ -85,9 +85,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private uint WindowCount => ((R(Blocks) - 1) >> 11) + 1;
     private uint SelectorCount => ((WindowCount - 1) >> 11) + 1;
     private uint WideBitmapStart => WideSelectorStart + SelectorCount * 2;
-    private uint WideDataFloor => (WideBitmapStart + WindowCount * 2 + 2047) & ~2047u;
     private uint BitmapHome(uint sector) => (WideVolume ? WideBitmapKey : 130u) + (sector >> 11);
-    private uint WideExtentBase(uint id) => WideExtentStart + (id - 1) * 2;
 
     private StepResult LoadWideBitmap(uint home, uint next)
     {
@@ -118,7 +116,8 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         if (!PageValid(page, bitmap ? 34u : WideSelectorType, sector, index)) return Fatal();
         if (bitmap)
         {
-            Header(page, 4, home, R(Generation));
+            uint generation=m.Read32(page+16);
+            Header(page, 4, home, generation);
             m.Write32(page + 64, index << 11);
         }
         return LoadedPacked();
@@ -133,14 +132,16 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             uint selectorEntry = Meta((selector - Ptr(CacheImages)) >> 9);
             if (m.Read32(selectorEntry + 8) == 0)
             {
-                uint sector = WideSelectorSector(index) ^ 1;
+                uint sector = WideSelectorSector(index);
+                if(R(StagedExtentMaps)==0 || m.Read32(selector+16)!=R(Generation)+1) sector^=1;
                 m.Write32(selectorEntry + 20, sector);
                 SetBit(Ptr(WideTopImage) + 128, index, (sector & 1) != 0);
                 W(WideTopDirty, 1);
                 Dirty(selector);
             }
             uint bit = map & 2047, bits = selector + 128;
-            bool side = !Bit(bits, bit);
+            bool side = Bit(bits,bit);
+            if(R(StagedExtentMaps)==0 || m.Read32(page+36)!=R(Generation)+1) side=!side;
             SetBit(bits, bit, side);
             m.Write32(entry + 20, WideBitmapStart + map * 2 + (side ? 1u : 0u));
         }
@@ -156,24 +157,6 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         m.Copy(output, page, 512);
         Stamp(output, type, sector, index, generation);
         return Issue(IoKind.Write, sector, output, 512, next);
-    }
-
-    private StepResult WriteWideExtentPage(uint id, uint inode, uint generation)
-    {
-        uint count = m.Read32(inode + 96), output = Ptr(Output);
-        if (count > 8) return Fatal();
-        uint side = m.Read32(inode + WideExtentBank) ^ 1;
-        uint sector = WideExtentBase(id) + side;
-        Zero(output, 512);
-        for (uint i = 1; i < count; i++)
-        {
-            uint extent = ExtentAt(inode, i), at = output + 32 + (i - 1) * 8;
-            m.Write32(at, m.Read32(extent + 12));
-            m.Write32(at + 4, m.Read32(extent + 16));
-        }
-        Stamp(output, WideExtentType, sector, id, generation);
-        m.Write32(inode + WideExtentBank, side);
-        return Issue(IoKind.Write, sector, output, 512, 1201);
     }
 
     private bool AdmitWideRetirement(uint page)
@@ -281,6 +264,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
                 W(ExtentIndex,index);
                 W(ResizeFree,freed);
                 DirtyWideBitmap(bitmap,map,R(WideActiveSelector));
+                // The commit will also edit the locator for each changed object.
+                // Keep those bitmaps resident so their shadow side is selected only once.
+                if(DynamicIndex && (map==(GroupOf(m.Read32(inode+28))>>5) ||
+                    R(Action)==16 && (map==(GroupOf(m.Read32(R(Parent)+28))>>5) ||
+                                      map==(GroupOf(DirectoryId(R(Parent)))>>5)))) return Next(421);
                 return WriteWidePage(WideBitmapKey+map,Meta((bitmap-Ptr(CacheImages))>>9),bitmap,R(Generation)+1,423);
             }
             case 423:

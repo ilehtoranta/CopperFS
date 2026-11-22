@@ -9,6 +9,92 @@ using CopperSharp.Targets.Amiga;
 
 internal static partial class WorkbenchGate
 {
+    public static async Task FragmentedFile(string handlerPath,string romPath,string output)
+    {
+        Directory.CreateDirectory(output);
+        var handler=File.ReadAllBytes(handlerPath);
+        var rom=File.ReadAllBytes(romPath);
+        var disk=CreateImage(handler,600);
+        VerifyInstalledHandler(disk[..PartitionOffset],handler);
+        long length=disk.Length-PartitionOffset;
+        string media=Path.Combine(output,"fragmented.rdb");
+        var create=await FormatBoot(output,"ExtentCreateEntry",null);
+        var read=await FormatBoot(output,"ExtentReadEntry",null);
+        var delete=await FormatBoot(output,"ExtentDeleteEntry",null);
+        var neighbor=await FormatBoot(output,"ExtentNeighborEntry",null);
+        var results=new List<object>();
+        void Boot(byte[] boot,string phase,int stage,int expected)
+        {
+            var (marker,cut,io)=RunFreshBoot(boot,rom,media,PartitionOffset,length,stage);
+            if(stage<2 ? !cut || io.Barriers!=stage : cut || marker!=expected)
+                throw new InvalidDataException($"Guest failed {phase}, cut={cut}, marker={marker}.");
+            // Deleting a spilled file commits its retirement before DOS replies.
+            // The subsequent explicit Flush also updates the clean device.
+            int expectedBarriers=phase=="delete"?3:phase=="create"?2:0;
+            if(stage==2 && io.Barriers!=expectedBarriers)
+                throw new InvalidDataException($"Unexpected barrier count during {phase}: {io.Barriers}.");
+            if((phase=="read"||phase=="neighbor") && io.Writes!=0)
+                throw new InvalidDataException("Read-only boot issued a write.");
+            using var f=File.OpenRead(media);
+            var report=CopperNova.Reference.NovaImage.CheckPacked(f,PartitionOffset,length);
+            int files=phase=="create"&&stage<2?0:phase=="neighbor"||phase=="delete"&&stage==2?1:2;
+            if(report.Entries.Count!=files || report.Entries.Any(e=>e.Extents!=64||e.Size!=32768))
+                throw new InvalidDataException("Incorrect committed fragmented files.");
+            results.Add(new {phase,stage,cut,marker,io.Writes,io.Barriers,files,Extents=report.Entries.Select(e=>e.Extents).ToArray()});
+        }
+        File.WriteAllBytes(media,disk);
+        for(int stage=0;stage<=2;stage++) Boot(create,"create",stage,210);
+        Boot(read,"read",2,211);
+        for(int stage=0;stage<=2;stage++)
+        {
+            Boot(delete,"delete",stage,212);
+            if(stage<2) Boot(read,"read",2,211);
+        }
+        Boot(neighbor,"neighbor",2,213);
+        File.WriteAllText(Path.Combine(output,"qualification.json"),JsonSerializer.Serialize(new {
+            HandlerSha256=Hash(handler),RomSha256=Hash(rom),Cpu="MC68000",RdbStackBytes=600,PartitionBytes=length,results
+        },new JsonSerializerOptions {WriteIndented=true}));
+    }
+
+    public static async Task RejectRetired(string handlerPath,string formatterPath,string romPath,string fixture,string output)
+    {
+        Directory.CreateDirectory(output);
+        var handler=File.ReadAllBytes(handlerPath);
+        var formatter=File.ReadAllBytes(formatterPath);
+        var rom=File.ReadAllBytes(romPath);
+        var media=Path.Combine(output,"retired.rdb");
+        File.Copy(fixture,media);
+        ushort version;
+        using(var disk=File.Open(media,FileMode.Open,FileAccess.ReadWrite))
+        {
+            var layout=AmigaRdbSetup.ReadLayout(disk);
+            var partition=layout.Partitions.Single(p=>p.DeviceName=="CNP0"&&p.DosType==DosType);
+            long cylinder=(long)layout.Heads*layout.SectorsPerTrack*512;
+            if(partition.FirstCylinder*cylinder!=PartitionOffset||
+                ((long)partition.LastCylinder-partition.FirstCylinder+1)*cylinder!=FullPartitionBytes)
+                throw new InvalidDataException("Expected the full-disk comparison geometry.");
+            disk.Position=PartitionOffset;
+            var roots=new byte[1024];
+            disk.ReadExactly(roots);
+            version=BinaryPrimitives.ReadUInt16BigEndian(roots.AsSpan(4));
+            if(version is not (3 or 4 or 5)||BinaryPrimitives.ReadUInt16BigEndian(roots.AsSpan(516))!=version)
+                throw new InvalidDataException("Expected two published v3, v4 or v5 roots.");
+            var rdb=CreateImage(handler);
+            MovePartition(rdb,PartitionOffset,FullPartitionBytes);
+            VerifyInstalledHandler(rdb[..PartitionOffset],handler);
+            disk.Position=0;
+            disk.Write(rdb.AsSpan(0,PartitionOffset));
+        }
+        var boot=await FormatBoot(output,"RetiredFormatEntry",formatter);
+        var (marker,cut,cache)=RunFreshBoot(boot,rom,media,PartitionOffset,FullPartitionBytes,2);
+        if(marker!=215||cut||cache.Reads==0||cache.Writes!=0||cache.Barriers!=0)
+            throw new InvalidDataException("Retired volume was mounted, modified, or accepted for formatting.");
+        File.WriteAllText(Path.Combine(output,"qualification.json"),JsonSerializer.Serialize(new {
+            Version=version,HandlerSha256=Hash(handler),FormatterSha256=Hash(formatter),RomSha256=Hash(rom),
+            marker,cache.Reads,cache.Writes,cache.Barriers
+        }));
+    }
+
     public static async Task RunFormat(string handlerPath, string formatterPath, string romPath,
         string installedRdb, string output)
     {
@@ -70,7 +156,7 @@ internal static partial class WorkbenchGate
         }
 
         long blocks=length/512,windows=(blocks+2047)/2048;
-        long floor=(3442+((windows+2047)/2048)*2+windows*2+2047)&~2047L;
+        long floor=(3442+((windows+2047)/2048)*2+windows*2+2046+2047)&~2047L;
         long firstPayload=start+floor*512;
         bool crosses=firstPayload<Td64Boundary&&firstPayload+WorkbenchProbe.FullDiskPayload>Td64Boundary;
         foreach (int cutBefore in new[] {0,1,2,3})
@@ -98,15 +184,20 @@ internal static partial class WorkbenchGate
 
     private static void VerifyInstalledHandler(byte[] rdb,byte[] handler)
     {
+        int headerOffset=0;
+        while(headerOffset<16*512 && headerOffset<=rdb.Length-512 &&
+              BinaryPrimitives.ReadUInt32BigEndian(rdb.AsSpan(headerOffset))!=0x5244534b) headerOffset+=512;
+        if(headerOffset>=16*512||headerOffset>rdb.Length-512) throw new InvalidDataException("No RDSK block.");
+        int rdbBytes=checked((int)BinaryPrimitives.ReadUInt32BigEndian(rdb.AsSpan(headerOffset+16)));
+        if(rdbBytes is not (512 or 1024)) throw new InvalidDataException("Unsupported fixture RDB block size.");
         uint Read(uint block,int at)
         {
-            if(block>=rdb.Length/512) throw new InvalidDataException("Unexpected RDB block in qualification image.");
-            return BinaryPrimitives.ReadUInt32BigEndian(rdb.AsSpan((int)block*512+at));
+            if(block>=rdb.Length/rdbBytes) throw new InvalidDataException("Unexpected RDB block in qualification image.");
+            return BinaryPrimitives.ReadUInt32BigEndian(rdb.AsSpan((int)block*rdbBytes+at));
         }
 
-        uint header=0;
-        while(header<16&&Read(header,0)!=0x5244534b) header++;
-        if(header==16) throw new InvalidDataException("No RDSK block.");
+        if(headerOffset%rdbBytes!=0) throw new InvalidDataException("Misaligned RDSK block.");
+        uint header=(uint)(headerOffset/rdbBytes);
         uint fs=Read(header,32);
         while(fs!=uint.MaxValue&&Read(fs,32)!=DosType) fs=Read(fs,16);
         if(fs==uint.MaxValue||Read(fs,0)!=0x46534844) throw new InvalidDataException("Missing CNP2 FSHD.");
@@ -115,10 +206,10 @@ internal static partial class WorkbenchGate
         {
             int bytes=checked(((int)Read(seg,4)-5)*4);
             int used=Math.Min(bytes,handler.Length-position);
-            if(Read(seg,0)!=0x4c534547||bytes is <=0 or >492||
-                used<=0||!rdb.AsSpan((int)seg*512+20,used).SequenceEqual(handler.AsSpan(position,used))||
+            if(Read(seg,0)!=0x4c534547||bytes<=0||bytes>rdbBytes-20||
+                used<=0||!rdb.AsSpan((int)seg*rdbBytes+20,used).SequenceEqual(handler.AsSpan(position,used))||
                 (used<bytes&&(Read(seg,16)!=uint.MaxValue||
-                    rdb.AsSpan((int)seg*512+20+used,bytes-used).ContainsAnyExcept((byte)0))))
+                    rdb.AsSpan((int)seg*rdbBytes+20+used,bytes-used).ContainsAnyExcept((byte)0))))
                 throw new InvalidDataException("The installed HUNK differs from the candidate.");
             position+=used;
         }

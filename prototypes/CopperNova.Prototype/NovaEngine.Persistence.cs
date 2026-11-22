@@ -10,7 +10,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         {
             case 100:
                 if(R(Blocks)<4096) return Fatal();
-                W(PartialDirty,0); W(WideStreaming,0); W(Poison,0); W(Mounted,0); W(Index,0); W(DirtyCount,0); W(Epoch,R(Epoch)+1);
+                W(ObjectCommittedLast,0); W(PartialDirty,0); W(WideStreaming,0); W(StagedExtentMaps,0); W(Poison,0); W(Mounted,0); W(Index,0); W(DirtyCount,0); W(Epoch,R(Epoch)+1);
                 return Next(R(CrcReady)==Magic?102u:101u);
             case 101:
                 for(uint n=0;n<32;n++)
@@ -213,7 +213,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     uint i=R(Count),p=Arena+CacheImages+(slot<<9),home=m.Read32(meta);
                     if(i>=48||!MetadataHome(home)||!ValidHomeType(p,home)) return Fatal();
                     m.Write32(p+32,0); m.Write32(p+36,R(NewGeneration)); Seal(p);
-                    m.Copy(Ptr(JournalImages)+(i<<9),p,512); m.Write32(Ptr(FlushList)+i*4,slot);
+                    m.Copy(Ptr(JournalImages)+(i<<9),p,512);
                     uint entry=DescriptorEntry(i); m.Write32(entry,0); m.Write32(entry+4,home); m.Write32(entry+8,m.Read32(p+8));
                     W(Count,i+1); return StepResult.Pending;
                 }

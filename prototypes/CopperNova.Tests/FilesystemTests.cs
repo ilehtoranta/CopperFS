@@ -122,6 +122,9 @@ public class FilesystemTests
     {
         public byte[] Disk; public Ram Memory; public NovaEngine<Ram> Engine;
         public int NonemptyBarriers;
+        public bool FailResourceAllocation;
+        private uint nextResource=0xe0000;
+        private readonly Stack<uint> freeResources=new();
         public Action<CpxIo>? BeforeIo;
         public const uint PacketAt=0x21000,NameAt=0x22000,SecondName=0x22400,FileHandle=0x23000,Data=0x30000;
         public Harness(byte[]? disk=null,BitmapReads? bitmapReads=null)
@@ -148,7 +151,19 @@ public class FilesystemTests
         public uint Packet(uint action,uint a=0,uint b=0,uint c=0,uint d=0,uint e=0)
         {
             Memory.Write32(PacketAt+8,action); Memory.Write32(PacketAt+20,a); Memory.Write32(PacketAt+24,b); Memory.Write32(PacketAt+28,c); Memory.Write32(PacketAt+32,d); Memory.Write32(PacketAt+36,e);
-            Assert.Equal(CpxError.None,Engine.BeginPacket(PacketAt)); Drive(); return Engine.Result;
+            uint resource=0;
+            if(!FailResourceAllocation&&NovaEngine<Ram>.NeedsPacketResource(action))
+            {
+                if(!freeResources.TryPop(out resource))
+                {
+                    resource=nextResource;
+                    nextResource+=NovaEngine<Ram>.PacketResourceBytes;
+                }
+            }
+            Assert.Equal(CpxError.None,Engine.BeginPacket(PacketAt,resource));
+            Drive();
+            if(Engine.ReleasedPacketResource!=0) freeResources.Push(Engine.ReleasedPacketResource);
+            return Engine.Result;
         }
         public void Bstr(uint p,string name) { byte[] bytes=Encoding.UTF8.GetBytes(name); Memory.Write8(p,(byte)bytes.Length); bytes.CopyTo(Memory.Bytes,(int)p+1); }
         public uint OpenRaw(string name,uint action) { Bstr(NameAt,name); return Packet(action,FileHandle>>2,0,NameAt>>2); }

@@ -142,7 +142,7 @@ public static class NativeNovaHandler
                 continue;
             }
             uint mode=APTR.ReadUInt32(packet,24);
-            if(mode!=1)
+            if(mode is not (1 or 6))
             {
                 Reply(message,packet,port,mode==0?NovaEngine<NativeCpxMemory>.PackedMagic:0u,mode==0?0u:115u);
                 continue;
@@ -252,8 +252,18 @@ public static class NativeNovaHandler
             APTR packet=APTR.FromPointer(APTR.ReadUInt32(message,10)); if(packet.IsNull) continue;
             uint action=APTR.ReadUInt32(packet,8);
             if(action==NovaEngine<NativeCpxMemory>.InitializeCnp2) { Reply(message,packet,port,0,202); continue; }
-            if(engine.BeginPacket(packet.Raw)!=CpxError.None) { Reply(message,packet,port,0,202); continue; }
-            bool succeeded=Drive(arena,ioPort,task,ref engine);
+            const uint resourceBytes = NovaEngine<NativeCpxMemory>.PacketResourceBytes;
+            uint resource = NovaEngine<NativeCpxMemory>.NeedsPacketResource(action)
+                ? Exec.AllocMem(resourceBytes, Exec.MemoryFlags.Public | Exec.MemoryFlags.Clear) : 0;
+            if (engine.BeginPacket(packet.Raw, resource) != CpxError.None)
+            {
+                if (resource != 0) Exec.FreeMem(resource, resourceBytes);
+                Reply(message, packet, port, 0, 202);
+                continue;
+            }
+            bool succeeded = Drive(arena, ioPort, task, ref engine);
+            uint released = engine.ReleasedPacketResource;
+            if (released != 0) Exec.FreeMem(released, resourceBytes);
             bool shutdown=action==5&&succeeded;
             if(shutdown&&node.IsNotNull) APTR.WriteUInt32(node,8,0);
             APTR reply=APTR.FromPointer(APTR.ReadUInt32(packet,4));

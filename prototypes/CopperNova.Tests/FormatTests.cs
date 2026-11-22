@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using CopperCPX;
 using CopperNova.Reference;
 using Xunit;
@@ -6,6 +7,14 @@ namespace CopperNova.Tests;
 
 public sealed class FormatTests
 {
+    [Fact]
+    public void DefaultHostImageUsesPackedV6()
+    {
+        var disk = NovaImage.FormatPacked();
+        Assert.Equal(6, BinaryPrimitives.ReadUInt16BigEndian(disk.AsSpan(4)));
+        Assert.Empty(NovaImage.CheckPacked(disk).Entries);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -59,7 +68,44 @@ public sealed class FormatTests
         }
         Assert.Equal(2, barriers);
         Assert.True(h.Engine.IsMounted);
+        Assert.Equal(6, System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(h.Disk.AsSpan(4)));
         Assert.Empty(NovaImage.CheckPacked(h.Disk).Entries);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public void RetiredCnp2RevisionsAreRefusedWithoutWrites(ushort version)
+    {
+        var disk = new byte[8192 * 512];
+        using (var stream = new MemoryStream(disk))
+            NovaImage.FormatPackedWide(stream, 0, disk.Length);
+        var root = disk.AsSpan(0, 512);
+        BinaryPrimitives.WriteUInt16BigEndian(root[4..], version);
+        BinaryPrimitives.WriteUInt32BigEndian(root[68..], 4096);
+        BinaryPrimitives.WriteUInt32BigEndian(root[72..], 4096);
+        if (version == 3)
+            BinaryPrimitives.WriteUInt16BigEndian(root[160..], 194);
+        root.Slice(8, 4).Clear();
+        uint crc = uint.MaxValue;
+        foreach (byte b in root)
+        {
+            crc ^= b;
+            for (int bit = 0; bit < 8; bit++)
+                crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0x82f63b78u);
+        }
+        BinaryPrimitives.WriteUInt32BigEndian(root[8..], ~crc);
+        var h = new FilesystemTests.Harness(disk);
+        h.BeforeIo = io => Assert.Equal(IoKind.Read, io.Kind);
+        Assert.Equal(CpxError.None, h.Engine.BeginMount(probeBlankCnp2: true));
+        h.Drive();
+        Assert.False(h.Engine.IsMounted);
+        Assert.False(h.Engine.CanFormat);
+        Assert.Equal(CpxError.InvalidArgument, h.Engine.BeginFormat(1, 2));
+        Assert.Throws<InvalidDataException>(() => NovaImage.CheckPacked(disk));
     }
 
     [Fact]

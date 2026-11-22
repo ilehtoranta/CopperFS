@@ -1,7 +1,7 @@
 using Amiga;
 
 // Invoked from the Workbench startup-sequence after LoadWB. RDB supplies the handler.
-public static class WorkbenchProbe
+public static partial class WorkbenchProbe
 {
     public const int FullDiskPayload=2*1024*1024;
     public const int RetirementPayload=48*1024*1024;
@@ -10,9 +10,12 @@ public static class WorkbenchProbe
     public static int FullDiskRetireEntry()=>FullDiskWorkload(RetirementPayload,true,false);
     public static int SyncedDiskEntry()=>FullDiskWorkload(FullDiskPayload,false,true);
     public static int FormatEntry()=>FormatWorkload(false);
+    public static int FormatGrowingEntry()=>FormatWorkload(false,false,true);
     public static int FormatRejectEntry()=>FormatWorkload(true);
 
-    private static int FormatWorkload(bool reject)
+    public static int RetiredFormatEntry()=>FormatWorkload(true,true);
+
+    private static int FormatWorkload(bool reject,bool retired=false,bool growing=false)
     {
         var dos=Exec.OpenLibraryRaw("dos.library",37);
         if(dos.IsNull) { Mark(240); return 20; }
@@ -21,12 +24,12 @@ public static class WorkbenchProbe
         var segment=DOS.LoadSeg("SYS:CopperNovaFormat");
         if(!segment.HasValue) { Mark(241); return 20; }
         Mark(180);
-        const string arguments="CNP0: INITIALIZE\n";
+        string arguments=growing?"CNP0: INITIALIZE V6\n":"CNP0: INITIALIZE\n";
         int result=DOS.RunCommand(segment.Value,4096,APTR.FromPointer(CString.FromLiteral(arguments)),arguments.Length);
         DOS.UnLoadSeg(segment.Value);
         var root=DOS.Lock("CNP0:",(DOS.LockMode)(-2));
         if(root.HasValue) DOS.UnLock(root.Value);
-        if(result!=(reject?20:0)||!root.HasValue) { Mark(242); return 20; }
+        if(result!=(reject?20:0)||root.HasValue==retired) { Mark(242); return 20; }
         Mark(reject?(byte)215:(byte)214);
         return 0;
     }
@@ -97,6 +100,46 @@ public static class WorkbenchProbe
         Mark(183);
         if(DOS.DoPkt(port,27,0,0,0,0,0)==0) { Mark(251); return 20; }
         Mark(210); return 0;
+    }
+
+    public static int ExtentCreateEntry()=>ExtentWorkload(0);
+    public static int ExtentReadEntry()=>ExtentWorkload(1);
+    public static int ExtentDeleteEntry()=>ExtentWorkload(2);
+    public static int ExtentNeighborEntry()=>ExtentWorkload(3);
+
+    private static int ExtentWorkload(int mode)
+    {
+        var dos=Exec.OpenLibraryRaw(CString.FromLiteral("dos.library"),37);
+        if(dos.IsNull) { Mark(240); return 20; }
+        DOS.DOSLibraryBase=dos;
+        APTR.WriteUInt32(Exec.FindTask(CString.FromPointer(0)),184,uint.MaxValue);
+        var port=DOS.DeviceProc("CNP0:");
+        var buffer=APTR.FromPointer(Exec.AllocMem(512,Exec.MemoryFlags.Public));
+        if(port.IsNull||buffer.IsNull) { Mark(241); return 20; }
+        if(mode==2)
+        {
+            if(DOS.DeleteFile("CNP0:target")==0 || DOS.DoPkt(port,27,0,0,0,0,0)==0) { Mark(242); return 20; }
+            Mark(212); return 0;
+        }
+        var target=DOS.Open("CNP0:target",mode==0?DOS.FileMode.NewFile:DOS.FileMode.OldFile);
+        var neighbor=DOS.Open("CNP0:neighbor",mode==0?DOS.FileMode.NewFile:DOS.FileMode.OldFile);
+        if(target.HasValue!=(mode!=3)||!neighbor.HasValue) { Mark(243); return 20; }
+        for(int block=0;block<64;block++)
+        for(int which=mode==3?1:0;which<2;which++)
+        {
+            var file=which==0?target.Value:neighbor.Value;
+            if(mode!=0 && DOS.Read(file,buffer,512)!=512) { Mark(244); return 20; }
+            for(int at=0;at<512;at++)
+            {
+                byte expected=(byte)(at+block*17+which*97);
+                if(mode==0) APTR.WriteUInt8(buffer,at,expected);
+                else if(APTR.ReadUInt8(buffer,at)!=expected) { Mark(245); return 20; }
+            }
+            if(mode==0 && DOS.Write(file,buffer,512)!=512) { Mark(246); return 20; }
+        }
+        if(mode!=3 && DOS.Close(target.Value)==0 || DOS.Close(neighbor.Value)==0) { Mark(247); return 20; }
+        if(mode==0 && DOS.DoPkt(port,27,0,0,0,0,0)==0) { Mark(248); return 20; }
+        Mark((byte)(210+mode)); return 0;
     }
 
     private static void Mark(byte value)

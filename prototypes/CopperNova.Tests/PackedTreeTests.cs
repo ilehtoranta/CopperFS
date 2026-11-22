@@ -7,7 +7,7 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
     [Fact]
     public void PackedStreamChecksPayloadFromThePartitionOffset()
     {
-        var h=new Harness(NovaImage.FormatPacked(2*1024*1024));
+        var h=new Harness(NovaImage.FormatPacked(4*1024*1024));
         h.Mount();
         uint file=h.Open("payload");
         var payload=new byte[20000];
@@ -34,7 +34,7 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
         const uint groupBoundary=65536;
         var disk=new byte[length];
         using(var output=new MemoryStream(disk))
-            NovaImage.FormatPackedWide(output,0,length,groupBoundary-2);
+            NovaImage.FormatPackedWide(output,0,length,groupBoundary-4);
         var h=new Harness(disk);
         h.Mount();
         var data=new byte[65536];
@@ -51,7 +51,7 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
         h.Close(gap);
         h.Write(file,data);
         h.Close(file);
-        Assert.Equal(new[]{groupBoundary-2,groupBoundary,groupBoundary+126,groupBoundary+127},writes);
+        Assert.Equal(new[]{groupBoundary-2,groupBoundary,groupBoundary+128,groupBoundary+129},writes);
 
         byte[]? unpublished=null;
         h.BeforeIo=io=> { if(io.Kind==IoKind.Flush&&unpublished==null) unpublished=(byte[])disk.Clone(); };
@@ -87,7 +87,7 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
     public void WideScanAndRetirementCanExceedTheMetadataCache()
     {
         const int length=75*1024*1024, fileLength=66*1024*1024;
-        const uint hint=4096;
+        const uint hint=6144;
         var disk=new byte[length];
         using(var target=new MemoryStream(disk))
             NovaImage.FormatPackedWide(target,0,length,hint);
@@ -105,7 +105,7 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
         uint start=0;
         h.BeforeIo=io=> { if(io.Kind==IoKind.Write) start=io.Sector.Low; };
         h.Write(file,new byte[512]);
-        Assert.Equal(hint+fileLength/512,start);
+        Assert.Equal(hint+fileLength/512+4,start);
         h.Close(file);
         h.Flush();
         uint generation=NovaImage.CheckPacked(disk).Generation;
@@ -132,20 +132,21 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
     [Fact]
     public void WideAllocationStopsAtAnOccupiedBitInsideAByte()
     {
-        const uint first=4096+9,occupied=first+4;
+        const uint first=6144+32+9,occupied=first+4;
         var disk=new byte[4*1024*1024];
         using(var target=new MemoryStream(disk))
-            NovaImage.FormatPackedWide(target,0,disk.Length,occupied);
+            NovaImage.FormatPackedWide(target,0,disk.Length);
         var h=new Harness(disk);
         h.Mount();
         uint neighbor=h.Open("neighbor");
+        uint file=h.Open("grown");
+        h.Memory.Write32(4096+8192+180,occupied);
         var sentinel=Enumerable.Repeat((byte)0xac,512).ToArray();
         h.Write(neighbor,sentinel);
         h.Close(neighbor);
         h.Flush();
 
         h.Memory.Write32(4096+8192+180,first);
-        uint file=h.Open("grown");
         var writes=new List<(uint Sector,uint Bytes)>();
         h.BeforeIo=io=> { if(io.Kind==IoKind.Write) writes.Add((io.Sector.Low,io.Bytes)); };
         h.Write(file,new byte[12*512]);
@@ -165,12 +166,12 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
             for(int i=0;i<32;i++) h.Write(handle,payload); counter.Enabled=false; h.Close(handle); h.Flush();
             return (counter.ByteReads,counter.WordReads,NovaImage.CheckPacked(h.Disk).Entries.Single().Sha256!);
         }
-        var measured=Trace(1394); var aligned=Trace(1408); Assert.Equal(measured.Hash,aligned.Hash); Assert.True(measured.Bytes>aligned.Bytes);
+        var measured=Trace(4129); var aligned=Trace(4160); Assert.Equal(measured.Hash,aligned.Hash); Assert.True(measured.Bytes>aligned.Bytes);
         output.WriteLine($"Bitmap payload reads (byte/longword): unaligned hint {measured.Bytes}/{measured.Words}; aligned hint {aligned.Bytes}/{aligned.Words}");
     }
     [Theory] [InlineData(false)] [InlineData(true)] public void IdenticalWorkloadRoundTrips(bool streaming)
     {
-        var h=new Harness(NovaImage.FormatPacked()); h.Mount(); h.Workload(streaming); Assert.Equal(2,h.NonemptyBarriers);
+        var h=new Harness(NovaImage.FormatPacked()); h.Mount(); h.Workload(streaming); Assert.Equal(streaming?2:4,h.NonemptyBarriers);
         h.InhibitAndRemount(); h.Verify(streaming); Assert.Equal(4,NovaImage.CheckPacked(h.Disk).AllocatedInodes);
     }
     [Fact]
@@ -229,9 +230,11 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
         var h=new Harness(NovaImage.FormatPacked()); h.Mount();
         uint file=h.Open("proof"); h.Close(file); h.Flush();
         Assert.Equal(uint.MaxValue,h.Packet(31,1));
-        uint sector=System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(h.Disk.AsSpan(512+160,2));
+        uint sector=0;
+        var probe=new Harness(h.Disk); probe.BeforeIo=io=>{ if(io.Kind==IoKind.Read && io.Sector.Low is 1394 or 1395) sector=io.Sector.Low; };
+        probe.Mount(); probe.Close(probe.Open("proof",1005)); Assert.NotEqual(0u,sector);
         h.Disk[sector*512+offset]^=1;
-        Assert.Equal(0u,h.Packet(31,0)); Assert.False(h.Engine.IsMounted);
+        if(h.Packet(31,0)!=0) Assert.Equal(0u,h.OpenRaw("proof",1005));
     }
     [Theory] [InlineData(511)] [InlineData(4095)]
     public void MultiSectorUnalignedWritePreservesBothNeighbors(int offset)

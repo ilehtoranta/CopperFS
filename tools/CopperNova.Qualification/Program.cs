@@ -11,6 +11,15 @@ using CopperSharp.Compiler;
 using CopperSharp.Compiler.BootAdf;
 using CopperSharp.Targets.Amiga;
 
+if(args.Length==4 && args[0]=="fragmented-file") { await WorkbenchGate.FragmentedFile(args[1],args[2],args[3]); return; }
+if(args.Length==4 && args[0]=="resources") { await WorkbenchGate.RunResources(args[1],args[2],args[3]); return; }
+if(args.Length==6 && args[0]=="reject-retired") { await WorkbenchGate.RejectRetired(args[1],args[2],args[3],args[4],args[5]); return; }
+if(args.Length==7 && args[0]=="format-scale-v6") { await WorkbenchGate.ObjectGrowth(args[1],args[3],args[4],args[2],6,int.Parse(args[5]),int.Parse(args[6])); return; }
+if(args.Length==6 && args[0]=="scale-v6") { await WorkbenchGate.ObjectGrowth(args[1],args[2],args[3],version:6,fileCount:int.Parse(args[4]),perDirectory:int.Parse(args[5])); return; }
+if(args.Length==6 && args[0]=="scale-object-growth") { await WorkbenchGate.ObjectGrowth(args[1],args[2],args[3],fileCount:int.Parse(args[4]),perDirectory:int.Parse(args[5])); return; }
+if(args.Length==5 && args[0]=="format-object-growth") { await WorkbenchGate.ObjectGrowth(args[1],args[3],args[4],args[2]); return; }
+if(args.Length==5 && args[0]=="compare-object-growth") { await WorkbenchGate.ObjectGrowth(args[2],args[3],args[4],version:int.Parse(args[1])); return; }
+if(args.Length==4 && args[0]=="object-growth") { await WorkbenchGate.ObjectGrowth(args[1],args[2],args[3]); return; }
 if(args.Length==4 && args[0]=="prepare-workbench") { await WorkbenchGate.Prepare(args[1],args[2],args[3]); return; }
 if(args.Length==2 && args[0]=="check-workbench") { using var disk=File.OpenRead(args[1]); WorkbenchGate.Verify(disk); Console.WriteLine("Readback ownership and payload verified."); return; }
 if(args.Length==5 && args[0]=="workbench") { await WorkbenchGate.Run(args[1],args[2],args[3],args[4]); return; }
@@ -45,7 +54,7 @@ File.WriteAllText(Path.Combine(root,"boot","S","startup-sequence"),"PROBE\n");
 byte[] boot=await FileSystemAdf.CreateAsync(Path.Combine(root,"boot"),"NovaPrototypeGate");
 bool packed=Environment.GetEnvironmentVariable("NOVA_PACKED")=="1";
 if(namespaceGate&&!packed) throw new ArgumentException("The namespace probe requires NOVA_PACKED=1");
-string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,packed?NovaImage.FormatPacked(16*1024*1024,reusableObjects:namespaceGate):NovaImage.Format());
+string media=Path.Combine(root,"disk.hdf"); File.WriteAllBytes(media,packed?NovaImage.FormatPacked(16*1024*1024):NovaImage.Format());
 var hook=new Storage();
 bool done=false,failed=false; uint control=0,pointer=0; int octets=0,shutdownBefore=-1,shutdownAfter=-1;
 using(var machine=new LightweightA500Machine(new() {

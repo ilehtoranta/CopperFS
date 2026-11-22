@@ -60,7 +60,7 @@ public class PersistenceTests(ITestOutputHelper output)
     [Fact]
     public void CoalescedPayloadIsDurableAtFirstBarrierAndRootPublishesAtSecond()
     {
-        var h = new Harness(NovaImage.FormatPacked(2 * 1024 * 1024, reusableObjects: true));
+        var h = new Harness(NovaImage.FormatPacked(4*1024*1024));
         h.Mount();
         uint handle = h.Open("payload");
         byte[] bytes = Enumerable.Range(0, 8192).Select(Harness.Initial).ToArray();
@@ -91,21 +91,23 @@ public class PersistenceTests(ITestOutputHelper output)
         }
     }
 
-    [Fact] public void BufferedDeleteAndReusePublishTogetherAcrossPowerCuts()
+    [Fact] public void RetirementPublishesBeforeReuseAcrossPowerCuts()
     {
-        var h=new Harness(NovaImage.FormatPacked(2*1024*1024,reusableObjects:true)); h.Mount();
+        var h=new Harness(NovaImage.FormatPacked(4*1024*1024)); h.Mount();
         uint old=h.Open("old"); h.Write(old,Enumerable.Repeat((byte)42,1024).ToArray()); h.Close(old); h.Flush();
         var initial=(byte[])h.Disk.Clone(); var events=Capture(h);
         h.Bstr(Harness.NameAt,"old"); Assert.Equal(uint.MaxValue,h.Packet(16,0,Harness.NameAt>>2));
         uint next=h.Open("new"); h.Write(next,Enumerable.Repeat((byte)69,1024).ToArray()); h.Close(next); h.Flush();
-        Assert.Equal(2,events.Count(e=>e.Barrier));
+        Assert.Equal(4,events.Count(e=>e.Barrier));
         var before=NovaImage.CheckPacked(initial).Entries.Single(); var after=NovaImage.CheckPacked(h.Disk).Entries.Single();
         Assert.Equal(before.Slot,after.Slot);
         foreach(var cut in Crashes(initial,events)) {
             var fresh=new Harness(cut.Disk); fresh.Mount();
             var view=NovaImage.CheckPacked(cut.Disk);
-            Assert.Equal(view.Generation==1?before:after,Assert.Single(view.Entries));
-            if(cut.Barriers==2) Assert.Equal(2u,view.Generation);
+            Assert.InRange(view.Generation,1u,3u);
+            if(view.Generation==2) Assert.Empty(view.Entries);
+            else Assert.Equal(view.Generation==1?before:after,Assert.Single(view.Entries));
+            if(cut.Barriers==4) Assert.Equal(3u,view.Generation);
         }
     }
     [Fact] public void PhysicalSectorCutsAcrossBankReuseAndChangedRetry()
@@ -131,37 +133,35 @@ public class PersistenceTests(ITestOutputHelper output)
     }
     [Fact] public void PackedRootPublicationSurvivesTornReorderedWritesAndReuse()
     {
-        var h=new Harness(NovaImage.FormatPacked(2*1024*1024)); h.Mount();
+        var h=new Harness(NovaImage.FormatPacked(4*1024*1024)); h.Mount();
         uint keep=h.Open("keep"); h.Write(keep,Enumerable.Repeat((byte)17,1024).ToArray()); h.Close(keep); h.Flush();
         Add(h); h.Flush(); byte[] initial=(byte[])h.Disk.Clone(); var events=Capture(h);
         keep=h.Open("keep",1004); Assert.Equal(0u,h.Packet(1022,keep,0,uint.MaxValue)); h.Close(keep);
         h.Memory.Write32(4096+8192+180,1408); uint other=h.Open("other"); h.Write(other,Enumerable.Repeat((byte)85,512).ToArray()); h.Close(other);
         h.Bstr(Harness.NameAt,"other"); h.Bstr(Harness.SecondName,"published together"); Assert.Equal(uint.MaxValue,h.Packet(28,0,0,Harness.NameAt>>2,Harness.SecondName>>2)); h.Flush();
-        Assert.Equal(2,events.Count(e=>e.Barrier)); int cases=0;
+        Assert.Equal(4,events.Count(e=>e.Barrier)); int cases=0;
         foreach(var state in Crashes(initial,events)) {
             var recovered=new Harness(state.Disk); var reads=Capture(recovered); recovered.Mount(); Assert.Empty(reads);
-            var check=NovaImage.CheckPacked(recovered.Disk); Assert.Contains(check.Generation,new uint[]{2,3});
-            if(state.Barriers==2) Assert.Equal(3u,check.Generation);
+            var check=NovaImage.CheckPacked(recovered.Disk); Assert.Contains(check.Generation,new uint[]{2,3,4});
+            if(state.Barriers==4) Assert.Equal(4u,check.Generation);
             var old=check.Entries.Single(e=>e.Path=="/keep"); Assert.Equal(check.Generation==2?1024:0,old.Size);
             if(check.Generation==2) Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Enumerable.Repeat((byte)17,1024).ToArray())),old.Sha256);
-            Assert.Equal(check.Generation==3,check.Entries.Any(e=>e.Path=="/other"&&e.Comment=="published together"));
+            Assert.Equal(check.Generation==4,check.Entries.Any(e=>e.Path=="/other"&&e.Comment=="published together"));
             uint retry=recovered.Open("retry"); recovered.Write(retry,new byte[1024]); recovered.Close(retry); recovered.Flush();
             Assert.Equal(check.Generation+1,NovaImage.CheckPacked(recovered.Disk).Generation); cases++;
         }
         Assert.True(cases>=20); output.WriteLine($"Packed physical-sector crash states with retry: {cases}");
     }
     [Theory] [InlineData(false)] [InlineData(true)]
-    public void PackedRootSplitAndCollapseRecoverEitherPublishedTree(bool collapse)
+    public void LongNameReplacementRecoversEitherPublishedTree(bool collapse)
     {
-        var h=new Harness(NovaImage.FormatPacked(2*1024*1024)); h.Mount();
+        var h=new Harness(NovaImage.FormatPacked(4*1024*1024)); h.Mount();
         foreach(string name in new[]{"a","b"}) { h.Bstr(Harness.NameAt,name); uint dir=h.Packet(22,0,Harness.NameAt>>2); Assert.NotEqual(0u,dir); Assert.Equal(uint.MaxValue,h.Packet(15,dir)); }
         string nameA="a/"+new string('x',150),shortB="b/q",longB="b/"+new string('y',150);
         uint fd=h.Open(nameA); h.Close(fd); fd=h.Open(collapse?longB:shortB); h.Close(fd); h.Flush();
         byte[] before=(byte[])h.Disk.Clone(); var writes=Capture(h);
         h.Bstr(Harness.NameAt,collapse?longB:shortB); h.Bstr(Harness.SecondName,collapse?shortB:longB); Assert.Equal(uint.MaxValue,h.Packet(17,0,Harness.NameAt>>2,0,Harness.SecondName>>2)); h.Flush();
-        uint beforeChild=System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(before.AsSpan(512+160,2));
-        uint afterChild=System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(h.Disk.AsSpan(160,2));
-        Assert.Equal(collapse,beforeChild is 66 or 67); Assert.Equal(!collapse,afterChild is 66 or 67);
+        Assert.Equal(2,writes.Count(e=>e.Barrier));
         int cases=0; foreach(var state in Crashes(before,writes)) { var reboot=new Harness(state.Disk); reboot.Mount(); var info=NovaImage.CheckPacked(reboot.Disk);
             bool after=info.Generation==2; Assert.Contains(info.Generation,new uint[]{1,2}); if(state.Barriers==2) Assert.True(after);
             string winner=(collapse!=after)?longB:shortB; fd=reboot.Open(winner,1005); reboot.Close(fd); Assert.Contains(info.Entries,e=>e.Path=="/"+winner);
@@ -172,7 +172,7 @@ public class PersistenceTests(ITestOutputHelper output)
     [Theory] [InlineData(false)] [InlineData(true)]
     public void PackedFlushRejectsEveryFailedOrShortRequest(bool shorten)
     {
-        Harness NewImage() { var h=new Harness(NovaImage.FormatPacked(2*1024*1024)); h.Mount(); Add(h);
+        Harness NewImage() { var h=new Harness(NovaImage.FormatPacked(4*1024*1024)); h.Mount(); Add(h);
             h.Bstr(Harness.NameAt,"added"); h.Bstr(Harness.SecondName,"unpublished"); Assert.Equal(uint.MaxValue,h.Packet(28,0,0,Harness.NameAt>>2,Harness.SecondName>>2)); return h; }
         var baseline=NewImage(); int requests=0; baseline.BeforeIo=_=>requests++; baseline.Flush();
         for(int target=0;target<requests;target++) { var h=NewImage(); h.Memory.Write32(Harness.PacketAt+8,27);
