@@ -108,6 +108,9 @@ internal static partial class WorkbenchGate
         if(preparedMedia!=null)
         {
             using var blank=File.OpenRead(preparedMedia);
+            var prefix=new byte[PartitionOffset];
+            blank.ReadExactly(prefix);
+            VerifyInstalledHandler(prefix,handler);
             Verify(blank,expectCommitted:false,fullDisk:true);
             File.Copy(preparedMedia,media);
         }
@@ -244,13 +247,10 @@ internal static partial class WorkbenchGate
     public static uint Verify(Stream stream,bool expectCommitted=true,bool fullDisk=false,
         bool retirement=false,bool retired=false,bool streamWorkload=false)
     {
-        var layout=AmigaRdbSetup.ReadLayout(stream);
-        var partition=layout.Partitions.Single(p=>p.DeviceName=="CNP0"&&p.DosType==DosType);
-        ulong cylinder=(ulong)layout.Heads*layout.SectorsPerTrack*512;
-        ulong length=checked(cylinder*((ulong)partition.LastCylinder-partition.FirstCylinder+1));
+        var (start,length)=ReadCnp2Partition(stream);
         if(fullDisk ? length!=FullPartitionBytes : length is <(2*1024*1024) or >(32*1024*1024))
             throw new InvalidDataException("Unexpected CNP2 partition length");
-        var check=NovaImage.CheckPacked(stream,checked((long)(cylinder*partition.FirstCylinder)),(long)length);
+        var check=NovaImage.CheckPacked(stream,start,length);
         if(!expectCommitted)
         {
             if(check.Entries.Count!=0||check.Generation!=0)
@@ -276,6 +276,50 @@ internal static partial class WorkbenchGate
             file.Size!=payloadLength||file.Sha256!=PatternHash(payloadLength))
             throw new InvalidDataException($"Cold media differs from the acknowledged namespace: {file}; {check.Entries.Count} entries");
         return check.Generation;
+    }
+
+    private static (long Start,long Length) ReadCnp2Partition(Stream disk)
+    {
+        disk.Position=0;
+        var header=new byte[512];
+        disk.ReadExactly(header);
+        if (Read(header,0)!=0x5244534b || Read(header,16)!=1024)
+        {
+            var layout=AmigaRdbSetup.ReadLayout(disk);
+            var partition=layout.Partitions.Single(p=>p.DeviceName=="CNP0" && p.DosType==DosType);
+            long cylinder=checked((long)layout.Heads*layout.SectorsPerTrack*512);
+            return (checked(cylinder*partition.FirstCylinder),
+                checked(cylinder*((long)partition.LastCylinder-partition.FirstCylinder+1)));
+        }
+
+        // The demo fixture uses 1 KiB RDB metadata blocks to fit the handler
+        // within the controller's LSEG chain limit. DOS sectors are still 512 bytes.
+        uint partitionBlock=Read(header,28);
+        if (!ValidMetadata(header,0x5244534b) || partitionBlock==0 || partitionBlock>=PartitionOffset/1024)
+            throw new InvalidDataException("Invalid demo RDSK.");
+        var part=new byte[512];
+        disk.Position=partitionBlock*1024L;
+        disk.ReadExactly(part);
+        uint heads=Read(header,72), sectors=Read(header,68);
+        uint first=Read(part,164), last=Read(part,168);
+        if (!ValidMetadata(part,0x50415254) || Read(part,16)!=uint.MaxValue ||
+            Read(part,36)!=0x04434e50 || part[40]!=(byte)'0' || Read(part,192)!=DosType ||
+            Read(part,132)!=128 || Read(part,144)!=1 || Read(part,140)!=heads || Read(part,148)!=sectors ||
+            heads==0 || sectors==0 || first>last || last>=Read(header,64))
+            throw new InvalidDataException("Invalid demo CNP0 partition.");
+        long cylinderBytes=checked((long)heads*sectors*512);
+        long start=checked(cylinderBytes*first), end=checked(cylinderBytes*((long)last+1));
+        if (start!=PartitionOffset || end>disk.Length) throw new InvalidDataException("Unexpected demo partition bounds.");
+        return (start,end-start);
+
+        static uint Read(byte[] data,int offset)=>BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(offset));
+        static bool ValidMetadata(byte[] data,uint magic)
+        {
+            uint words=Read(data,4), sum=0;
+            if (Read(data,0)!=magic || words is <64 or >128) return false;
+            for (int offset=0;offset<words*4;offset+=4) sum=unchecked(sum+Read(data,offset));
+            return sum==0;
+        }
     }
 
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes));
