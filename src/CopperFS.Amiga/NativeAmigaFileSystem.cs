@@ -878,6 +878,10 @@ public static partial class NativeAmigaFileSystem
     }
 
 #if COPPERFS_CACHE_PAGE_MASK
+#if COPPERSTART_SFS_STANDALONE && COPPERSTART_SFS_TRST_WRITES && !COPPERSTART_NATIVE_SFS2
+    // Standalone cache replays use this entry to identify and exercise the compiled layout.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+#endif
     internal static void AddCachePage(APTR state, uint key)
     {
         var page = (int)((key >> 6) & 31);
@@ -2263,6 +2267,7 @@ public static partial class NativeAmigaFileSystem
 
     // Recovery owns a full Work record. Keep its native local initialization
     // on the error path instead of paying for it before every successful Write.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void RecoverSmartWriteError(APTR state, DOS.Error error)
     {
 #if COPPERFS_SFS_GROUPED
@@ -3526,10 +3531,15 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             var output = destination.Raw;
             var remaining = bytes;
             var longwordCopy = ((input ^ output) & 1) == 0;
-#if COPPERFS_FFS_HANDLER || COPPERFS_SFS2_OWNED
+#if COPPERFS_FFS_HANDLER || COPPERFS_SFS2_OWNED || (COPPERFS_SFS_POOL && COPPERSTART_SFS_STANDALONE)
             // Exec sets AFF_68020 on processors that accept odd longword
             // addresses in RAM. This decision never changes the device DMA mask.
-            if (!longwordCopy && remaining >= 32)
+#if COPPERFS_FFS_HANDLER || COPPERFS_SFS2_OWNED
+            const uint unalignedCopyMinimum = 32;
+#else
+            const uint unalignedCopyMinimum = 256;
+#endif
+            if (!longwordCopy && remaining >= unalignedCopyMinimum)
             {
                 var exec = APTR.FromPointer(APTR.ReadUInt32(APTR.FromPointer(4), 0));
                 const int attentionFlags = 296;
@@ -4354,12 +4364,23 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return true;
     }
 #else
-    // Bind these optional journal operations directly on the native value type.
-    // The non-pool handler uses the ordinary one-block read and write paths.
+    // Bind the optional operation directly on the native platform value type.
     public bool TryReadTrstOriginal(uint block, uint count, APTR scratch, out bool success)
     {
         success = false;
+#if COPPERSTART_NATIVE_SFS2 && !COPPERFS_SFS2_OWNED
+        if (count != 1 || !CanReadPhysicalCache(block, out _)) return false;
+
+        // A journal preimage miss needs one block. Reading through the payload
+        // cache would refill its entire window, which journal writes can evict.
+        // The owned build retains windows across disjoint journal writes.
+        success = CanTransferDirect(scratch, BlockBytes)
+            ? TransferBlock(false, block, scratch)
+            : TransferData(false, block, 1, scratch) == 1;
+        return true;
+#else
         return false;
+#endif
     }
 
     public APTR BorrowSfsJournalPages(uint blockBytes, out uint capacity)
@@ -4372,9 +4393,23 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     public uint RetainedRunCapacity => 1;
     public bool WriteRetainedRun(uint first, uint count, APTR slots) => false;
 #endif
+#if COPPERFS_SFS_POOL
+    public bool SupportsTrstHomeSlotWrites => true;
+
+    public bool WriteTrstHomeSlot(APTR slot)
+    {
+        var block = ReadUInt32(slot);
+        var image = APTR.FromPointer(slot.Raw + AmigaSmartFileSystemRedoArena.SlotHeaderBytes);
+        var id = ReadUInt32(slot, 4);
+        if (id != 0 && (ReadUInt32(image) != id || ReadUInt32(image, 8) != block)) id = 0;
+        return WriteRetainedBlock(block, image, id);
+    }
+#endif
 #if COPPERFS_FFS_HANDLER
     private const uint ClassicChecksumVerified = 0x46465343;
     public bool WriteSealedClassicBlock(uint block, APTR source) => WriteRetainedBlock(block, source, ClassicChecksumVerified);
+#endif
+#if COPPERFS_FFS_HANDLER || COPPERFS_SFS_POOL
     public bool WriteRetainedBlock(uint block, APTR source) => WriteRetainedBlock(block, source, 0);
     private bool WriteRetainedBlock(uint block, APTR source, uint verification)
 #else
@@ -4410,7 +4445,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
             if (cached.IsNotNull) ForgetCached(cached);
             return false;
         }
-#if COPPERFS_FFS_HANDLER
+#if COPPERFS_FFS_HANDLER || COPPERFS_SFS_POOL
         RetainWrittenImage(block, source, cached, bytes, verification);
 #else
         RetainWrittenImage(block, source, cached, bytes);
@@ -4418,12 +4453,13 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return true;
     }
 
-#if COPPERFS_FFS_HANDLER
+#if COPPERFS_FFS_HANDLER || COPPERFS_SFS_POOL
     private void RetainWrittenImage(uint block, APTR source, APTR cached, uint bytes, uint verification = 0)
-    {
 #else
     private void RetainWrittenImage(uint block, APTR source, APTR cached, uint bytes)
+#endif
     {
+#if !COPPERFS_FFS_HANDLER && !COPPERFS_SFS_POOL
         const uint verification = 0;
 #endif
         if (cached.IsNotNull)
@@ -4553,6 +4589,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return completed;
     }
 
+    // CopperStart replays this complete cursor and image invalidation on the standalone handler.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void InvalidateBlocks(uint block, uint count)
     {
         NativeAmigaFileSystem.InvalidateDirectoryCursors(state);
@@ -5160,9 +5198,14 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (block >= APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockCountOffset)) return APTR.Null;
         var bytes = APTR.ReadUInt32(state, NativeFileSystemStateCodec.BlockBytesOffset);
 #if COPPERSTART_NATIVE_SFS_WRITES && !COPPERFS_FFS_HANDLER
-        if (RedoOverlay.IsNotNull)
+        var overlay = RedoOverlay;
+        if (overlay.IsNotNull)
         {
-            var image = AmigaSmartFileSystemRedoArena.MetadataView(ref this, RedoOverlay, block, id, false, out var found);
+#if COPPERFS_SFS_POOL
+            var image = SfsSharedImagePool.ReadOverlay(ref this, overlay, block, id, bytes, out var found);
+#else
+            var image = AmigaSmartFileSystemRedoArena.MetadataView(ref this, overlay, block, id, false, out var found);
+#endif
             if (found) return image;
         }
 #endif
@@ -5376,7 +5419,13 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         {
             // A small adjacent window reduces allocation/undo read requests
             // without replacing the entire metadata LRU with a track refill.
-            if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset) >= 8 &&
+            if (
+#if COPPERFS_SFS_POOL && COPPERSTART_SFS_STANDALONE
+                // A file's partial head or tail needs only its one sector.
+                // Keep metadata window admission for directory and journal reads.
+                (id != 0 || destination != NativeAmigaFileSystem.Data(state)) &&
+#endif
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.CacheBlocksOffset) >= 8 &&
                 APTR.ReadUInt32(state, NativeFileSystemStateCodec.MaxTransferOffset) / blockBytes >= 8 &&
                 APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheCountOffset) >= 16)
             {
@@ -5500,6 +5549,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         APTR.ReadUInt32(image, 8) == block;
 #endif
 
+    // Standalone cache replays use this entry to identify and exercise the compiled layout.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void CacheBlock(uint block, uint id, APTR source, uint bytes)
     {
         var extra = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheTailOffset));

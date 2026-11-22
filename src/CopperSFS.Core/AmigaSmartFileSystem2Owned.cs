@@ -81,14 +81,15 @@ public static partial class AmigaSmartFileSystem2WriteCore
     // delta. The original-data policy can retain the acknowledged arena instead
     // of cloning/publishing it. All other packets use the ordinary private trial.
     private static bool TryWriteUnchangedOriginalPacket<T>(ref T p, ref Work w, ref Request r,
-        APTR group, APTR active, uint span, uint state, out uint actual, out bool prepared, out FileInformation info, APTR originalCursor)
+        APTR group, APTR active, uint span, uint state, out uint actual, out bool prepared, out FileInformation info,
+        APTR originalCursor, out uint appendExtentOffset)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        actual = 0; prepared = false; info = default;
+        actual = 0; prepared = false; info = default; appendExtentOffset = 0;
         var bytes = p.BlockBytes;
         if (r.Length == 0 || r.Length > int.MaxValue || !p.IsMapped(r.Buffer, r.Length)) return false;
         if (!Prepare(ref p, ref w) ||
-            (!OriginalFileInformation(ref p, originalCursor, group, active, r.Node, out info) &&
+            (!OriginalFileInformation(ref p, originalCursor, group, active, r.Node, out info, out appendExtentOffset) &&
                 !FileInformationForWrite(ref p, ref w, r.Node, out info)))
             return Fail(ref w, w.Error != DOS.Error.None ? w.Error : DOS.Error.DiskNotValidated);
         prepared = true;

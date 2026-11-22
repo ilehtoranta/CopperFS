@@ -11,6 +11,10 @@ abbreviation is **CNFS**. **CPX4** identifies its experimental version 4
 on-disk format. The standalone handler for that format is `CopperCPX4`.
 See the [CopperNova design](docs/new-filesystem-design.md).
 
+Use AmigaDOS `Version <handler-file> FILE FULL` to read the embedded version of
+a standalone CopperFFS, CopperSFS or CNP2 handler. The CNP2 build produces
+`CopperNovaPrototype` and identifies itself as `CopperNova 1.0`.
+
 | Component | Location |
 | --- | --- |
 | OFS/FFS core | `src/CopperFFS.Core` |
@@ -51,17 +55,27 @@ using CopperSharp's SDK and compiler. No CopperStart checkout or DLL is required
 ./build/Build-Handler.ps1 -Ffs -ArtifactRoot artifacts/ffs
 ./build/Build-Handler.ps1 -ArtifactRoot artifacts/sfs
 ./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot artifacts/sfs2-trst
+./build/Build-Handler.ps1 -Sfs2 -Sfs2OriginalDataWrites:$false -ArtifactRoot artifacts/sfs2-journaled
 ./build/Build-Handler.ps1 -Sfs2 -Sfs2CsunWrites -ArtifactRoot artifacts/sfs2-csun
 ./build/Build-Trim.ps1
 ```
 
-SFS2 defaults to TRST redo writes and uses a 192 KiB staging arena on mutation.
+SFS2 defaults to owned TRST with a 192 KiB transaction arena and no extra cache.
+It writes existing payload in place when the extent is validated and no
+pending image covers the destination. Metadata commits retain all four TRST
+durability barriers. Explicit Flush makes acknowledged payload durable.
+A device failure or power loss before Flush succeeds can leave a partially
+overwritten file. Select `-Sfs2OriginalDataWrites:$false` for full-data TRST
+journaling or `-OwnedSfs2:$false` for the previous non-owned TRST profile.
+
 For low-memory Amigas, `-Sfs2CsunWrites` selects CSUN undo writes with an optional
-64 KiB batching buffer and a scalar fallback. Both handlers recover outstanding
+64 KiB batching buffer and a scalar fallback. Both write policies recover outstanding
 TRST and CSUN journals on writable media. A clean SFS2 disk can switch handlers
 without conversion. Existing `-Sfs2TrstWrites` commands still select TRST.
-Direct MSBuild clients enabling `CopperStartNativeSfs2=true` can request CSUN
-with `-p:CopperStartSfs2TrstWrites=false`. `-LegacyCsUn` selects the classic SFS writer.
+Direct MSBuild clients enabling `CopperStartNativeSfs2=true` can select
+full-data TRST with `-p:CopperFsSfs2OriginalDataWrites=false`, the previous
+TRST profile with `-p:CopperFsSfs2Owned=false`, or CSUN with
+`-p:CopperStartSfs2TrstWrites=false`. `-LegacyCsUn` selects the classic SFS writer.
 
 Set `-CopperSharpRoot` when CopperSharp68k is not beside this checkout. Use `-Cpu
 68020` to select that target; the default is 68000. The existing strict-write,

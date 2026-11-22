@@ -35,5 +35,6 @@ if($LASTEXITCODE -ne 0) { throw 'Native formatter compilation failed' }
 $formatReport=Get-Content -LiteralPath $formatterReport -Raw | ConvertFrom-Json
 if($formatReport.IsCompatible -ne $true -or @($formatReport.ManagedAllocationSites).Count -ne 0) { throw 'Formatter is not allocation-free managed code' }
 if(($before|ConvertTo-Json -Depth 4 -Compress) -ne ((SourceHashes)|ConvertTo-Json -Depth 4 -Compress)) { throw 'Source changed during build' }
+& (Join-Path $PSScriptRoot 'Add-HandlerVersion.ps1') -Path $output -VersionTag '$VER: CopperNova 1.0 (20.11.126)'
 @{Sources=$before;HunkSha256=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash;FormatterSha256=(Get-FileHash -LiteralPath $formatter -Algorithm SHA256).Hash;CompilerSha256=(Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash;ManagedAllocationSites=@($report.ManagedAllocationSites).Count;ManagedInputs=@(Get-ChildItem -LiteralPath $inputs -Filter '*.dll' -File | Sort-Object Name | ForEach-Object { @{Name=$_.Name;Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} })} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ArtifactRoot 'source-manifest.json')
 Write-Output "Built $output and $formatter"

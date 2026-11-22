@@ -10,7 +10,7 @@ public static partial class AmigaSmartFileSystem2WriteCore
     // exclusive pins make the final memory-only publication indivisible to
     // callers. Unsupported cases retain the ordinary disposable trial.
     private static bool TryAppendOriginalPacket<T>(ref T p, ref Work w, ref Request r,
-        APTR group, APTR active, uint state, ref FileInformation info, APTR cursor, out uint actual)
+        APTR group, APTR active, uint state, ref FileInformation info, APTR cursor, uint appendExtentOffset, out uint actual)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         actual = 0;
@@ -29,8 +29,8 @@ public static partial class AmigaSmartFileSystem2WriteCore
         var cache = Sfs2MountContext.Cache(ref p, context);
         if (cache.IsNotNull && !Sfs2MetadataStore.Unpinned(ref p, cache)) return false;
         // The prepared acceptance deliberately leaves both disk roots alone.
-        if (Sfs2MetadataStore.Find(ref p, active, 0).IsNotNull ||
-            Sfs2MetadataStore.Find(ref p, active, p.BlockCount - 1).IsNotNull) return false;
+        if (appendExtentOffset == 0 && (Sfs2MetadataStore.Find(ref p, active, 0).IsNotNull ||
+            Sfs2MetadataStore.Find(ref p, active, p.BlockCount - 1).IsNotNull)) return false;
         var count = r.Length >> 9; var length = (uint)(info.Size >> 9);
         var first = info.First + length;
         if (firstExtent)
@@ -48,12 +48,12 @@ public static partial class AmigaSmartFileSystem2WriteCore
             (w.RootContainer + 2 >= first && w.RootContainer + 2 - first < count) || w.AdminReservation != 0) return false;
         if (!BitmapPosition(ref p, ref w, first, out var map, out var mapOffset, out _)) return false;
         var oldCount = p.ReadUInt32(active);
-        if (!ReserveOriginalAppend(ref p, active, w.ExtentRoot, TreeId, w.Meta, firstExtent, out tree, out treeBucket) ||
-            !ReserveOriginalAppend(ref p, active, map, BitmapId, w.Bitmap, firstExtent, out bitmap, out bitmapBucket) ||
-            !ReserveOriginalAppend(ref p, active, info.ObjectBlock, ObjectId, w.Meta, firstExtent, out obj, out objectBucket)) goto Decline;
-        if (info.ObjectBlock != w.RootContainer && !ReserveOriginalAppend(ref p, active, w.RootContainer,
+        if (!Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, w.ExtentRoot, TreeId, w.Meta, firstExtent, out tree, out treeBucket) ||
+            !Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, map, BitmapId, w.Bitmap, firstExtent, out bitmap, out bitmapBucket) ||
+            !Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, info.ObjectBlock, ObjectId, w.Meta, firstExtent, out obj, out objectBucket)) goto Decline;
+        if (info.ObjectBlock != w.RootContainer && !Sfs2MetadataStore.ReserveAcceptedScalar(ref p, active, w.RootContainer,
             ObjectId, w.Meta, firstExtent, out root, out rootBucket)) goto Decline;
-        if (!OriginalDataRangeAvailable(ref p, active, first, count)) goto Decline;
+        if (firstExtent && !OriginalDataRangeAvailable(ref p, active, first, count)) goto Decline;
         var treeCount = p.ReadUInt16(tree.Image, 12);
         if (p.ReadUInt8(tree.Image, 14) == 0 || p.ReadUInt8(tree.Image, 15) != 16 ||
             16u + (uint)treeCount * 16 > 512) goto Decline;
@@ -71,8 +71,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
         }
         else
         {
-            while (extentOffset < 16 + treeCount * 16 && p.ReadUInt32(tree.Image, extentOffset) != info.First) extentOffset += 16;
-            if (extentOffset == 16 + treeCount * 16 || p.ReadUInt32(tree.Image, extentOffset + 4) != 0 ||
+            if (appendExtentOffset != 0) extentOffset = (int)appendExtentOffset;
+            else while (extentOffset < 16 + treeCount * 16 && p.ReadUInt32(tree.Image, extentOffset) != info.First) extentOffset += 16;
+            if (extentOffset < 16 || extentOffset >= 16 + treeCount * 16 || (extentOffset & 15) != 0 ||
+                p.ReadUInt32(tree.Image, extentOffset) != info.First || p.ReadUInt32(tree.Image, extentOffset + 4) != 0 ||
                 p.ReadUInt32(tree.Image, extentOffset + 8) != (r.Node | 0x80000000) ||
                 p.ReadUInt32(tree.Image, extentOffset + 12) != length) goto Decline;
         }
@@ -119,13 +121,22 @@ public static partial class AmigaSmartFileSystem2WriteCore
         Sfs2MetadataStore.BeginReservedScalar(ref p, ref obj);
         if (root.Arena.IsNotNull) Sfs2MetadataStore.BeginReservedScalar(ref p, ref root);
         var remaining = count; var within = first & 31; var offset = mapOffset;
+        // Up to five aligned words, spanning at most two 16-byte journal
+        // regions. Keep the checksum and dirty-region bookkeeping in locals
+        // while the bitmap image is exclusively owned.
+        var bitmapWords = (within + count + 31) >> 5;
+        TrackScalar(ref p, ref bitmap, offset, (int)bitmapWords * 4);
+        var checksum = bitmap.Checksum;
         while (remaining != 0)
         {
             var take = 32 - within; if (take > remaining) take = remaining;
             var mask = (uint.MaxValue >> (int)within) & (uint.MaxValue << (int)(32 - within - take));
-            Scalar32(ref p, ref bitmap, offset, p.ReadUInt32(bitmap.Image, offset) & ~mask);
+            // The preflight checked every bit in the range was set.
+            p.WriteUInt32(bitmap.Image, offset, p.ReadUInt32(bitmap.Image, offset) & ~mask);
+            checksum = unchecked(checksum + mask);
             remaining -= take; offset += 4; within = 0;
         }
+        bitmap.Checksum = checksum;
         var size = info.Size + r.Length;
         if (firstExtent)
         {
@@ -152,9 +163,10 @@ public static partial class AmigaSmartFileSystem2WriteCore
             // The old extent can contain private redo images. A proof for the
             // new allocation alone must never allow an in-place overwrite of them.
             var extentCount = length + count;
-            if (!firstExtent && !OriginalDataRangeAvailable(ref p, active, info.First, length)) extentCount = 0;
+            if (!firstExtent && !(appendExtentOffset != 0 && p.ReadUInt32(cursor, 40) == length) &&
+                !OriginalDataRangeAvailable(ref p, active, info.First, length)) extentCount = 0;
             RememberOriginalDataCursor(ref p, cursor, group, active, r.Node, size,
-                0, info.First, extentCount, info.First, info.ObjectBlock, info.ObjectOffset);
+                0, info.First, extentCount, info.First, info.ObjectBlock, info.ObjectOffset, (uint)extentOffset);
         }
         actual = r.Length; return true;
 
@@ -169,16 +181,6 @@ public static partial class AmigaSmartFileSystem2WriteCore
         if (treeBucket.IsNotNull) p.WriteUInt32(treeBucket, 0, 0);
         p.WriteUInt32(active, 0, oldCount);
         return false;
-    }
-
-    private static bool ReserveOriginalAppend<T>(ref T p, APTR arena, uint block, uint id, APTR scratch,
-        bool materialize, out Sfs2MetadataStore.Handle handle, out APTR bucket)
-        where T : struct, IAmigaWritableFileSystemPlatform
-    {
-        bucket = APTR.Null;
-        if (Sfs2MetadataStore.ReserveAcceptedScalar(ref p, arena, block, id, out handle)) return true;
-        return materialize && Sfs2MetadataStore.MaterializeAcceptedBeforeImage(ref p, arena, block, id, scratch, out bucket) &&
-            Sfs2MetadataStore.ReserveAcceptedScalar(ref p, arena, block, id, out handle);
     }
 
     private static bool ReservedOriginalAppendCurrent<T>(ref T p, in Sfs2MetadataStore.Handle handle)

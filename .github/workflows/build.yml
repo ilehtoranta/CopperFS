@@ -28,3 +28,5 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Test OFS, FFS, SFS and SFS2 cores
         run: dotnet test CopperFS/CopperFS.slnx -c Release
+      - name: Test the shared SFS pool home-write fallback
+        run: dotnet test CopperFS/tests/CopperSFS.Core.Tests/CopperSFS.Core.Tests.csproj -c Release -p:CopperFsSfsPool=true --filter FullyQualifiedName~SharedPoolHomeWriteFailureUpdatesCaller

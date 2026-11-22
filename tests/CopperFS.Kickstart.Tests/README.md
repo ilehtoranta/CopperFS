@@ -154,15 +154,25 @@ that disk. A published TRST journal must recover the complete committed
 manifest, including free space and file hashes. Each handler must leave a
 clean marker and preserve the disk byte for byte on its next boot.
 
-Build the handler and set the local input paths before running:
+Build the full-data TRST handler for the complete matrix, including the
+atomic payload overwrite case:
 
 ```powershell
-./build/Build-Handler.ps1 -Sfs2 -Sfs2TrstWrites -ArtifactRoot "$PWD/artifacts/sfs2-trst"
-$env:COPPERFS_SFS2_TRST_HANDLER = "$PWD/artifacts/sfs2-trst/CopperSFS"
+./build/Build-Handler.ps1 -Sfs2 -Sfs2OriginalDataWrites:$false -ArtifactRoot "$PWD/artifacts/sfs2-journaled"
+$env:COPPERFS_SFS2_TRST_HANDLER = "$PWD/artifacts/sfs2-journaled/CopperSFS"
 $env:COPPERFS_ORIGINAL_SFS = '<path to original SmartFilesystem 1.279>'
 $env:COPPERSHARP_KICKSTART31_ROM = '<path to decoded Kickstart 3.1 ROM>'
 dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2RecoveryMatrix
 ```
+
+For default owned in-place TRST, build with plain `-Sfs2`, point
+`COPPERFS_SFS2_TRST_HANDLER` at that HUNK and run the metadata cases with
+`--filter 'FullyQualifiedName~NativeSfs2RecoveryMatrix&DisplayName!~Overwrite'`.
+The throughput probes exercise payload overwrites through explicit Flush.
+Set `COPPERFS_SFS2_DEFERRED_CLOSE=1` and `COPPERFS_TEST_IN_PLACE=1` when
+running `DeferredCommitFailureBlocksMutationUntilRecovery` with the default
+handler. This checks that a failed metadata commit can leave the already
+overwritten payload prefix intact.
 
 ## Native SFS2 CSUN crash recovery
 
@@ -180,7 +190,7 @@ Use a decoded Kickstart 3.1 ROM as above. CSUN recovery uses CopperSFS for
 both mounts and does not require the original SmartFilesystem binary.
 
 ```powershell
-./build/Build-Handler.ps1 -Sfs2 -ArtifactRoot "$PWD/artifacts/sfs2-csun"
+./build/Build-Handler.ps1 -Sfs2 -Sfs2CsunWrites -ArtifactRoot "$PWD/artifacts/sfs2-csun"
 $env:COPPERFS_SFS2_CSUN_HANDLER = "$PWD/artifacts/sfs2-csun/CopperSFS"
 dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~NativeSfs2CsunRecoveryMatrix
 ```

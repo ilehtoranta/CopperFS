@@ -158,6 +158,17 @@ public static partial class AmigaSmartFileSystemWriteCore
             p.WriteUInt32(group, 60, p.ReadUInt32(root, (int)bytes - 28));
         }
         else LoadTrstGroupRoots(ref p, group, ref w);
+        if (operation == TrstOperation.Write && pending && pooled && p.ReadUInt32(group, TrstGroupContinuation) == 0)
+        {
+            var appended = TryAppendTrstGroup(ref p, ref w, ref r, group, active, out var handled);
+            if (!appended || handled)
+            {
+                w.Buffered = buffered; w.Batch = batch;
+                if (!appended) p.WriteUInt32(group, TrstGroupProof, 0);
+                else actual = r.Length;
+                return appended;
+            }
+        }
         if (operation == TrstOperation.Write && pending && p.ReadUInt32(group, TrstGroupContinuation) != 0)
         {
             var continued = ContinueTrstWrite(ref p, ref w, ref r, group, active, out var handled);
