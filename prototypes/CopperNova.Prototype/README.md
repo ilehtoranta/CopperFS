@@ -120,7 +120,7 @@ CopperNova.Qualification fragmented-file <handler> <ROM> <output>
 
 On emulated Kickstart 2.04 (68000), the native formatter initialized a v6 volume for the 64-file single-directory test. The same handler passed a 4,096-file single-directory test and a 122,880-file partition test with 128 files per directory. The partition-wide test used 2,487 index leaves. Each run checked explicit Flush, power cuts before both barriers, cold reopen and deletion, and a final cold lookup of every deleted name with zero writes. The tests verified sampled payloads. The large hardfiles exercised TD64 across 4 GiB using 512-byte filesystem sectors and 1,024-byte RDB metadata blocks. Physical hardware coverage remains open.
 
-The fragmented-file gate alternates 512-byte writes to two files, checks that each has 64 distinct extents, and cold-reads every byte. It cuts power before each publication barrier during creation and deletion, then verifies the surviving file on a fresh Kickstart 2.04 boot.
+The fragmented-file gate alternates 512-byte writes to two files, checks that each has 193 distinct extents, and cold-reads every byte. It cuts power before each publication barrier during creation and deletion, then verifies the surviving file on a fresh Kickstart 2.04 boot.
 
 ## Deliberate prototype limits
 
@@ -135,7 +135,12 @@ This is a benchmark-capable metadata prototype, not a feature-complete filesyste
   Flush barrier covers payload, extent pages and allocation metadata. The
   second makes the root referencing those changes durable. Shrinking a
   file moves the surviving tail back inline and frees surplus pages.
-  Random access to older runs walks the chain. The file size limit is
+  For new overflow pages, the inode indexes the current group of eight.
+  Completed groups carry range indexes in the same 512-byte pages. A
+  group index holds up to sixteen previous groups directly and uses
+  subtree roots above that count. Earlier v6 pages remain readable via
+  their original links. Shrinking restores the saved index from the
+  surviving prefix. The file size limit is
   2 GiB minus one byte.
 - Create directories/files, shared locks, open/read/write/seek, shrink, same-parent
   rename to an unused name, close, flush, inhibit/remount and shutdown are supported.

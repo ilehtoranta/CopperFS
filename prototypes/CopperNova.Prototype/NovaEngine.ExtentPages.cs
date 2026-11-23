@@ -21,7 +21,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     {
         uint end=m.Read32(page+PrefixEnd),sector=m.Read32(page+PrefixLink);
         if(end==0 || !ValidPrefixPointer(page,end)) return Fatal();
-        W(PrefixSector,sector); W(PrefixLimit,end);
+        W(ExpectedOrdinal,uint.MaxValue); W(PrefixSector,sector); W(PrefixLimit,end);
         return Issue(IoKind.Read,sector,Ptr(ExtentBuffer),512,resume);
     }
 
@@ -29,7 +29,9 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     {
         uint logical=m.Read32(page+PrefixEnd),limit=R(PrefixLimit);
         if(!PageValid(page,ExtentPageType,R(PrefixSector),m.Read32(inode+28)) ||
-            !ValidPrefixPointer(page,logical) || logical>=limit || m.Read32(page+96)!=8) return false;
+            !ValidPrefixPointer(page,logical) || !ValidIndexHeader(page) || logical>=limit || m.Read32(page+96)!=8) return false;
+        if(R(ExpectedOrdinal)!=uint.MaxValue &&
+            (m.Read32(page+IndexSignature)!=ExtentIndexMagic || m.Read32(page+IndexedPages)!=R(ExpectedOrdinal))) return false;
         for(uint i=0;i<8;i++)
         {
             uint e=ExtentAt(page,i),run=m.Read32(e+16);
@@ -81,6 +83,10 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             {
                 uint page=Ptr(ExtentBuffer);
                 if(!VerifiedPrefix(inode,page)) return Fatal();
+                m.Copy(inode+GroupDirectory,page+GroupDirectory,64);
+                uint previous=m.Read32(page+IndexedPages);
+                m.Write32(inode+IndexedPages,previous);
+                m.Write32(inode+IndexSignature,previous==0?0:ExtentIndexMagic);
                 m.Copy(inode+320,page+320,192); m.Write32(inode+96,8);
                 m.Write32(inode+PrefixLink,m.Read32(page+PrefixLink));
                 m.Write32(inode+PrefixEnd,m.Read32(page+PrefixEnd));

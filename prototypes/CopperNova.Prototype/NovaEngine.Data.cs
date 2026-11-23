@@ -55,7 +55,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     if(!VerifiedPrefix(inode,mappings)) return Fatal();
                 }
                 if(GrowingObjects && (position>>9)<m.Read32(mappings+PrefixEnd))
-                    return ReadPrefix(mappings,314);
+                    return LookupPrefix(mappings,position>>9);
                 if(Map(mappings,position>>9,out uint disk,out uint available))
                 {
                     uint take=(available<<9)-intra;
@@ -164,6 +164,9 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 m.Write32(handle+8,end); m.Write32(state+DataProgress,progress+take);
                 return take==remaining||(!write&&end>=m.Read32(inode+68))?Finish(progress+take):Next(300);
             }
+            case 316:
+                if(!VerifiedPrefix(inode,Ptr(ExtentBuffer))) return Fatal();
+                return WriteIndexedPrefix(inode,true);
             case 315:
             {
                 uint bitmap=R(Bitmap),selector=R(WideActiveSelector),sector=R(DataPhysical),group=R(Group);
@@ -171,6 +174,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 DirtyWideBitmap(bitmap,sector>>11,selector);
                 ReleaseWideAllocation(bitmap,selector);
                 m.Write32(group+72,m.Read32(group+72)-1); Dirty(group);
+                AppendPrefixIndex(inode,sector,m.Read32(handle+8)>>9);
                 m.Write32(inode+PrefixLink,sector);
                 m.Write32(inode+PrefixEnd,m.Read32(handle+8)>>9);
                 Zero(inode+320,192); m.Write32(inode+96,0); Dirty(inode);
@@ -240,15 +244,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                 if(!append&&count==8)
                 {
                     if(!GrowingObjects || m.Read32(R(Group)+72)<2) return TransferError(221);
-                    uint page=Ptr(ExtentBuffer);
-                    Zero(page,512);
-                    m.Write32(page+PrefixLink,m.Read32(inode+PrefixLink));
-                    m.Write32(page+PrefixEnd,m.Read32(inode+PrefixEnd));
-                    m.Write32(page+96,8);
-                    m.Copy(page+320,inode+320,192);
-                    Stamp(page,ExtentPageType,candidate,m.Read32(inode+28),R(Generation));
                     W(Bitmap,bitmap); W(DataPhysical,candidate);
-                    return Issue(IoKind.Write,candidate,page,512,315);
+                    uint indexed=m.Read32(inode+IndexedPages);
+                    if(indexed>=15 && (indexed&7)==7)
+                        return ReadIndexEntry(inode,GroupDirectory+56,(indexed&~7u)-1,316);
+                    return WriteIndexedPrefix(inode,false);
                 }
                 if(m.Read32(m.Read32(state+Group)+72)<units||m.Read32(state+DirtyCount)>(wide?44u:45u))
                     return TransferError(221);

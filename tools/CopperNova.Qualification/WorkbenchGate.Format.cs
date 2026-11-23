@@ -38,7 +38,7 @@ internal static partial class WorkbenchGate
             using var f=File.OpenRead(media);
             var report=CopperNova.Reference.NovaImage.CheckPacked(f,PartitionOffset,length);
             int files=phase=="create"&&stage<2?0:phase=="neighbor"||phase=="delete"&&stage==2?1:2;
-            if(report.Entries.Count!=files || report.Entries.Any(e=>e.Extents!=64||e.Size!=32768))
+            if(report.Entries.Count!=files || report.Entries.Any(e=>e.Extents!=WorkbenchProbe.FragmentedRuns||e.Size!=WorkbenchProbe.FragmentedRuns*512))
                 throw new InvalidDataException("Incorrect committed fragmented files.");
             results.Add(new {phase,stage,cut,marker,io.Writes,io.Barriers,files,Extents=report.Entries.Select(e=>e.Extents).ToArray()});
         }

@@ -102,6 +102,7 @@ public static partial class WorkbenchProbe
         Mark(210); return 0;
     }
 
+    public const int FragmentedRuns=193;
     public static int ExtentCreateEntry()=>ExtentWorkload(0);
     public static int ExtentReadEntry()=>ExtentWorkload(1);
     public static int ExtentDeleteEntry()=>ExtentWorkload(2);
@@ -124,7 +125,7 @@ public static partial class WorkbenchProbe
         var target=DOS.Open("CNP0:target",mode==0?DOS.FileMode.NewFile:DOS.FileMode.OldFile);
         var neighbor=DOS.Open("CNP0:neighbor",mode==0?DOS.FileMode.NewFile:DOS.FileMode.OldFile);
         if(target.HasValue!=(mode!=3)||!neighbor.HasValue) { Mark(243); return 20; }
-        for(int block=0;block<64;block++)
+        for(int block=0;block<FragmentedRuns;block++)
         for(int which=mode==3?1:0;which<2;which++)
         {
             var file=which==0?target.Value:neighbor.Value;

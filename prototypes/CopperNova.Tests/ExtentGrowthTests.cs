@@ -4,6 +4,70 @@ namespace CopperNova.Tests;
 
 public class ExtentGrowthTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IndexedAndLegacyPrefixesSurviveTruncationAndRegrowth(bool legacy)
+    {
+        var h=new Harness(NovaImage.FormatPacked()); h.Mount();
+        uint file=h.Open("target"),spacer=h.Open("spacer");
+        var expected=new List<byte[]>();
+        void Append(int limit,int salt)
+        {
+            while(expected.Count<limit)
+            {
+                byte[] data=new byte[512];
+                new Random(salt+expected.Count).NextBytes(data);
+                h.Write(file,data); h.Write(spacer,new byte[512]); expected.Add(data);
+            }
+        }
+        void Reopen()
+        {
+            h.Close(file); h.Close(spacer); h.Flush(); h.InhibitAndRemount();
+            file=h.Open("target",1004); spacer=h.Open("spacer",1004);
+        }
+        Append(81,1); Reopen();
+        if(legacy)
+        {
+            h.Close(file); h.Close(spacer); h.Flush();
+            // Reproduce the original v6 page encoding, including its CRC.
+            for(int at=0;at<h.Disk.Length;at+=512)
+            {
+                var p=h.Disk.AsSpan(at,512);
+                if(System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(p)!=0x434e5032 ||
+                    System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(p[316..])!=0x45584931) continue;
+                if(p[7]==41) p.Slice(100,128).Clear();
+                else if(p[7]!=40) continue;
+                p.Slice(228,64).Clear(); p.Slice(312,8).Clear(); p.Slice(8,4).Clear();
+                uint crc=uint.MaxValue;
+                foreach(byte b in p)
+                {
+                    crc^=b;
+                    for(int bit=0;bit<8;bit++) crc=(crc>>1)^((crc&1)==0?0:0x82f63b78u);
+                }
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(p[8..],~crc);
+            }
+            h=new Harness(h.Disk); h.Mount(); file=h.Open("target",1004); spacer=h.Open("spacer",1004);
+        }
+        void SeekEnd(uint fd) => Assert.NotEqual(uint.MaxValue,h.Packet(1008,fd,0,1));
+        SeekEnd(file); SeekEnd(spacer); Append(2361,13); Reopen();
+        void Verify()
+        {
+            var report=NovaImage.CheckPacked(h.Disk);
+            Assert.True(report.Entries.Single(e=>e.Path=="/target").Extents>=expected.Count-1);
+            foreach(int i in Enumerable.Range(0,expected.Count).OrderBy(i=>(i*199)%expected.Count))
+            {
+                Assert.NotEqual(uint.MaxValue,h.Packet(1008,file,(uint)i*512,uint.MaxValue));
+                Assert.Equal(512u,h.Packet(82,file,Harness.Data,512));
+                Assert.Equal(expected[i],h.Memory.Bytes.AsSpan((int)Harness.Data,512).ToArray());
+            }
+        }
+        Verify();
+        Assert.Equal(99u*512,h.Packet(1022,file,99*512,uint.MaxValue));
+        expected.RemoveRange(99,expected.Count-99);
+        SeekEnd(file); SeekEnd(spacer); Append(1301,37); Reopen(); Verify();
+    }
+
     [Fact]
     public void ShortFirstOverflowWriteLeavesBothInlineFilesIntact()
     {

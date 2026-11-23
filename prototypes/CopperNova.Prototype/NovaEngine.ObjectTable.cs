@@ -78,7 +78,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         {
             if(used!=0) return false;
             uint logical=m.Read32(page+PrefixEnd);
-            if(!ValidPrefixPointer(page,logical)) return false;
+            if(!ValidPrefixPointer(page,logical) || !ValidIndexHeader(page)) return false;
             for(uint i=0;i<count;i++)
             {
                 uint extent=ExtentAt(page,i),run=m.Read32(extent+16);
