@@ -1213,7 +1213,7 @@ public static partial class NativeAmigaFileSystem
     private static APTR Object(APTR state, uint token, bool file)
     {
         var current = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ObjectsOffset));
-        for (var guard = 0; current.IsNotNull && guard < 4096; guard++)
+        while (current.IsNotNull)
         {
             if ((file ? current.Raw : (current.Raw + 20) >> 2) == token && APTR.ReadUInt32(current, 16) == (file ? 1u : 0u)) return current;
             current = APTR.FromPointer(APTR.ReadUInt32(current, 0));
@@ -1271,7 +1271,7 @@ public static partial class NativeAmigaFileSystem
     private static void FreeObject(APTR state, APTR o)
     {
         var link = APTR.FromPointer(state.Raw + ObjectsOffset);
-        for (var guard = 0; guard < 4096; guard++)
+        while (true)
         {
             var current = APTR.FromPointer(APTR.ReadUInt32(link, 0));
             if (current.IsNull) return;
