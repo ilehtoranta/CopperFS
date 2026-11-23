@@ -144,6 +144,43 @@ public static partial class NovaImage
                 Require(U32(p,96)==8&&U32(p,308)<lower);
                 upper=lower; mappings.Push(p);
             }
+            // Compare shortcuts against the independently followed physical chain.
+            // Each tuple names the exact sector and exclusive logical end.
+            var indexed=new List<(uint Sector,uint End)>();
+            foreach(var image in mappings)
+            {
+                bool inode=ReferenceEquals(image,objects[item.Id]);
+                uint signature=U32(image,316);
+                if(signature==0)
+                {
+                    Require(indexed.Count==0 && U32(image,312)==0);
+                    continue;
+                }
+                Require(signature==0x45584931 && U32(image,312)==indexed.Count);
+                int n=indexed.Count,group=n&~7;
+                void Check(int at,int index)
+                {
+                    var expected=index>=0?indexed[index]:default;
+                    Require(U32(image,at)==expected.Sector && U32(image,at+4)==expected.End);
+                }
+                for(int i=0;i<7;i++) Check(228+i*8,i<(n&7)?group+i:-1);
+                Check(284,group-1);
+                if(inode) continue;
+                int groups=(n&7)==7?n/8:0,groupCursor=groups;
+                for(int level=0;level<16;level++)
+                {
+                    if(groups<=16)
+                    {
+                        Check(100+level*8,level<groups?(level+1)*8-1:-1);
+                        continue;
+                    }
+                    int width=1<<level;
+                    bool present=(groups&width)!=0;
+                    Check(100+level*8,present?groupCursor*8-1:-1);
+                    if(present) groupCursor-=width;
+                }
+                indexed.Add((U32(image,12),checked(U32(image,320+7*24+4)+U32(image,320+7*24+16))));
+            }
             int extents=checked((mappings.Count-1)*8+(int)count);
             while(mappings.TryPop(out var image))
             for(int n=0;n<U32(image,96);n++)

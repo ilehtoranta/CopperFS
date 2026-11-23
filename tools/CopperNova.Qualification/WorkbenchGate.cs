@@ -426,6 +426,7 @@ internal static partial class WorkbenchGate
         public int Td64Reads,Td64Writes;
         public bool WroteBelowBoundary,WroteAboveBoundary,ReadAboveBoundary;
         public long PayloadStart=long.MaxValue;
+        public Action<long,int>? ReadObserved;
         public bool WrotePayloadBelowBoundary,WrotePayloadAboveBoundary;
         public long FirstPayloadGroup=long.MaxValue,LastPayloadGroup=-1;
         public bool FlushOnDispose=>false;
@@ -446,6 +447,7 @@ internal static partial class WorkbenchGate
         public void Read(FileStream backing,long offset,Span<byte> bytes)
         {
             CheckRange(offset,bytes.Length);
+            ReadObserved?.Invoke(offset,bytes.Length);
             Reads++; ReadAboveBoundary|=offset+bytes.Length>Td64Boundary;
             backing.Position=offset;
             backing.ReadExactly(bytes);

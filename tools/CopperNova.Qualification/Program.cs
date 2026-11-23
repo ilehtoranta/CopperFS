@@ -11,6 +11,7 @@ using CopperSharp.Compiler;
 using CopperSharp.Compiler.BootAdf;
 using CopperSharp.Targets.Amiga;
 
+if(args.Length==4 && args[0] is "random-extent-reads" or "random-indexed-reads") { await WorkbenchGate.RandomExtentReads(args[1],args[2],args[3],args[0]=="random-indexed-reads"); return; }
 if(args.Length==4 && args[0]=="fragmented-file") { await WorkbenchGate.FragmentedFile(args[1],args[2],args[3]); return; }
 if(args.Length==4 && args[0]=="resources") { await WorkbenchGate.RunResources(args[1],args[2],args[3]); return; }
 if(args.Length==6 && args[0]=="reject-retired") { await WorkbenchGate.RejectRetired(args[1],args[2],args[3],args[4],args[5]); return; }
