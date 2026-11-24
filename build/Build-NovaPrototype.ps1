@@ -7,7 +7,7 @@ $ArtifactRoot=[IO.Path]::GetFullPath($ArtifactRoot)
 New-Item -ItemType Directory -Path $ArtifactRoot -Force | Out-Null
 $inputs=Join-Path $ArtifactRoot 'inputs'
 $sourcePaths=@(Get-ChildItem -LiteralPath (Join-Path $repo 'prototypes/CopperNova.Prototype'),(Join-Path $repo 'prototypes/CopperNova.Native') -Filter '*.cs' -File)
-$sourcePaths+=@('NativeCpxMemory.cs','NativeCpxIo.cs','NativeCpxTransport.cs') | ForEach-Object { Get-Item -LiteralPath (Join-Path $repo "src/CopperFS.Amiga/Cpx4/$_") }
+$sourcePaths+=@('NativeCpxMemory.cs','NativeCpxIo.cs','NativeCpxTransport.cs','NativeCpxVolume.cs') | ForEach-Object { Get-Item -LiteralPath (Join-Path $repo "src/CopperFS.Amiga/Cpx4/$_") }
 $sourcePaths+=Get-ChildItem -LiteralPath (Join-Path $repo 'src/CopperCPX.Core') -Filter '*.cs' -File
 $sourcePaths+=Get-Item -LiteralPath (Join-Path $repo 'prototypes/CopperFS.Prototype/WideMath32.cs')
 function SourceHashes { @($sourcePaths | Sort-Object FullName | ForEach-Object { @{Path=[IO.Path]::GetRelativePath($repo,$_.FullName);Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} }) }

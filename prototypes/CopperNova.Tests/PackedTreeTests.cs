@@ -206,12 +206,15 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
     [Fact] public void ColdCommentSurvivesRenameFlushAndRemoval()
     {
         var h=new Harness(NovaImage.FormatPacked()); h.Mount(); uint file=h.Open("before"); h.Close(file);
-        string text=new('x',79); h.Bstr(Harness.NameAt,"before"); h.Bstr(Harness.SecondName,text);
+        string text=new('ÿ',79); h.Bstr(Harness.NameAt,"before");
+        h.Memory.Write8(Harness.SecondName,79);
+        h.Memory.Bytes.AsSpan((int)Harness.SecondName+1,79).Fill(255);
         Assert.Equal(uint.MaxValue,h.Packet(28,0,0,Harness.NameAt>>2,Harness.SecondName>>2)); h.Bstr(Harness.SecondName,"after");
         Assert.Equal(uint.MaxValue,h.Packet(17,0,Harness.NameAt>>2,0,Harness.SecondName>>2)); h.Flush(); h.InhibitAndRemount();
+        Assert.True(h.Disk.AsSpan().IndexOf(System.Text.Encoding.UTF8.GetBytes(text))>=0);
         Assert.Equal(text,NovaImage.CheckPacked(h.Disk).Entries.Single(e=>e.Path=="/after").Comment);
         uint held=h.Packet(8,0,Harness.SecondName>>2,0xfffffffe); Assert.NotEqual(0u,held); Assert.Equal(uint.MaxValue,h.Packet(23,held,Harness.Data>>2));
-        Assert.Equal(79,h.Memory.Read8(Harness.Data+144)); Assert.Equal(120,h.Memory.Read8(Harness.Data+223)); Assert.Equal(uint.MaxValue,h.Packet(15,held));
+        Assert.Equal(79,h.Memory.Read8(Harness.Data+144)); Assert.All(h.Memory.Bytes.AsSpan((int)Harness.Data+145,79).ToArray(),b=>Assert.Equal(255,b)); Assert.Equal(uint.MaxValue,h.Packet(15,held));
         h.Bstr(Harness.NameAt,""); Assert.Equal(uint.MaxValue,h.Packet(28,0,0,Harness.SecondName>>2,Harness.NameAt>>2)); h.Flush(); Assert.Null(NovaImage.CheckPacked(h.Disk).Entries.Single().Comment);
     }
     [Fact] public void SplitTreeAndExternalExtentsSurviveAnotherGeneration()

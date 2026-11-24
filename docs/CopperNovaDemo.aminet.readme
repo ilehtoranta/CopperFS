@@ -14,7 +14,7 @@ CopperNova.lha.
 Decompress BlankCNP2.rdb.gz on the host. The resulting image is slightly
 over 4.06 GiB. Attach it as a second, writable RDB hardfile and boot from
 your usual system disk. A copy of the preview handler is already installed
-in the image's RDB. The preformatted, nonbootable CNP2 v6 partition CNP0: is
+in the image's RDB. The preformatted, nonbootable CNP2 v7 partition CNP0: is
 4 GiB + 64 MiB and uses DOS type 0x434E5032 (CNP2).
 
 Keep a separate copy of the original image if you want to start over.

@@ -109,6 +109,42 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
         m.Write32(page+24,1); m.Write32(page+28,id);
     }
 
+    // Commented disk images use bytes 36..59 for the six live fields that would
+    // overlap the counted UTF-8 at 64..222. The index, extents and directory
+    // entries at 228..511 retain their normal layout. Scratch never escapes I/O.
+    private void PackComment(uint page,uint output)
+    {
+        m.Copy(output,page,512);
+        m.Write16(output+34,1);
+        m.Write32(output+36,m.Read32(page+68));
+        m.Write32(output+40,m.Read32(page+96));
+        m.Write32(output+44,m.Read32(page+100));
+        m.Write32(output+48,m.Read32(page+108));
+        m.Write32(output+52,m.Read32(page+116));
+        m.Write32(output+56,m.Read32(page+NameContainer));
+        Zero(output+64,160);
+        EncodeText(page+ObjectComment,output+64);
+    }
+
+    private bool UnpackComment(uint page)
+    {
+        uint format=m.Read16(page+34);
+        if(format==0) return m.Read8(page+ObjectComment)==0;
+        uint scratch=Arena+Output;
+        if(format!=1 || m.Read8(page+64)==0 || !DecodeText(page+64,scratch,79,false)) return false;
+        Zero(page+64,160);
+        m.Write32(page+68,m.Read32(page+36));
+        m.Write32(page+96,m.Read32(page+40));
+        m.Write32(page+100,m.Read32(page+44));
+        m.Write32(page+108,m.Read32(page+48));
+        m.Write32(page+116,m.Read32(page+52));
+        m.Write32(page+NameContainer,m.Read32(page+56));
+        m.Write16(page+34,0);
+        Zero(page+36,24);
+        m.Copy(page+ObjectComment,scratch,(uint)m.Read8(scratch)+1);
+        return true;
+    }
+
     private StepResult ObjectTableStep(uint phase)
     {
         uint group=R(ObjectGroup),index=IndexBuffer(group);
@@ -155,7 +191,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             case 1401:
             {
                 uint id=ObjectId(R(LoadHome)),page=Image(R(LoadSlot)),sector=R(ObjectPair);
-                if(!PageValid(page,ObjectImageType,sector,id)) return Fatal();
+                if(!PageValid(page,ObjectImageType,sector,id) || !UnpackComment(page)) return Fatal();
                 DecodeObject(page,id); m.Write32(page+ObjectSector,sector);
                 return ValidObjectContents(page,id)?LoadedPacked():Fatal();
             }
@@ -224,9 +260,15 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
                     if(tag!=0) { m.Write32(entry,sector); continue; }
                     sector^=1;
                     m.Write32(entry,sector); m.Write32(page+ObjectSector,sector);
-                    m.Write16(page+32,m.Read16(page+6));
-                    Stamp(page,ObjectImageType,sector,id,R(NewGeneration));
-                    W(ObjectSlot,i+1); return Issue(IoKind.Write,sector,page,512,1413);
+                    uint output=page;
+                    if(m.Read8(page+ObjectComment)!=0)
+                    {
+                        output=Arena+Output;
+                        PackComment(page,output);
+                    }
+                    m.Write16(output+32,m.Read16(page+6));
+                    Stamp(output,ObjectImageType,sector,id,R(NewGeneration));
+                    W(ObjectSlot,i+1); return Issue(IoKind.Write,sector,output,512,1413);
                 }
                 uint alternate=IndexSector^1u;
                 if(DynamicIndex)
@@ -244,7 +286,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
             case 1413:
             {
                 uint page=Image(m.Read8(Ptr(DirtySlots)+R(ObjectSlot)-1));
-                DecodeObject(page,m.Read32(page+20));
+                if(m.Read16(page+6)==ObjectImageType) DecodeObject(page,m.Read32(page+20));
                 return Next(1412);
             }
             case 1421:

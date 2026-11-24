@@ -159,7 +159,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
     private bool RootValid(uint p,uint bank)
     {
         uint version=m.Read16(p+4),blocks=R(Blocks),floor=GrowDataFloor;
-        return m.Read32(p)==PackedMagic&&version==6&&m.Read16(p+6)==30&&m.Read32(p+12)==bank&&
+        return m.Read32(p)==PackedMagic&&version==7&&DecodeText(p+RootLabel,0,30,true)&&m.Read16(p+6)==30&&m.Read32(p+12)==bank&&
             (m.Read32(p+16)&1)==bank&&m.Read32(p+20)==0&&m.Read32(p+64)==blocks&&m.Read32(p+68)==floor&&
             floor<blocks&&Pair(m.Read16(p+96),WideTopStart)&&
             m.Read32(p+72)<=blocks-floor&&m.Read32(p+76)>=1&&m.Read32(p+76)<=GrowCapacity&&m.Read32(p+88)<=m.Read32(p+76)&&
