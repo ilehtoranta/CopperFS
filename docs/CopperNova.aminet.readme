@@ -63,7 +63,8 @@ Current limitations
   to a separate, freshly initialized v7 partition.
 - Open files and locks use one 48-byte record each, allocated as needed.
   Available RAM limits how many can be held at once.
-- ASCII names support up to 168 bytes per component and 255 per DOS path.
+- File and directory names preserve DOS bytes using UTF-8 on disk. Each
+  component holds up to 168 encoded bytes. DOS paths allow 255 input bytes.
 - Files support up to 2 GiB minus one byte. The inode stores eight
   extents inline. Fragmented files allocate additional 512-byte extent
   pages as needed.

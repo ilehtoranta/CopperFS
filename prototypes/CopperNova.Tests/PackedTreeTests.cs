@@ -203,6 +203,36 @@ public class PackedTreeTests(Xunit.Abstractions.ITestOutputHelper output)
         h.Close(file);
     }
 
+    [Fact]
+    public void HighByteComponentUsesEncodedLimitAndReturnsOriginalSpelling()
+    {
+        var h=new Harness(NovaImage.FormatPacked());
+        h.Mount();
+        void Name(int length,byte value)
+        {
+            h.Memory.Write8(Harness.NameAt,(byte)length);
+            h.Memory.Bytes.AsSpan((int)Harness.NameAt+1,length).Fill(value);
+        }
+        Name(85,0xe4);
+        Assert.Equal(0u,h.Packet(22,0,Harness.NameAt>>2));
+        Assert.Equal(210u,h.Engine.DosError);
+        Name(84,0xe4);
+        uint directory=h.Packet(22,0,Harness.NameAt>>2);
+        Assert.NotEqual(0u,directory);
+        Assert.Equal(uint.MaxValue,h.Packet(15,directory));
+        h.Flush();
+        h.InhibitAndRemount();
+        Name(84,0xc4);
+        Assert.Equal(0u,h.Packet(22,0,Harness.NameAt>>2));
+        Assert.Equal(203u,h.Engine.DosError);
+        directory=h.Packet(8,0,Harness.NameAt>>2,0xfffffffe);
+        Assert.NotEqual(0u,directory);
+        Assert.Equal(uint.MaxValue,h.Packet(23,directory,Harness.Data>>2));
+        Assert.Equal(84,h.Memory.Read8(Harness.Data+8));
+        Assert.All(h.Memory.Bytes.AsSpan((int)Harness.Data+9,84).ToArray(),b=>Assert.Equal(0xe4,b));
+        Assert.Equal("/"+new string('ä',84),NovaImage.CheckPacked(h.Disk).Entries.Single().Path);
+    }
+
     [Fact] public void ColdCommentSurvivesRenameFlushAndRemoval()
     {
         var h=new Harness(NovaImage.FormatPacked()); h.Mount(); uint file=h.Open("before"); h.Close(file);
