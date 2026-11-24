@@ -145,7 +145,8 @@ public static partial class AmigaFfsWriteCore
         var g = AmigaFfsGeometry.Read(ref p);
         if (count == 0 || first < g.ReservedBlocks || first >= g.BlockCount || count > g.BlockCount - first)
             return Fail(ref w, DOS.Error.BadNumber);
-        if (g.RootBlock >= first && g.RootBlock - first < count) return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (g.RootBlock >= first && g.RootBlock - first < count &&
+            (IsFree(ref p, ref w, g.RootBlock) || w.Error != DOS.Error.None)) return Fail(ref w, DOS.Error.DiskNotValidated);
         var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
         var begin = (first - g.ReservedBlocks) / g.BitmapBits;
         var end = (first + count - 1 - g.ReservedBlocks) / g.BitmapBits;
@@ -160,7 +161,8 @@ public static partial class AmigaFfsWriteCore
             for (var index = 0u; index < maps; index++)
             {
                 if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref cursor, index, w.Meta, out var other) ||
-                    (index != touched && other == page) || (other >= first && other - first < count))
+                    (index != touched && other == page) ||
+                    (other >= first && other - first < count && (IsFree(ref p, ref w, other) || w.Error != DOS.Error.None)))
                     return Fail(ref w, DOS.Error.DiskNotValidated);
             }
         }
@@ -169,7 +171,8 @@ public static partial class AmigaFfsWriteCore
         for (var guard = 0u; extension != 0; guard++)
         {
             if (guard >= maps || extension < g.ReservedBlocks || extension >= g.BlockCount ||
-                extension == g.RootBlock || (extension >= first && extension - first < count) ||
+                extension == g.RootBlock || (extension >= first && extension - first < count &&
+                    (IsFree(ref p, ref w, extension) || w.Error != DOS.Error.None)) ||
                 !p.ReadBlock(extension, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
             extension = p.ReadUInt32(w.Data, (int)g.BlockBytes - 4);
         }

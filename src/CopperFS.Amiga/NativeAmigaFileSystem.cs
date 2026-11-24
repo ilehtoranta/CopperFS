@@ -329,6 +329,20 @@ public static partial class NativeAmigaFileSystem
         }
     }
 
+    // This is only an admission gate, never evidence of UNMAP support. Inspect
+    // the opened device identity so a DOS mount alias cannot bypass the floppy
+    // exclusion. Other devices still require the full read-only SCSI discovery.
+    internal static bool CanQueryDiscard(APTR state)
+    {
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return false;
+        var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
+        if (request.IsNull) return false;
+        var device = APTR.FromPointer(APTR.ReadUInt32(request, NativeExecFieldCodec.IoDeviceOffset));
+        if (device.IsNull) return false;
+        var name = APTR.FromPointer(APTR.ReadUInt32(device, NativeExecFieldCodec.NodeNameOffset));
+        return name.IsNotNull && !DeviceNamed(name, "trackdisk.device");
+    }
+
     private static void ConfigurePayloadCache(APTR state, APTR deviceName, APTR environment)
     {
         var policy = 0u;
@@ -3389,11 +3403,16 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return false;
     }
 
-    public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits) =>
-        AmigaScsiUnmap.Query(ref this, Geometry, control, out limits);
+    public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits)
+    {
+        limits = default;
+        return NativeAmigaFileSystem.CanQueryDiscard(state) &&
+            AmigaScsiUnmap.Query(ref this, Geometry, control, out limits);
+    }
 
     public bool DiscardBlocks(APTR control, uint block, uint count)
     {
+        if (!NativeAmigaFileSystem.CanQueryDiscard(state)) return false;
         var success = AmigaScsiUnmap.Discard(ref this, Geometry, control, block, count);
         // Failure may follow partial deallocation, so invalidate on either result.
         InvalidateBlocks(block, count);
@@ -3402,6 +3421,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 
     public bool DiscardRanges(APTR control, APTR ranges, uint count)
     {
+        if (!NativeAmigaFileSystem.CanQueryDiscard(state)) return false;
         var success = AmigaScsiUnmap.DiscardRanges(ref this, Geometry, control, ranges, count);
         // Any subset may have completed on failure. Invalidate the whole vector.
         for (var i = 0u; i < count; i++)

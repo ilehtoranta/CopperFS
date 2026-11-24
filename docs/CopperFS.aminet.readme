@@ -3,7 +3,8 @@ Author:       Ilkka Lehtoranta
 Uploader:     Ilkka Lehtoranta (ilkleht@gmail.com)
 Type:         disk/misc
 Version:      1.0
-Architecture: m68k-amigaos >= 2.0
+Requires:     AmigaOS 2.04 or newer (dos.library V37)
+Architecture: m68k-amigaos >= 2.04
 
 CopperFS provides new replacement Amiga OFS/FFS and SFS filesystem
 implementations with TRIM support. They are written in C# using
