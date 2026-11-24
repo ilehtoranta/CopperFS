@@ -120,8 +120,14 @@ public static partial class NovaImage
                         int e=320+at; Require(used-at>=24);
                         int len=U16(p,e+20),step=(24+len+7)&~7;
                         Require(len is >0 and <=168&&at+step<=used&&U32(p,e)==1);
-                        string name=Encoding.ASCII.GetString(p,e+24,len); uint hash=0;
-                        foreach(char c in name) hash=unchecked((hash<<5|hash>>27)+char.ToUpperInvariant(c));
+                        string name=DiskText.GetString(p,e+24,len); uint hash=0;
+                        Require(name.All(c=>c<=255 && c!=0 && c!=47 && c!=58));
+                        for(int i=0;i<len;i++)
+                        {
+                            uint c=p[e+24+i];
+                            if(c is >=97 and <=122 || i!=0 && p[e+23+i]==195 && c is >=160 and <=190 && c!=183) c-=32;
+                            hash=unchecked((hash<<5|hash>>27)+c);
+                        }
                         Require(names.Add(name)&&hash==U32(p,e+16)&&serials.Add(((ulong)U32(p,e+8)<<32)|U32(p,e+12)));
                         uint id=U32(p,e+4);
                         Require(objects.ContainsKey(id)&&U32(objects[id],136)==(leaf.Chain<0?0:leaf.Id));

@@ -35,7 +35,7 @@ internal static partial class WorkbenchGate
                     var recovered=CopperNova.Reference.NovaImage.CheckPacked(stream,PartitionOffset,disk.Length-PartitionOffset);
                     name=recovered.VolumeName;
                     if(entry=="CommentWriteEntry" && stage<2 && recovered.Entries.Count!=0) throw new InvalidDataException("Uncommitted file survived.");
-                    if((entry=="CommentWriteEntry" && stage==2 || entry=="LabelColdEntry") && recovered.Entries.Single().Comment!=new string('ÿ',79)) throw new InvalidDataException("Comment did not round-trip.");
+                    if((entry=="CommentWriteEntry" && stage==2 || entry=="LabelColdEntry") && recovered.Entries.Single(e=>e.Path=="/Å/ü").Comment!=new string('ÿ',79)) throw new InvalidDataException("Comment did not round-trip.");
                     if(name!=(entry=="LabelRenameEntry" && stage<2?"Work Disk":expected)) throw new InvalidDataException($"Recovered label {name}.");
                 }
                 else

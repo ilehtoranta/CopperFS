@@ -53,8 +53,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(phase==55) {
             if(m.Read16(p+6)!=11||m.Read32(p+100)>192) return Fatal(); uint end=p+320+m.Read32(p+100),at=p+320;
             while(at<end) { if(end-at<24) return Fatal(); uint len=m.Read16(at+20),step=(24+len+7)&~7u;
-                if(step>end-at||len==0) return Fatal(); if(m.Read32(at+4)==id) { if(len>107) return Error(210);
-                    m.Write8(fib+8,(byte)len); m.Copy(fib+9,at+24,len);
+                if(step>end-at||len==0) return Fatal(); if(m.Read32(at+4)==id) { if(!DecodeTextBytes(at+24,len,fib+8,107,false)) return Error(210);
                     if(GrowingObjects||CommentIndex(id>>2,false)==0) return Finish(uint.MaxValue);
                     return Load(2000+(id>>2),56); } at+=step; } return Fatal();
         }

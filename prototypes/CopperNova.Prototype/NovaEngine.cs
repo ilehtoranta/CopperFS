@@ -327,8 +327,21 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     private bool MetadataHome(uint home)=>home is >=128 and <=161 or >=256 and <1280;
     private bool ValidInodeIdentity(uint p,uint slot)=>slot>0&&slot<=LastObjectSlot&&m.Read32(p+24)==1&&m.Read32(p+28)==slot&&m.Read32(p+64)==0;
     private bool ValidInode(uint p,uint slot)=>ValidInodeIdentity(p,slot)&&m.Read16(p+6) is 10 or 11&&m.Read32(p+96)<=8;
-    private uint NameHash(uint p,uint bytes) { uint value=0,end=p+bytes; while(p<end) { uint c=m.Read8(p++); if(c is >=97 and <=122)c-=32; value=unchecked((value<<5|value>>27)+c); } return value; }
-    private bool NameEqual(uint a,uint b,uint bytes) { uint end=a+bytes; while(a<end) { uint x=m.Read8(a++),y=m.Read8(b++); if(x==y)continue; if(x is >=97 and <=122)x-=32; if(y is >=97 and <=122)y-=32; if(x!=y)return false; } return true; }
+    private uint FoldNameByte(uint start,uint index,uint c)
+    {
+        if(c is >=97 and <=122) return c-32;
+        if(index!=0 && c is >=160 and <=190 && c!=183 && m.Read8(start+index-1)==195) return c-32;
+        return c;
+    }
+    private bool NameEqual(uint a,uint b,uint bytes)
+    {
+        for(uint i=0;i<bytes;i++)
+        {
+            uint x=m.Read8(a+i),y=m.Read8(b+i);
+            if(x!=y && FoldNameByte(a,i,x)!=FoldNameByte(b,i,y)) return false;
+        }
+        return true;
+    }
     private bool Bit(uint p,uint bit)=> (m.Read8(p+(bit>>3))&(1u<<(int)(bit&7)))!=0;
     private void SetBit(uint p,uint bit,bool allocated)
     { uint at=p+(bit>>3),mask=1u<<(int)(bit&7),old=m.Read8(at); m.Write8(at,(byte)(allocated?old|mask:old&~mask)); }

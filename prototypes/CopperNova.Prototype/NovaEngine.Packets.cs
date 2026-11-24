@@ -10,16 +10,22 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(bstr==0||bstr>0x3fffffff) return Error(115);
         uint p=bstr<<2; if(!ExternalRange(p,1)) return Error(115); uint length=m.Read8(p),start=0;
         if(!ExternalRange(p,length+1)) return Error(115);
-        uint name=Arena+Path,highByteEnd=0;
+        // Two adjacent 256-byte buffers hold the expanded DOS path.
+        uint name=Arena+Path,encoded=0;
         for(uint n=0;n<length;n++)
         {
-            byte c=m.Read8(p+1+n); m.Write8(name+n,c);
-            // DOS volume prefixes can contain high bytes. File components remain ASCII.
+            uint c=m.Read8(p+1+n);
             if(c==0) return Error(210);
-            if(c>=128) highByteEnd=n+1;
-            if(c==58) { start=n+1; slot=1; }
+            if(c>=128)
+            {
+                if(!GrowingObjects) return Error(210);
+                m.Write8(name+encoded++,(byte)(0xc0|(c>>6)));
+                c=0x80|(c&63);
+            }
+            m.Write8(name+encoded++,(byte)c);
+            if(c==58) { start=encoded; slot=1; }
         }
-        if(highByteEnd>start) return Error(210);
+        length=encoded;
         // High-occupancy object-table packets keep every directory visited by this path
         // pinned. Allow one slot per possible component plus the control page,
         // bitmap, selector and new object. Longer paths retry after publication.
@@ -47,7 +53,7 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
             uint end=at,hash=0;
             while(end<length) {
                 uint c=m.Read8(names+end); if(c==47) break;
-                if(c is >=97 and <=122) c-=32;
+                c=FoldNameByte(names+at,end-at,c);
                 hash=unchecked((hash<<5|hash>>27)+c); end++;
             }
             if(end==at||end-at>168) return Error(210);

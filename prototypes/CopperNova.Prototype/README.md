@@ -128,7 +128,8 @@ This is a benchmark-capable metadata prototype, not a feature-complete filesyste
 
 - All layouts use 512-byte sectors. The single-group benchmarks use 16 MiB. Wide CNP2 volumes use multiple allocation groups.
 - Object-index leaves and directory pages grow on demand as described above.
-- ASCII names allow at most 168 bytes per component and a 255-byte DOS path.
+- File and directory names preserve DOS bytes using UTF-8 on disk. Each
+  component holds up to 168 encoded bytes. DOS paths allow 255 input bytes.
 - CNP2 keeps the newest eight extents inline. When another run is needed,
   it writes the full inline list to a new immutable 512-byte page. Each
   page identifies its file and the preceding logical range. The first

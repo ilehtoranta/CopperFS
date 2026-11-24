@@ -42,7 +42,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct, ICpxMemory
     // A zero destination validates the disk image without publishing any bytes.
     private bool DecodeText(uint source,uint target,uint limit,bool label)
     {
-        uint bytes=m.Read8(source),count=0;
+        return DecodeTextBytes(source+1,m.Read8(source),target,limit,label);
+    }
+    private bool DecodeTextBytes(uint payload,uint bytes,uint target,uint limit,bool label)
+    {
+        uint source=payload-1,count=0;
         if(bytes>limit*2) return false;
         for(uint i=1;i<=bytes;i++)
         {
