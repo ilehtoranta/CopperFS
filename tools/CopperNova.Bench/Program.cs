@@ -138,7 +138,7 @@ internal static class Program
             },
             Inputs = new
             {
-                CandidatePackedRootVersion = packed ? 6 : 0,
+                CandidatePackedRootVersion = packed ? 7 : 0,
                 PrototypeHandlerSha256 = Hash(File.ReadAllBytes(CpxHandler)),
                 BaselinePrototypeHandlerSha256 = string.IsNullOrEmpty(baselineHandler)?null:Hash(File.ReadAllBytes(baselineHandler)),
                 FfsHandlerSha256 = Hash(File.ReadAllBytes(FfsHandler)),

@@ -14,7 +14,7 @@ public static partial class NovaImage
 
 
     /// <summary>Format a designated partition with a growing CNP2 object table with packed leaves.</summary>
-    public static void FormatPackedWide(Stream target,long start,long length,uint allocationHint=0)
+    public static void FormatPackedWide(Stream target,long start,long length,uint allocationHint=0,string? volumeName=null)
     {
         ValidatePackedRange(target,start,length);
         if(!target.CanWrite) throw new ArgumentException("The designated partition must be writable.",nameof(target));
@@ -24,12 +24,17 @@ public static partial class NovaImage
             throw new ArgumentOutOfRangeException(nameof(allocationHint));
 
         var prefix=new byte[PackedPrefixSectors*SectorBytes];
+        if(volumeName!=null)
+        {
+            if(volumeName.Length is 0 or >30 || volumeName.Any(c=>c>255 || !ValidLabelByte((byte)c)))
+                throw new ArgumentException("Volume names require 1 to 30 AmigaDOS label bytes.",nameof(volumeName));
+            prefix[160]=(byte)DiskText.GetBytes(volumeName,prefix.AsSpan(161));
+        }
         Put(prefix,0,Packed); Half(prefix,6,30);
         Put(prefix,24,(uint)(Identity>>32)); Put(prefix,28,unchecked((uint)Identity)); Put(prefix,76,1);
-        Half(prefix,4,6); Put(prefix,64,blocks); Put(prefix,68,floor); Put(prefix,72,blocks-floor);
+        Half(prefix,4,7); Put(prefix,64,blocks); Put(prefix,68,floor); Put(prefix,72,blocks-floor);
         prefix.AsSpan(96,64).Clear();
         Half(prefix,96,(ushort)WideTop); Put(prefix,100,allocationHint);
-        prefix.AsSpan(160,352).Clear();
         Seal(prefix,0);
         target.Position=start;
         target.Write(prefix.AsSpan(0,PackedPrefixSectors*SectorBytes));

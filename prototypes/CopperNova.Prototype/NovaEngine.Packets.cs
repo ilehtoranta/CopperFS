@@ -10,14 +10,16 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
         if(bstr==0||bstr>0x3fffffff) return Error(115);
         uint p=bstr<<2; if(!ExternalRange(p,1)) return Error(115); uint length=m.Read8(p),start=0;
         if(!ExternalRange(p,length+1)) return Error(115);
-        uint name=Arena+Path;
+        uint name=Arena+Path,highByteEnd=0;
         for(uint n=0;n<length;n++)
         {
             byte c=m.Read8(p+1+n); m.Write8(name+n,c);
-            // First prototype has ASCII names; reject unsupported encoding before mutation.
-            if(c==0||c>=128) return Error(210);
+            // DOS volume prefixes can contain high bytes. File components remain ASCII.
+            if(c==0) return Error(210);
+            if(c>=128) highByteEnd=n+1;
             if(c==58) { start=n+1; slot=1; }
         }
+        if(highByteEnd>start) return Error(210);
         // High-occupancy object-table packets keep every directory visited by this path
         // pinned. Allow one slot per possible component plus the control page,
         // bitmap, selector and new object. Longer paths retry after publication.
@@ -153,6 +155,10 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     return StartFlush(0);
                 switch(action)
                 {
+                    case 9: // ACTION_RENAME_DISK, Arg1 is a BPTR to a BSTR.
+                        if(!GrowingObjects) return Error(209);
+                        if(Arg(0)>0x3fffffff || !StageLabel(Arg(0)<<2)) return Error(210);
+                        return Load(128,73);
                     case 27: return StartFlush(10);
                     case 31:
                         if(HasResources) return Error(202);
@@ -216,6 +222,11 @@ public partial struct NovaEngine<TMemory> where TMemory : struct,ICpxMemory
                     case 1027: return Finish(1); // ACTION_IS_FILESYSTEM
                     default: return Error(209);
                 }
+            case 73:
+                Zero(Root()+RootLabel,64);
+                EncodeText(Arena+State+LabelScratch,Root()+RootLabel);
+                Dirty(R(Loaded)); // Publish the label with the group's normal shadow root.
+                return StartFlush(10);
             case 10: return Finish(uint.MaxValue);
             case 11: m.Write32(state+Inhibited,1); return Finish(uint.MaxValue);
             case 12: m.Write32(state+Mounted,0); return Finish(uint.MaxValue);

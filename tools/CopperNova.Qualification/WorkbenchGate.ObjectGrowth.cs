@@ -10,9 +10,9 @@ using CopperSharp.Targets.Amiga;
 
 internal static partial class WorkbenchGate
 {
-    public static async Task ObjectGrowth(string handlerPath,string romPath,string output,string? formatterPath=null,int version=6,int fileCount=0,int perDirectory=0)
+    public static async Task ObjectGrowth(string handlerPath,string romPath,string output,string? formatterPath=null,int version=7,int fileCount=0,int perDirectory=0)
     {
-        if(version!=6)
+        if(version!=7)
             throw new ArgumentOutOfRangeException(nameof(version));
         if(fileCount<0||fileCount>0&&(perDirectory<1||perDirectory>fileCount||fileCount>0xffffff))
             throw new ArgumentOutOfRangeException(nameof(fileCount));

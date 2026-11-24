@@ -84,6 +84,12 @@ public static class NativeNovaHandler
                         volume=DOS.MakeDosEntry(CString.FromLiteral("CopperNovaPrototype"),(int)DosListType.Volume);
                         if(volume.IsNotNull)
                         {
+                            // Keep a padded fallback for unlabeled roots and for blank media.
+                            APTR fallback=APTR.FromPointer(arena+1824);
+                            APTR original=APTR.FromPointer(APTR.ReadUInt32(volume,40)<<2);
+                            for(int i=0;i<=APTR.ReadUInt8(original,0);i++)
+                                APTR.WriteUInt8(fallback,i,APTR.ReadUInt8(original,i));
+                            NativeCpxVolume.Initialize(arena,volume,DisplayLabel(arena,ref engine));
                             node=APTR.FromPointer(APTR.ReadUInt32(packet,28)<<2);
                             if(node.IsNotNull) APTR.WriteUInt32(node,8,port.Raw);
                             engine.Bind(blocks,port.Raw,volume.Raw,unit);
@@ -104,7 +110,7 @@ public static class NativeNovaHandler
             else failure=115;
         }
         if(failure!=0) Reply(message,packet,port,0,failure);
-        if(volume.IsNotNull) DOS.FreeDosEntry(volume);
+        if(volume.IsNotNull) { NativeCpxVolume.Restore(arena,volume); DOS.FreeDosEntry(volume); }
         if(opened) Exec.CloseDevice(request);
         if(arena!=0) NativeCpxTransport.ReleaseDma(arena);
         if(request.IsNotNull) Exec.DeleteIORequest(request);
@@ -112,6 +118,12 @@ public static class NativeNovaHandler
         if(arena!=0) Exec.FreeMem(arena,NovaEngine<NativeCpxMemory>.ArenaBytes);
         Exec.CloseLibrary(dos); return failure==0?0u:20u;
     }
+    private static uint DisplayLabel(uint arena,ref NovaEngine<NativeCpxMemory> engine)
+    {
+        uint label=engine.VolumeLabelAddress;
+        return label==0?arena+1824:label;
+    }
+
     private static bool RegisterVolume(APTR port,APTR volume,uint magic)
     {
         APTR.WriteUInt32(volume,8,port.Raw);
@@ -142,7 +154,7 @@ public static class NativeNovaHandler
                 continue;
             }
             uint mode=APTR.ReadUInt32(packet,24);
-            if(mode is not (1 or 6))
+            if(mode is not (1 or 8 or 9))
             {
                 Reply(message,packet,port,mode==0?NovaEngine<NativeCpxMemory>.PackedMagic:0u,mode==0?0u:115u);
                 continue;
@@ -151,11 +163,18 @@ public static class NativeNovaHandler
             APTR date=APTR.FromPointer(arena+1792);
             DOS.DateStamp(date);
             uint days=APTR.ReadUInt32(date,0),minutes=APTR.ReadUInt32(date,4),ticks=APTR.ReadUInt32(date,8);
-            if(engine.BeginFormat(days+1,minutes*3000+ticks)==CpxError.None&&
-                Drive(arena,ioPort,task,ref engine)&&engine.IsMounted&&RegisterVolume(port,volume,engine.VolumeMagic))
+            uint label=mode==9?APTR.ReadUInt32(packet,28):0;
+            if(mode==9 && label==0 || engine.BeginFormat(days+1,minutes*3000+ticks,label)!=CpxError.None)
             {
-                Reply(message,packet,port,uint.MaxValue,0);
-                return true;
+                Reply(message,packet,port,0,mode==9?210u:213u); continue;
+            }
+            if(Drive(arena,ioPort,task,ref engine)&&engine.IsMounted)
+            {
+                NativeCpxVolume.Publish(arena,DisplayLabel(arena,ref engine));
+                bool registered=RegisterVolume(port,volume,engine.VolumeMagic);
+                if(!registered && node.IsNotNull) APTR.WriteUInt32(node,8,0);
+                Reply(message,packet,port,registered?uint.MaxValue:0u,registered?0u:103u);
+                return registered;
             }
             Reply(message,packet,port,0,213);
         }
@@ -262,6 +281,8 @@ public static class NativeNovaHandler
                 continue;
             }
             bool succeeded = Drive(arena, ioPort, task, ref engine);
+            if(succeeded && engine.Result!=0 && engine.IsMounted && (action==9 || action==31))
+                NativeCpxVolume.Publish(arena,DisplayLabel(arena,ref engine));
             uint released = engine.ReleasedPacketResource;
             if (released != 0) Exec.FreeMem(released, resourceBytes);
             bool shutdown=action==5&&succeeded;

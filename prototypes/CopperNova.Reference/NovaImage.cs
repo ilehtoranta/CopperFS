@@ -65,7 +65,7 @@ public static partial class NovaImage
         Header(image,116,22); Put(image,116*512+64,U32(image,58*512+8)); Put(image,116*512+68,58); Seal(image,116);
     }
     public sealed record Entry(string Path,bool Directory,uint Slot,long Size,string? Sha256) { public string? Comment {get;init;} public int Extents {get;init;} }
-    public sealed record CheckResult(uint Generation,int AllocatedInodes,uint DataSectors,uint FreeSectors,IReadOnlyList<Entry> Entries);
+    public sealed record CheckResult(uint Generation,int AllocatedInodes,uint DataSectors,uint FreeSectors,IReadOnlyList<Entry> Entries) { public string? VolumeName {get;init;} }
     public static CheckResult Check(byte[] image)
     {
         if(image.Length%512!=0) throw new InvalidDataException("Invalid image size");

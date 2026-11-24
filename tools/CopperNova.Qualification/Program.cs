@@ -12,11 +12,12 @@ using CopperSharp.Compiler.BootAdf;
 using CopperSharp.Targets.Amiga;
 
 if(args.Length==4 && args[0] is "random-extent-reads" or "random-indexed-reads") { await WorkbenchGate.RandomExtentReads(args[1],args[2],args[3],args[0]=="random-indexed-reads"); return; }
+if(args.Length==5 && args[0]=="volume-label") { await WorkbenchGate.VolumeLabel(args[1],args[2],args[3],args[4]); return; }
 if(args.Length==4 && args[0]=="fragmented-file") { await WorkbenchGate.FragmentedFile(args[1],args[2],args[3]); return; }
 if(args.Length==4 && args[0]=="resources") { await WorkbenchGate.RunResources(args[1],args[2],args[3]); return; }
 if(args.Length==6 && args[0]=="reject-retired") { await WorkbenchGate.RejectRetired(args[1],args[2],args[3],args[4],args[5]); return; }
-if(args.Length==7 && args[0]=="format-scale-v6") { await WorkbenchGate.ObjectGrowth(args[1],args[3],args[4],args[2],6,int.Parse(args[5]),int.Parse(args[6])); return; }
-if(args.Length==6 && args[0]=="scale-v6") { await WorkbenchGate.ObjectGrowth(args[1],args[2],args[3],version:6,fileCount:int.Parse(args[4]),perDirectory:int.Parse(args[5])); return; }
+if(args.Length==7 && args[0]=="format-scale-v7") { await WorkbenchGate.ObjectGrowth(args[1],args[3],args[4],args[2],7,int.Parse(args[5]),int.Parse(args[6])); return; }
+if(args.Length==6 && args[0]=="scale-v7") { await WorkbenchGate.ObjectGrowth(args[1],args[2],args[3],version:7,fileCount:int.Parse(args[4]),perDirectory:int.Parse(args[5])); return; }
 if(args.Length==6 && args[0]=="scale-object-growth") { await WorkbenchGate.ObjectGrowth(args[1],args[2],args[3],fileCount:int.Parse(args[4]),perDirectory:int.Parse(args[5])); return; }
 if(args.Length==5 && args[0]=="format-object-growth") { await WorkbenchGate.ObjectGrowth(args[1],args[3],args[4],args[2]); return; }
 if(args.Length==5 && args[0]=="compare-object-growth") { await WorkbenchGate.ObjectGrowth(args[2],args[3],args[4],version:int.Parse(args[1])); return; }

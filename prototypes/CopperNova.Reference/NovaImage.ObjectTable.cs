@@ -60,6 +60,16 @@ public static partial class NovaImage
                     Half(p,32,(ushort)kind); Put(p,108,kind==12?1u:value);
                     if(kind==12) Put(p,116,value);
                 }
+                if(U16(p,34)==1)
+                {
+                    string? text=ReadDiskText(p,64,79,false);
+                    Require(!string.IsNullOrEmpty(text));
+                    Array.Clear(p,64,160);
+                    Put(p,68,U32(p,36)); Put(p,96,U32(p,40)); Put(p,100,U32(p,44));
+                    Put(p,108,U32(p,48)); Put(p,116,U32(p,52)); Put(p,136,U32(p,56));
+                    p[144]=(byte)Encoding.Latin1.GetBytes(text!,p.AsSpan(145));
+                }
+                else Require(U16(p,34)==0 && p[144]==0);
                 Require(p[144]<=79&&U32(p,64)==0&&U32(p,108)>=1&&U32(p,108)<=last);
                 if(U16(p,32)==12)
                 {

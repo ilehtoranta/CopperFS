@@ -7,7 +7,7 @@ Requires:     AmigaOS 2.04, 68000 or newer, TD64-capable disk driver
 Architecture: m68k-amigaos >= 2.04
 
 CopperNova is a new MIT-licensed Amiga filesystem written in C#.
-CopperNovaFormat creates CNP2 v6 partitions with growing directories,
+CopperNovaFormat creates CNP2 v7 partitions with growing directories,
 an on-demand object index, wide extents and multi-group allocation.
 The disk driver must support
 TD64 reads and writes and CMD_UPDATE for Flush, including on partitions
@@ -37,12 +37,17 @@ Installation
 3. From an Amiga Shell, run the formatter with the partition's device
    name and the INITIALIZE keyword. For a partition named CNP0:
 
-       CopperNovaFormat CNP0: INITIALIZE
+       CopperNovaFormat CNP0: INITIALIZE NAME "Work Disk"
 
    Use this command only on a new, empty partition. The command requires
    both CNP2 root sectors to be zero and refuses a mounted CNP2 volume.
-   After successful initialization you can use CNP0:. The display
-   volume name in this preview is CopperNovaPrototype.
+   After initialization, use CNP0: or "Work Disk:" to access the volume.
+   Omit NAME to keep the default label CopperNovaPrototype. To rename
+   a mounted volume, run Relabel CNP0: "New Name". Labels accept 1 to
+   30 native Amiga text bytes, including spaces and accented letters.
+   Labels reserve slash, colon and ASCII control characters. File
+   comments accept up to 79 AmigaDOS bytes. Both fields use UTF-8 on
+   disk and return the original bytes to AmigaDOS.
 
 The optional CopperNovaDemo archive contains a preformatted emulator
 hardfile. Converting another filesystem in place is outside this preview.
@@ -52,10 +57,10 @@ Current limitations
 - 512-byte sectors. The demo partition is 4 GiB + 64 MiB.
   Larger geometries and physical controllers have yet to be qualified.
 - A fresh volume starts with one index leaf. The index and directory
-  pages grow as needed. Kickstart 2.04 tests covered 122,880 files on one
+  pages grow as needed. Kickstart 2.04 tests on v6 covered 122,880 files on one
   partition and 4,096 files in one directory.
-- To migrate a v1-v5 volume, use its matching handler to copy the files
-  to a separate, freshly initialized v6 partition.
+- To migrate a v1-v6 volume, use its matching handler to copy the files
+  to a separate, freshly initialized v7 partition.
 - Open files and locks use one 48-byte record each, allocated as needed.
   Available RAM limits how many can be held at once.
 - ASCII names support up to 168 bytes per component and 255 per DOS path.
@@ -71,8 +76,10 @@ Current limitations
 - Experimental images may need to be recreated for future releases.
   Keep independent copies of your files.
 
-On emulated Kickstart 2.04, CopperNovaFormat initialized a blank RDB
-partition. Tests covered explicit Flush, TD64 access across 4 GiB and
+On emulated Kickstart 2.04, the v7 formatter initialized a blank RDB
+partition. Tests covered Relabel, 79-byte comments, explicit Flush and
+recovery at both publication barriers. Earlier revisions exercised
+TD64 access across 4 GiB and
 recovery after simulated power cuts before both publication barriers.
 The handler held 96 open files and 96 locks simultaneously and rejected
 resource allocation failures without changing files. Physical hardware

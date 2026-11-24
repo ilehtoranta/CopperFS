@@ -24,7 +24,7 @@ public static partial class WorkbenchProbe
         var segment=DOS.LoadSeg("SYS:CopperNovaFormat");
         if(!segment.HasValue) { Mark(241); return 20; }
         Mark(180);
-        string arguments=growing?"CNP0: INITIALIZE V6\n":"CNP0: INITIALIZE\n";
+        string arguments=growing?"CNP0: INITIALIZE V7\n":"CNP0: INITIALIZE\n";
         int result=DOS.RunCommand(segment.Value,4096,APTR.FromPointer(CString.FromLiteral(arguments)),arguments.Length);
         DOS.UnLoadSeg(segment.Value);
         var root=DOS.Lock("CNP0:",(DOS.LockMode)(-2));

@@ -91,7 +91,7 @@ public class ExecutionCoreTests
         }
     }
 
-    private static uint SectorChecksum(ReadOnlySpan<byte> bytes)
+    internal static uint SectorChecksum(ReadOnlySpan<byte> bytes)
     {
         uint crc = uint.MaxValue;
         for (int i = 0; i < bytes.Length; i++)

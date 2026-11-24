@@ -97,9 +97,9 @@ an earlier group before retrying admission. A request spanning multiple transfer
 can complete a prefix; a later I/O error retains that completed byte count.
 Private packet/file-handle/data-buffer aliases are rejected before I/O or edits.
 
-## CNP2 v6 namespace growth
+## CNP2 v7 format
 
-On an empty CNP2 partition, run `CopperNovaFormat CNP0: INITIALIZE`. Both formatters create v6 and the handler accepts only this CNP2 revision. Use a matching older handler to copy existing files to a fresh v6 partition.
+On an empty CNP2 partition, run `CopperNovaFormat CNP0: INITIALIZE NAME "Work Disk"`. Omit NAME for the default `CopperNovaPrototype`. Change the mounted label with `Relabel CNP0: "New Name"`. Labels preserve 1–30 native AmigaDOS text bytes, including high-bit bytes. Slash, colon, and ASCII control characters are reserved. Relabel publishes the shadow root and completes both Flush barriers before replying. Labels and file comments use a fixed byte-to-Unicode mapping on disk (UTF-8). At most 30 DOS label bytes or 79 DOS comment bytes expand to 60 or 158 bytes respectively. A commented object still fits one 512-byte sector and uses the normal shadow write. Both formatters create v7 and the handler accepts only this CNP2 revision. Use a matching older handler to copy existing files to a fresh v7 partition.
 
 A v6 index leaf contains 60 object slots. The first leaf is part of the empty volume. The first new object in each subsequent leaf allocates four consecutive sectors for a private object pair and a shadowed index pair. Later objects in that leaf reserve one pair each. Each allocation bitmap has 32 leaf pointers after its allocation bits. These pointers let the index grow with the partition. The implementation also bounds object IDs by half the partition's sector count and by the cache-key encoding.
 
@@ -112,9 +112,9 @@ Explicit Flush writes changed objects and index leaves to shadow sectors, update
 The Kickstart runner accepts a total file count and a maximum file count per directory. Use a fresh output directory for each command.
 
 ~~~text
-CopperNova.Qualification format-scale-v6 <handler> <formatter> <ROM> <output> 64 64
-CopperNova.Qualification scale-v6 <handler> <ROM> <output> 4096 4096
-CopperNova.Qualification scale-v6 <handler> <ROM> <output> 122880 128
+CopperNova.Qualification format-scale-v7 <handler> <formatter> <ROM> <output> 64 64
+CopperNova.Qualification scale-v7 <handler> <ROM> <output> 4096 4096
+CopperNova.Qualification scale-v7 <handler> <ROM> <output> 122880 128
 CopperNova.Qualification fragmented-file <handler> <ROM> <output>
 ~~~
 
@@ -138,7 +138,7 @@ This is a benchmark-capable metadata prototype, not a feature-complete filesyste
   For new overflow pages, the inode indexes the current group of eight.
   Completed groups carry range indexes in the same 512-byte pages. A
   group index holds up to sixteen previous groups directly and uses
-  subtree roots above that count. Earlier v6 pages remain readable via
+  subtree roots above that count. Pages without an extent index are traversed via
   their original links. Shrinking restores the saved index from the
   surviving prefix. The file size limit is
   2 GiB minus one byte.
@@ -175,7 +175,7 @@ $env:NOVA_PACKED='1'
 dotnet tools/CopperNova.Qualification/bin/Release/net10.0/CopperNova.Qualification.dll artifacts/nova-prototype-handler/CopperNovaPrototype '<licensed ROM>' artifacts/nova-rom-gate
 ```
 
-The Kickstart 2.04 formatter replay starts with a blank partition, an RDB-installed handler with a 600-byte startup stack, and a DOS startup floppy. It runs CopperNovaFormat and checks the v6 root before exercising the namespace. It creates 3,125 files across nested directories, cuts power at both publication barriers, then cold-boots to delete the files and confirm their absence.
+The Kickstart 2.04 formatter replay starts with a blank partition, an RDB-installed handler with a 600-byte startup stack, and a DOS startup floppy. It runs CopperNovaFormat and checks the new root before exercising the namespace. It creates 3,125 files across nested directories, cuts power at both publication barriers, then cold-boots to delete the files and confirm their absence.
 
 ```powershell
 dotnet run -c Release --project tools/CopperNova.Qualification -- format-object-growth artifacts/nova-prototype-handler/CopperNovaPrototype artifacts/nova-prototype-handler/CopperNovaFormat '<licensed Kickstart 2.04 ROM>' artifacts/nova-object-growth

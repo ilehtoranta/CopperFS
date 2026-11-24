@@ -9,6 +9,49 @@ using CopperSharp.Targets.Amiga;
 
 internal static partial class WorkbenchGate
 {
+    public static async Task VolumeLabel(string handlerPath,string formatterPath,string romPath,string output)
+    {
+        Directory.CreateDirectory(output);
+        var handler=File.ReadAllBytes(handlerPath); var rom=File.ReadAllBytes(romPath);
+        var disk=CreateImage(handler,600);
+        VerifyInstalledHandler(disk[..PartitionOffset],handler);
+        Array.Clear(disk,PartitionOffset,disk.Length-PartitionOffset);
+        string media=Path.Combine(output,"label.rdb");
+        File.WriteAllBytes(media,disk);
+        var results=new List<object>();
+        foreach(var (entry,marker,expected) in new[]{("LabelFormatEntry",210,"Work Disk"),("LabelRenameEntry",211,"Kesä"),("CommentWriteEntry",213,"Kesä"),("LabelColdEntry",212,"Kesä")})
+        {
+            var boot=await FormatBoot(output,entry,entry=="LabelFormatEntry"?File.ReadAllBytes(formatterPath):null);
+            for(int stage=entry=="LabelColdEntry"?2:0;stage<=2;stage++)
+            {
+                var run=RunFreshBoot(boot,rom,media,PartitionOffset,disk.Length-PartitionOffset,stage);
+                if(stage<2 ? !run.Cut||run.Cache.Barriers!=stage : run.Cut||run.Marker!=marker ||
+                    run.Cache.Barriers!=(entry=="LabelColdEntry"?0:2))
+                    throw new InvalidDataException($"Label {entry} stage {stage} returned {run.Marker}, barriers {run.Cache.Barriers}.");
+                using var stream=File.OpenRead(media);
+                string? name=null;
+                if(entry!="LabelFormatEntry" || stage==2)
+                {
+                    var recovered=CopperNova.Reference.NovaImage.CheckPacked(stream,PartitionOffset,disk.Length-PartitionOffset);
+                    name=recovered.VolumeName;
+                    if(entry=="CommentWriteEntry" && stage<2 && recovered.Entries.Count!=0) throw new InvalidDataException("Uncommitted file survived.");
+                    if((entry=="CommentWriteEntry" && stage==2 || entry=="LabelColdEntry") && recovered.Entries.Single().Comment!=new string('ÿ',79)) throw new InvalidDataException("Comment did not round-trip.");
+                    if(name!=(entry=="LabelRenameEntry" && stage<2?"Work Disk":expected)) throw new InvalidDataException($"Recovered label {name}.");
+                }
+                else
+                {
+                    stream.Position=PartitionOffset;
+                    var roots=new byte[1024]; stream.ReadExactly(roots);
+                    if(roots.Any(b=>b!=0)) throw new InvalidDataException("Premature format publication.");
+                }
+                results.Add(new {entry,stage,name,run.Marker,run.Cut,run.Cache.Barriers,run.Cache.Writes});
+            }
+        }
+        File.WriteAllText(Path.Combine(output,"qualification.json"),JsonSerializer.Serialize(new {
+            HandlerSha256=Hash(handler),FormatterSha256=Hash(File.ReadAllBytes(formatterPath)),RomSha256=Hash(rom),results
+        },new JsonSerializerOptions {WriteIndented=true}));
+    }
+
     public static async Task FragmentedFile(string handlerPath,string romPath,string output)
     {
         Directory.CreateDirectory(output);
