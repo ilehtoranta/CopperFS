@@ -57,6 +57,18 @@ public sealed partial class VolumeGeometryTests
         Assert.Equal(2, storage.Discards.Count);
     }
 
+    [Fact]
+    public void ConservativeFreedWindowMayContainAllocatedRootAndBitmapBlocks()
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(9003, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g); var w = Work();
+        var metadata = Enumerable.Range(0, 4).Select(i => g.StartByte + (g.RootBlock + (uint)i) * g.BlockBytes)
+            .ToDictionary(at => at, at => storage.Sectors[at].ToArray());
+        Assert.True(AmigaFfsWriteCore.TrimFreedRange(ref p, ref w, APTR.Null, 4090, 1024, out var result), w.Error.ToString());
+        Assert.True(result.Blocks > 0);
+        foreach (var block in metadata) Assert.Equal(block.Value, storage.Sectors[block.Key]);
+    }
+
     [Theory]
     [InlineData(false)] [InlineData(true)]
     public void TrackedFfsFreesAreDurableAndReallocatedDataSurvives(bool ofs)
@@ -248,6 +260,14 @@ public sealed partial class VolumeGeometryTests
         var w = Work();
         Assert.False(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 0, out _));
         Assert.Equal(DOS.Error.DiskNotValidated, w.Error); Assert.Empty(storage.Discards);
+        if (damage <= 2)
+        {
+            w = Work();
+            Assert.False(AmigaFfsWriteCore.TrimFreedRange(ref p, ref w, APTR.Null,
+                g.RootBlock - 1, ext - g.RootBlock + 3, out _));
+            Assert.Equal(DOS.Error.DiskNotValidated, w.Error);
+            Assert.Empty(storage.Discards);
+        }
     }
 
     [Theory]

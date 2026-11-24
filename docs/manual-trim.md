@@ -44,6 +44,9 @@ counts. The supported native device geometry and measurement results are in
 
 Only SCSI UNMAP through the Amiga device's `HD_SCSICMD` is implemented. Discovery
 requires VPD B2 LBPU support, nonzero VPD B0 UNMAP limits and READ CAPACITY(16).
+The native handler checks the opened device before allocating a discard command
+or checkpointing. RAM mounts and `trackdisk.device` skip discovery and automatic
+hint tracking. Other devices must pass the normal SCSI capability queries.
 Unknown/unsupported devices are rejected without a checkpoint or discard.
 There is no speculative ATA pass-through and no inference from a drive model,
 SSD label or standard INQUIRY alone. The driver/controller/bridge must actually

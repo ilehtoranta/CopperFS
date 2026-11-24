@@ -1,4 +1,3 @@
-#if COPPERFS_AUTOTRIM
 using System.Buffers.Binary;
 using Amiga;
 using Copper68k;
@@ -9,8 +8,9 @@ using CopperStart.Dos;
 
 namespace CopperFS.Kickstart.Tests;
 
-public sealed class AutomaticTrimInstructionTests
+public sealed partial class AutomaticTrimInstructionTests
 {
+#if COPPERFS_AUTOTRIM
     [Theory]
     [InlineData(M68kCpuModel.M68000)] [InlineData(M68kCpuModel.M68020)]
     public void FreedHintsAreVolatileAndLifecycleResetClearsThem(M68kCpuModel model)
@@ -43,6 +43,7 @@ public sealed class AutomaticTrimInstructionTests
         }
     }
 
+#endif
     private static TrimBus Run(M68kCpuModel model, Type probe)
     {
         var compiled = AmigaM68kCompiler.Compile(new M68kCompilationRequest
@@ -62,11 +63,17 @@ public sealed class AutomaticTrimInstructionTests
         // The lazy standalone queue can use an Exec allocation when no mount
         // index was supplied. Only the allocation-failure probe denies memory.
         bus.Put(4, 0x8000);
+        bus.Put(0x8000 + ExecLayout.ExecBase.MemList, 0x7800);
+        bus.Put(0x7800 + ExecLayout.Node.Successor, 0x8000 + ExecLayout.ExecBase.MemList + ExecLayout.List.Tail);
+        bus.Put(0x7800 + ExecLayout.MemHeader.Lower, 0x1000);
+        bus.Put(0x7800 + ExecLayout.MemHeader.Upper, 0x100000);
         BinaryPrimitives.WriteUInt16BigEndian(bus.Memory.AsSpan(0x8000 - 198), 0x4EF9);
         bus.Put(0x8000 - 196, 0x9000);
+#if COPPERFS_AUTOTRIM
         if (probe == typeof(AutomaticTrimAllocationFailureProbe))
             bus.Put(0x9000, 0x70004E75); // MOVEQ #0,D0; RTS
         else
+#endif
         {
             bus.Put(0x9000, 0x203C000D);
             bus.Put(0x9004, 0x00004E75); // MOVE.L #$D0000,D0; RTS
@@ -85,7 +92,11 @@ public sealed class AutomaticTrimInstructionTests
         using var cpu = M68kCoreFactory.Default.Create(model, bus);
         cpu.Reset(0x10000 + compiled.EntryPoint, 0xF0000);
         for (var n = 0; n < 1_000_000 && cpu.State.ProgramCounter != 0xF1000; n++)
-        { cpu.ExecuteInstruction(); Assert.False(cpu.State.Halted || cpu.State.Stopped); }
+        {
+            if (cpu.State.ProgramCounter == 0x9000) bus.Allocations++;
+            if (cpu.State.ProgramCounter == 0x9100) bus.Commands++;
+            cpu.ExecuteInstruction(); Assert.False(cpu.State.Halted || cpu.State.Stopped);
+        }
         Assert.Equal(0xF1000u, cpu.State.ProgramCounter);
         Assert.Equal(0u, cpu.State.D[0]);
         return bus;
@@ -94,6 +105,7 @@ public sealed class AutomaticTrimInstructionTests
     // Same minimal bus contract as GeometryMathInstructionTests.
     private sealed class TrimBus : IM68kBus
     {
+        public int Allocations, Commands;
         public byte[] Memory { get; } = new byte[0x100000];
         public uint Get(uint a) => BinaryPrimitives.ReadUInt32BigEndian(Memory.AsSpan((int)a, 4));
         public void Put(uint a, uint v) => BinaryPrimitives.WriteUInt32BigEndian(Memory.AsSpan((int)a, 4), v);
@@ -107,11 +119,13 @@ public sealed class AutomaticTrimInstructionTests
     }
 }
 
+#if COPPERFS_AUTOTRIM
 public static class AutomaticTrimInvalidationProbe
 {
     public static uint Entry()
     {
         var state = APTR.FromPointer(0x3000);
+        DiscardDeviceProbe.Attach(state, "scsi.device");
         if (!AmigaVolumeGeometry.Create(9003, 512, 2, out var geometry)) return 1;
         NativeAmigaFileSystem.SetGeometry(state, geometry);
         var p = new NativeFileSystemPlatform(state);
@@ -157,6 +171,7 @@ public static class AutomaticTrimAllocationFailureProbe
     public static uint Entry()
     {
         var state = APTR.FromPointer(0x3000);
+        DiscardDeviceProbe.Attach(state, "scsi.device");
         if (!AmigaVolumeGeometry.Create(9003, 512, 2, out var g)) return 1;
         NativeAmigaFileSystem.SetGeometry(state, g);
         NativeAutomaticTrim.Initialize(state);
@@ -173,6 +188,7 @@ public static class AutomaticTrimTransportFailureProbe
     public static uint Entry()
     {
         var state = APTR.FromPointer(0x3000);
+        DiscardDeviceProbe.Attach(state, "scsi.device");
         if (!AmigaVolumeGeometry.Create(9003, 512, 2, out var g)) return 1;
         NativeAmigaFileSystem.SetGeometry(state, g);
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.RequestOffset, 0x7000);

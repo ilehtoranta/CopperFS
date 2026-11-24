@@ -56,6 +56,7 @@ internal static class NativeAutomaticTrim
 
     internal static void Initialize(APTR state)
     {
+        if (!NativeAmigaFileSystem.CanQueryDiscard(state)) { Suspend(state); return; }
         var record = Record(state);
         if (APTR.ReadUInt32(record, Control) != 0) return;
         var memory = NativeSfsTrim.AllocateControl(state, AmigaScsiUnmap.BatchControlBytes);
@@ -85,6 +86,7 @@ internal static class NativeAutomaticTrim
 #if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
         APTR.WriteUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset, ResetPendingState);
 #endif
+        if (!NativeAmigaFileSystem.CanQueryDiscard(state)) Suspend(state);
         ClearStaging(state);
     }
 

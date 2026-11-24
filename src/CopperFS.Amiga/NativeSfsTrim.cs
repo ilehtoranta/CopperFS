@@ -97,6 +97,8 @@ internal static class NativeSfsTrim
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.VersionOffset) != AmigaSmartFileSystemTrimPacket.Version ||
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset) > AmigaSmartFileSystemTrimPacket.QueryOnly) return 0;
         p.Clear(APTR.FromPointer(record.Raw + 12), 20);
+        if (!NativeAmigaFileSystem.CanQueryDiscard(state))
+        { error = DOS.Error.ActionNotKnown; return 0; }
 #if COPPERFS_SFS_GROUPED
         // Manual reclamation must use durable allocation state. Query-only
         // packets do not reclaim blocks and need no transaction boundary.
@@ -184,6 +186,8 @@ internal static class NativeSfsTrim
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.VersionOffset) != AmigaSmartFileSystemTrimPacket.Version ||
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset) > AmigaSmartFileSystemTrimPacket.QueryOnly) return 0;
         p.Clear(APTR.FromPointer(record.Raw + 12), 20);
+        if (!NativeAmigaFileSystem.CanQueryDiscard(state))
+        { error = DOS.Error.ActionNotKnown; return 0; }
         var g = p.Geometry;
         var memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
             (global::Amiga.Exec.MemoryFlags)g.BufferMemoryType | global::Amiga.Exec.MemoryFlags.Public);
