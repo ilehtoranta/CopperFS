@@ -1000,13 +1000,17 @@ public static partial class AmigaFfsWriteCore
                 keys = AmigaFfsMountIndex.DataKeys(ref p, w.Index);
                 tables = AmigaFfsMountIndex.TableKeys(ref p, w.Index);
             }
-            if (MountIndexEnabled && keys.IsNotNull)
+            // A full walk proves the whole pointer layout byte_size implies.
+            // Callers then index any slot below the old block count directly,
+            // so a short table or missing extension must not pass as success.
+            var whole = limit == uint.MaxValue;
+            if (whole || (MountIndexEnabled && keys.IsNotNull))
             {
                 var remaining = blocks - logical;
                 if (logical > blocks || count != (remaining < geometry.TableEntries ? remaining : geometry.TableEntries))
                     return Fail(ref w, DOS.Error.DiskNotValidated);
-                p.WriteUInt32(tables, (int)guard * 4, table);
             }
+            if (MountIndexEnabled && keys.IsNotNull) p.WriteUInt32(tables, (int)guard * 4, table);
             if (limit != uint.MaxValue && count < geometry.TableEntries && count < limit)
                 return Fail(ref w, DOS.Error.DiskNotValidated);
             if (MountIndexEnabled && keys.IsNotNull)
@@ -1042,11 +1046,10 @@ public static partial class AmigaFfsWriteCore
             var next = p.ReadUInt32(w.Meta, geometry.Tail + 504);
             if (table != header && release) Bit(ref p, ref w, table, true);
             if (limit <= geometry.TableEntries) return w.Error == DOS.Error.None;
-            if (next == 0) return limit == uint.MaxValue && w.Error == DOS.Error.None &&
-                (!MountIndexEnabled || keys.IsNull ||
-                 (logical + count == blocks && AmigaFfsMountIndex.SealFile(ref p, w.Index, header, size, blocks, guard + 1))) ||
+            if (next == 0) return whole && w.Error == DOS.Error.None && logical + count == blocks &&
+                (!MountIndexEnabled || keys.IsNull || AmigaFfsMountIndex.SealFile(ref p, w.Index, header, size, blocks, guard + 1)) ||
                 Fail(ref w, DOS.Error.DiskNotValidated);
-            if (MountIndexEnabled && keys.IsNotNull && logical + count >= blocks) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (logical + count >= blocks) return Fail(ref w, DOS.Error.DiskNotValidated);
             first = first > geometry.TableEntries ? first - geometry.TableEntries : 0;
             if (limit != uint.MaxValue) limit -= geometry.TableEntries;
             logical += geometry.TableEntries;
@@ -1663,6 +1666,8 @@ public static partial class AmigaFfsWriteCore
                 var next = p.ReadUInt32(w.Meta, geometry.Tail + 504);
                 if (next == 0)
                 {
+                    // Only growth past the existing blocks may add a table.
+                    if ((tableIndex + 1) * tableEntries < oldBlocks) return Fail(ref w, DOS.Error.DiskNotValidated);
                     next = Allocate(ref p, ref w, in geometry); if (next == 0) return false;
                     p.Clear(w.Meta, geometry.BlockBytes); p.WriteUInt32(w.Meta, 0, 16); p.WriteUInt32(w.Meta, 4, next);
                     p.WriteUInt32(w.Meta, 12, geometry.TableEntries); p.WriteUInt32(w.Meta, geometry.Tail + 500, r.Header); p.WriteUInt32(w.Meta, geometry.Tail + 508, 0xFFFFFFFD);
@@ -1676,6 +1681,10 @@ public static partial class AmigaFfsWriteCore
             }
             if (!ReadWriteTable(ref p, ref w, table)) return Fail(ref w, DOS.Error.DiskNotValidated);
             var at = geometry.Tail + 308 - (int)slot * 4; var key = p.ReadUInt32(w.Meta, at);
+            // Chain proved every existing slot; never let a stale or zero key
+            // reach the boot block, reserved area or root as file data.
+            if (index < oldBlocks && (key < geometry.ReservedBlocks || key >= geometry.BlockCount || key == geometry.RootBlock))
+                return Fail(ref w, DOS.Error.DiskNotValidated);
             if (index == probeAt)
             {
                 var countInTable = tableEntries - slot;
