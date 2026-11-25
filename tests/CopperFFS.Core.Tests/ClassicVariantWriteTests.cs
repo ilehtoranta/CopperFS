@@ -92,7 +92,82 @@ public sealed partial class VolumeGeometryTests
         Encoding.Latin1.GetBytes("Fail").CopyTo(storage.Ram, (int)Name.Raw);
         var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 4 }; var w = Work();
         Assert.False(AmigaFfsWriteCore.Create(ref p, ref w, ref r, false)); Assert.Equal(DOS.Error.DiskNotValidated, w.Error);
-        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(0u, p.ReadUInt32(Meta, 312));
+        // The budget preflight finds the cycle before Begin, so the root stays valid.
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+    }
+
+    // A DOS4/5 mutation also allocates directory-cache blocks. Running out of
+    // them after the root was marked invalid used to leave the volume
+    // permanently unwritable. The whole budget must be refused up front.
+    [Theory]
+    [InlineData(4, true, 0)] [InlineData(5, true, 0)]
+    [InlineData(4, false, 8)] [InlineData(5, false, 8)]
+    public void DirectoryCacheBudgetIsRefusedBeforeTheRootIsInvalidated(int dos, bool directory, int siblings)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        // Thirty-character names make 56-byte records; eight fill the first cache block.
+        for (var i = 0; i < siblings; i++) VariantCreate(ref p, storage, g.RootBlock, $"Sibling{i}" + new string('s', 22));
+        LeaveFree(ref p, g, 1);
+        var before = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+        var name = directory ? "Drawer" : "Overflow" + new string('o', 22);
+        Encoding.Latin1.GetBytes(name).CopyTo(storage.Ram, (int)Name.Raw);
+        var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = (uint)name.Length }; var w = Work();
+        Assert.False(AmigaFfsWriteCore.Create(ref p, ref w, ref r, directory));
+        Assert.Equal(DOS.Error.DiskFull, w.Error);
+        Assert.Equal(before.Keys.Order(), storage.Sectors.Keys.Order());
+        foreach (var (key, bytes) in before) Assert.Equal(bytes, storage.Sectors[key]);
+        // The volume stays writable: a metadata edit needing no blocks succeeds.
+        var sibling = directory ? VariantCreate(ref p, storage, g.RootBlock, "Last") : new AmigaFfsWriteCore.Request();
+        if (!directory)
+        {
+            Encoding.Latin1.GetBytes("Sibling0" + new string('s', 22)).CopyTo(storage.Ram, (int)Name.Raw);
+            sibling.Header = AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 30, 0x444F5300u + (uint)dos, Meta, out _);
+            Assert.NotEqual(0u, sibling.Header);
+        }
+        sibling.Position = 0x40; w = Work();
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref sibling, DosPacketAction.SetProtection), w.Error.ToString());
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+        InspectDirectoryCache(storage, g, g.RootBlock, directory ? 1 : siblings);
+    }
+
+    // The exact budget still admits the last free block when the parent's
+    // cache has room for the new record.
+    [Theory]
+    [InlineData(4)] [InlineData(5)]
+    public void LastFreeBlockStillCreatesAFileWhenTheCacheHasRoom(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        for (var i = 0; i < 7; i++) VariantCreate(ref p, storage, g.RootBlock, $"Sibling{i}" + new string('s', 22));
+        LeaveFree(ref p, g, 1);
+        VariantCreate(ref p, storage, g.RootBlock, "Fits" + new string('f', 26));
+        Assert.Equal(g.BlockCount, Used(ref p));
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+        Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, 8));
+    }
+
+    // Mark every free block but `keep` as allocated in the volume's bitmap pages.
+    private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
+    {
+        Assert.True(p.ReadBlock(g.RootBlock, Meta));
+        var maps = (g.BlockCount - g.ReservedBlocks + g.BitmapBits - 1) / g.BitmapBits;
+        for (var map = 0u; map < maps; map++)
+        {
+            var key = p.ReadUInt32(Meta, g.Tail + 316 + (int)map * 4);
+            Assert.True(p.ReadBlock(key, Bitmap));
+            for (var bit = 0u; bit < g.BitmapBits && map * g.BitmapBits + bit < g.BlockCount - g.ReservedBlocks; bit++)
+            {
+                var at = 4 + (int)(bit / 32) * 4; var mask = 1u << (int)(bit % 32);
+                if ((p.ReadUInt32(Bitmap, at) & mask) == 0) continue;
+                if (keep != 0) { keep--; continue; }
+                p.WriteUInt32(Bitmap, at, p.ReadUInt32(Bitmap, at) & ~mask);
+            }
+            uint sum = 0; for (var i = 4; i < g.BlockBytes; i += 4) sum = unchecked(sum + p.ReadUInt32(Bitmap, i));
+            p.WriteUInt32(Bitmap, 0, unchecked(0u - sum));
+            Assert.True(p.WriteBlock(key, Bitmap));
+        }
+        Assert.Equal(0u, keep);
     }
 
     // Independent on-disk cache/canonical comparison, including bitmap ownership.

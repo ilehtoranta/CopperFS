@@ -829,6 +829,10 @@ public static partial class AmigaFfsWriteCore
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         if (!Prepare(ref p, ref w, in geometry, 1, keepDirectory: MountIndexEnabled && w.ReadsGroupedDirectories ? r.Directory : 0)) return false;
+        // The header, a new directory's own cache block and any growth of the
+        // parent's cache must all fit before Begin invalidates the root.
+        if (w.DosType >= 0x444F5304 && !CacheBudgetFits(ref p, ref w, r.Directory, (uint)(slot - 24) / 4,
+            CacheRecordBytes(r.Length, 0), 0, 0, directory ? 2u : 1u)) return false;
         KeepFile(ref p, ref w);
         // The last closed file remains checked while its new sibling grows.
         // Park it before the empty file replaces the active table identity.
@@ -1257,6 +1261,16 @@ public static partial class AmigaFfsWriteCore
             ancestor = p.ReadUInt32(ancestorImage, geometry.Tail + 500);
             if (guard + 1 == geometry.BlockCount) return Fail(ref w, DOS.Error.DiskNotValidated);
         }
+        // The destination cache gains the renamed record. A same-directory
+        // rename also drops its old record; a move frees space in the source
+        // only after the destination is checked, so count none of it.
+        if (w.DosType >= 0x444F5304)
+        {
+            if (!Header(ref p, ref w, r.Header)) return false;
+            var bytes = CacheRecordBytes(r.Length, p.ReadUInt8(w.Meta, geometry.Tail + 328));
+            if (!CacheBudgetFits(ref p, ref w, r.Directory, (uint)(slot - 24) / 4, bytes,
+                w.CacheParent == r.Directory ? r.Header : 0, 0, 0)) return false;
+        }
         KeepFile(ref p, ref w);
         // A same-directory rename can keep editing the checked parent after
         // Begin withdraws its read proof. Neither the invalid-root write nor
@@ -1369,6 +1383,14 @@ public static partial class AmigaFfsWriteCore
             return true;
         }
         if (!Prepare(ref p, ref w, in geometry, 0, attributeHeader: r.Header)) return false;
+        // A longer comment can grow the parent's DOS4/5 cache chain.
+        if (action == DosPacketAction.SetComment && w.DosType >= 0x444F5304)
+        {
+            if (!Header(ref p, ref w, r.Header)) return false;
+            var parent = p.ReadUInt32(w.Meta, geometry.Tail + 500);
+            var bytes = CacheRecordBytes(p.ReadUInt8(w.Meta, geometry.Tail + 432), r.Length);
+            if (!CacheBudgetFits(ref p, ref w, parent, uint.MaxValue, 0, r.Header, bytes, 0)) return false;
+        }
         var image = w.Meta;
         var staged = MountIndexEnabled && w.GroupMetadata && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304 &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage) != 0;

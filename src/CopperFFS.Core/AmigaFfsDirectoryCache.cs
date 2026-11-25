@@ -55,6 +55,60 @@ public static partial class AmigaFfsWriteCore
         return Put(ref p, ref w, directory, w.Meta, 20);
     }
 
+    private static uint CacheRecordBytes(uint name, uint comment) => (26u + name + comment) & ~1u;
+
+    // A DOS4/5 mutation rebuilds its parent's cache only after Begin marks the
+    // root invalid, so the rebuild must never run out of blocks. Refuse the
+    // operation now unless `reserved` blocks plus any growth of `directory`'s
+    // chain are free. The change inserts a record of `insertBytes` at the head
+    // of hash `insertSlot` (uint.MaxValue: none) and resizes `replaceKey`'s
+    // record to `replaceBytes` (0 drops it). Reads only; Meta and Data are
+    // scratch on return.
+    private static bool CacheBudgetFits<T>(ref T p, ref Work w, uint directory, uint insertSlot, uint insertBytes,
+        uint replaceKey, uint replaceBytes, uint reserved) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var g = AmigaFfsGeometry.Read(ref p);
+        if (!(MountIndexEnabled && w.LayoutKnown) && !w.FreeCountKnown) return true;
+        var free = g.BlockCount - w.IndexedUsed;
+        if (free < reserved) return Fail(ref w, DOS.Error.DiskFull);
+        if (!Header(ref p, ref w, directory)) return false;
+        p.Copy(w.Meta, w.Data, g.BlockBytes);
+        uint existing = 0;
+        for (var key = p.ReadUInt32(w.Data, g.Tail + 504); key != 0; existing++)
+        {
+            if (existing >= g.BlockCount || !CacheBlock(ref p, ref w, key, directory)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            key = p.ReadUInt32(w.Meta, 16);
+        }
+        // The old chain is a valid packing of the old records, so one changed
+        // record can raise the optimum by at most one block and next-fit stays
+        // within twice the optimum. Only a tight volume needs the exact count.
+        if (existing != 0 && free - reserved >= existing + 2) return true;
+        uint needed = 1, at = 24, visited = 0;
+        for (var slot = 0u; slot < g.TableEntries; slot++)
+        {
+            if (slot == insertSlot && insertBytes != 0) CachePlace(insertBytes, g.BlockBytes, ref needed, ref at);
+            var entry = p.ReadUInt32(w.Data, 24 + (int)slot * 4);
+            while (entry != 0)
+            {
+                if (visited++ >= g.BlockCount || !AmigaDiskFileSystemCore.Header(ref p, in g, entry, w.Meta, true) ||
+                    p.ReadUInt32(w.Meta, g.Tail + 500) != directory) return Fail(ref w, DOS.Error.DiskNotValidated);
+                var bytes = entry == replaceKey ? replaceBytes :
+                    CacheRecordBytes(p.ReadUInt8(w.Meta, g.Tail + 432), p.ReadUInt8(w.Meta, g.Tail + 328));
+                if (bytes != 0) CachePlace(bytes, g.BlockBytes, ref needed, ref at);
+                entry = p.ReadUInt32(w.Meta, g.Tail + 496);
+            }
+        }
+        var growth = needed > existing ? needed - existing : 0;
+        return free - reserved >= growth || Fail(ref w, DOS.Error.DiskFull);
+    }
+
+    // Mirror RebuildCache's next-fit placement.
+    private static void CachePlace(uint bytes, uint blockBytes, ref uint blocks, ref uint at)
+    {
+        if (bytes > blockBytes - at) { blocks++; at = 24; }
+        at += bytes;
+    }
+
     private static void EmptyCache<T>(ref T p, ref Work w, uint key, uint directory)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
