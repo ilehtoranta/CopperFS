@@ -13,6 +13,8 @@ public sealed partial class VolumeGeometryTests
         public readonly byte[] Ram = new byte[2 * 1024 * 1024];
         public readonly Dictionary<ulong, byte[]> Sectors = new();
         public readonly List<(ushort Command, ulong Offset, uint Bytes)> Transfers = new();
+        // Completed writes and flush barriers in issue order.
+        public readonly List<(bool Flush, ulong Offset)> WriteOrder = new();
         public ulong FailWrite = ulong.MaxValue;
         public int WriteCalls, FailWriteCall;
         public bool BulkTransfers;
@@ -31,7 +33,13 @@ public sealed partial class VolumeGeometryTests
         public bool TracksFreedRanges => storage.FreedQueue.IsNotNull;
         public void ObserveFreedRange(uint first, uint count) => AmigaFreedRangeQueue.Add(ref this, storage.FreedQueue, first, count);
         public bool WriteProtected() => storage.Protected;
-        public bool Flush() { storage.Flushes++; return !storage.FailFlush && storage.Flushes != storage.FailFlushCall; }
+        public bool Flush()
+        {
+            storage.Flushes++;
+            var ok = !storage.FailFlush && storage.Flushes != storage.FailFlushCall;
+            if (ok) storage.WriteOrder.Add((true, 0));
+            return ok;
+        }
         public APTR ReadMetadataView(uint block, uint id, APTR scratch) => ReadMetadataBlock(block, id, scratch) ? scratch : APTR.Null;
         public bool ReadMetadataBlock(uint block, uint id, APTR target) => AmigaFileSystemBlockIo.ReadMetadata(ref this, block, id, target);
         public uint ReadDataBlocks(uint block, uint count, APTR target, bool readAhead) =>
@@ -71,7 +79,7 @@ public sealed partial class VolumeGeometryTests
                 var address = offset + at;
                 if (write && address == storage.FailWrite) return false;
                 var ram = storage.Ram.AsSpan((int)(buffer.Raw + at), (int)geometry.SectorBytes);
-                if (write) storage.Sectors[address] = ram.ToArray();
+                if (write) { storage.Sectors[address] = ram.ToArray(); storage.WriteOrder.Add((false, address)); }
                 else if (storage.Sectors.TryGetValue(address, out var sector)) sector.CopyTo(ram);
                 else ram.Clear();
             }

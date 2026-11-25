@@ -180,6 +180,7 @@ public sealed partial class VolumeGeometryTests
         keep.Buffer = Payload; keep.Length = 1001;
         Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref keep, out var written)); Assert.Equal(1001u, written);
         var before = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+        storage.Flushes = 0; // Setup mutations flush before validating the root.
         Assert.True(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 2, out _));
         Assert.Equal(0, storage.Flushes);
         Assert.True(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 1, out var dry));

@@ -315,6 +315,10 @@ public static partial class AmigaFfsWriteCore
             if (!Header(ref p, ref w, geometry.RootBlock)) return false;
             image = w.Meta;
         }
+        // The valid flag vouches for every bitmap, header and data write of
+        // the operation. A write-back device can reorder writes between
+        // barriers, so make them durable before the root says so.
+        if (valid != 0 && !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
         var sum = p.ReadUInt32(image, 20);
         var previous = p.ReadUInt32(image, geometry.Tail + 312);
         p.WriteUInt32(image, geometry.Tail + 312, valid);
