@@ -60,6 +60,22 @@ using CopperSharp's SDK and compiler. No CopperStart checkout or DLL is required
 ./build/Build-Trim.ps1
 ```
 
+To run CopperStart's native replay against freshly built handlers, use a
+CopperStart checkout beside this repository and a licensed Kickstart 3.1 ROM in
+`COPPERSHARP_KICKSTART31_ROM`:
+
+```powershell
+./tools/Test-NativeReplay.ps1 -Run
+```
+
+It builds the `classic`, `ffs`, `sfs2-csun`, `sfs2-trst` and `command` layout
+that `COPPERSFS_SPARSE_ARTIFACTS` expects, records SHA-256 hashes and source
+revisions in `replay-manifest.json`, and runs the twelve
+`NativeSparseStorageTests` cases with a TRX log. Use `-SkipBuild` to rerun
+against an existing `-ArtifactRoot`. The original-handler A/B lanes in
+`tests/CopperFS.Kickstart.Tests` additionally need external FFS 40.1 and
+SmartFilesystem 1.279 binaries, which are never added to this repository.
+
 SFS2 defaults to owned TRST with a 192 KiB transaction arena and no extra cache.
 It writes existing payload in place when the extent is validated and no
 pending image covers the destination. Metadata commits retain all four TRST
