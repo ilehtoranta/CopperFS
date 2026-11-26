@@ -1767,7 +1767,7 @@ public static partial class AmigaSmartFileSystemWriteCore
         return PutSealed(ref p, ref w, container, image);
     }
 
-    private static bool RemoveOperation<T>(ref T p, ref Work w, uint node)
+    private static bool RemoveOperation<T>(ref T p, ref Work w, uint node, bool permanent = false)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         ReleaseOverwriteReservation(ref p, ref w, node);
@@ -1803,8 +1803,8 @@ public static partial class AmigaSmartFileSystemWriteCore
         else if ((bits & 64) != 0) return Fail(ref w, DOS.Error.ObjectWrongType);
         else
         {
-            if (w.Recycling && parent != RecycledNode) return RecycleFile(ref p, ref w, node, source, at, nameLength);
-            if (w.Recycling)
+            if (w.Recycling && !permanent && parent != RecycledNode) return RecycleFile(ref p, ref w, node, source, at, nameLength);
+            if (w.Recycling && parent == RecycledNode)
             {
                 w.RecycledFilesDelta--;
                 w.RecycledBlocksDelta -= (int)FileBlocks(size, w.BlockBytes);

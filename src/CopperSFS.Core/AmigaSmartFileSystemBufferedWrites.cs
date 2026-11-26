@@ -163,7 +163,7 @@ public static partial class AmigaSmartFileSystemWriteCore
             {
                 0 => CreateOperation(ref p, ref w, ref r, argument != 0),
                 1 => TruncateOperation(ref p, ref w, r.Node),
-                2 => RemoveOperation(ref p, ref w, r.Node),
+                2 => RemoveOperation(ref p, ref w, r.Node, argument != 0),
                 3 => RenameOperation(ref p, ref w, ref r),
                 4 => MetadataOperation(ref p, ref w, ref r, (DosPacketAction)argument),
                 5 => WriteOperation(ref p, ref w, ref r, out actual),
@@ -197,6 +197,9 @@ public static partial class AmigaSmartFileSystemWriteCore
     { var r = new Request { Node = node }; return Execute(ref p, ref w, ref r, 1, 0, out _); }
     public static bool Remove<T>(ref T p, ref Work w, uint node) where T : struct, IAmigaWritableFileSystemPlatform
     { var r = new Request { Node = node }; return Execute(ref p, ref w, ref r, 2, 0, out _); }
+    /// <summary>Remove a node permanently, even when volume recycling is enabled.</summary>
+    public static bool RemovePermanent<T>(ref T p, ref Work w, uint node) where T : struct, IAmigaWritableFileSystemPlatform
+    { var r = new Request { Node = node }; return Execute(ref p, ref w, ref r, 2, 1, out _); }
     public static bool Rename<T>(ref T p, ref Work w, ref Request r)
         where T : struct, IAmigaWritableFileSystemPlatform => Execute(ref p, ref w, ref r, 3, 0, out _);
     public static bool SetMetadata<T>(ref T p, ref Work w, ref Request r, DosPacketAction action)
