@@ -43,6 +43,9 @@ public sealed partial class OriginalHandlerCorrectnessTests
     {
         public bool SupportsDiscard => true;
         public uint MaximumDiscardSectors => 4096;
+        // UNMAP ranges per command reported in VPD B0. Older CopperScreen
+        // revisions ignore this and always report one.
+        public uint MaximumDiscardDescriptors { get; init; } = 1;
         public int DiscardCount;
         public void Discard(FileStream backing, long offset, int bytes)
         {

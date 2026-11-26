@@ -59,4 +59,37 @@ public sealed partial class OriginalHandlerCorrectnessTests
                     $"Non-discarded block {block} changed.");
         if (profile == "sfs2") SfsImageChecker.Check(new MemoryStream(result), reservedBlocks: 1);
     }
+
+    // With copperhdf opted into eight-range UNMAP (VPD B0), manual FFS TRIM
+    // packs free runs: fewer UNMAP commands than ranges, yet the same ranges,
+    // device operations and final image as the one-range device.
+    [DiscardDeviceReplayTheory]
+    [InlineData(8u)] [InlineData(3u)]
+    public async Task NativeFfsManualTrimPacksRangesIntoMultiRangeUnmap(uint descriptors)
+    {
+        var handlers = Environment.GetEnvironmentVariable("COPPERFS_DISCARD_DEVICE_HANDLER_ROOT")!;
+        var handler = Path.Combine(handlers, "ffs-auto", "CopperFFS");
+        Assert.True(File.Exists(handler), $"Missing rebuilt handler: {handler}");
+        var root = Path.Combine(handlers, "replay", "ffs-multi-range-" + descriptors);
+        async Task<(byte[] Image, DiscardTrace Trace, int Unmaps)> Trim(uint limit)
+        {
+            var trace = new DiscardTrace { MaximumDiscardDescriptors = limit }; var scsi = 0;
+            trace.CommandObserved = command => { if (command == 28) scsi++; };
+            var image = await Run(root, "ffs", "descriptors-" + limit, handler, ReadMedia.Ffs(), true,
+                "TrimQualificationProbe::FfsExecute", storage: trace);
+            using var receipt = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "descriptors-" + limit, "result.json")));
+            Assert.Equal(uint.MaxValue, receipt.RootElement.GetProperty("Stage").GetUInt32());
+            Assert.Equal(0u, receipt.RootElement.GetProperty("IoErr").GetUInt32());
+            return (image, trace, scsi - 3);
+        }
+        var single = await Trim(1);
+        var packed = await Trim(descriptors);
+        Console.WriteLine($"{packed.Trace.DiscardCount} ranges: {single.Unmaps} UNMAPs at 1 range, {packed.Unmaps} at {descriptors}");
+        Assert.Equal(single.Trace.DiscardCount, single.Unmaps);
+        Assert.True(packed.Unmaps < packed.Trace.DiscardCount,
+            $"{packed.Unmaps} UNMAPs for {packed.Trace.DiscardCount} ranges");
+        Assert.True(packed.Unmaps * (int)descriptors >= packed.Trace.DiscardCount);
+        Assert.Equal(single.Trace.Operations.Where(op => op.StartsWith("D:")), packed.Trace.Operations.Where(op => op.StartsWith("D:")));
+        Assert.Equal(Hash(single.Image), Hash(packed.Image));
+    }
 }
