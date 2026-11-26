@@ -1788,7 +1788,9 @@ public static partial class NativeAmigaFileSystem
             NativeFileSystemNotifications.Changed(state, r.Header);
             return unchecked((int)((obj.Raw + 20) >> 2));
         }
-        r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length, APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out var header, w.Index);
+        // Delete and rename act on the named entry, including a link itself.
+        r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length, APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out var header, w.Index,
+            followFinal: false);
         if (r.Header == 0) return 0;
         if (InUse(state, r.Header, true)) { error = DOS.Error.ObjectInUse; return 0; }
         var oldParent = p.ReadUInt32(header, ((int)p.BlockBytes - 512) + 500);
@@ -1817,7 +1819,8 @@ public static partial class NativeAmigaFileSystem
         if (!PacketName(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset), APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset), ref r))
         { error = DOS.Error.InvalidLock; return 0; }
         r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length,
-            APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out _, w.Index);
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out _, w.Index,
+            followFinal: false);
         if (r.Header == 0) return 0;
         // FFS refuses date changes under an exclusive lock; RAM: permits them.
         if (action == DosPacketAction.SetDate && APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) == 0 && InUse(state, r.Header, false))
@@ -2875,6 +2878,15 @@ public static partial class NativeAmigaFileSystem
                 result = AmigaFfsReadLinkCore.Read(ref p, key, APTR.FromPointer(b), APTR.FromPointer(c),
                     unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset)),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), metadata, data, out error);
+                break;
+            case DosPacketAction.ReadLink:
+                // dos.library sends this after a lookup reports ERROR_IS_SOFT_LINK.
+                // A zero lock names the volume root.
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                if (a != 0 && key == 0) { result = -1; error = DOS.Error.InvalidLock; break; }
+                result = AmigaFfsReadLinkCore.Read(ref p, a == 0 ? RootKey(state) : key, APTR.FromPointer(b), APTR.FromPointer(c),
+                    unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset)),
+                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), metadata, data, out error, stored: true);
                 break;
             case DosPacketAction.AddNotify:
                 result = NativeFileSystemNotifications.Add(state, APTR.FromPointer(a), out error); break;

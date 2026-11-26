@@ -41,6 +41,23 @@ manifest and select `FullyQualifiedName~OriginalHandlerCorrectnessTests`.
 Direct tests skip when the ROM or manifest is absent; invalid configured inputs
 fail. Reference binaries and images are never added to the repository.
 
+## Hard and soft links against Kickstart's own filesystem
+
+`CopperFfsMatchesKickstartLinkBehaviour` needs no external handler binary.
+The reference arm mounts the partition with the boot floppy's Kickstart 3.1
+filesystem segment. That filesystem creates a file, a directory, a hard file
+link, a hard directory link and a soft link through `MakeLink`. Both arms then
+run identical DOS workloads on copies of that disk: lookups, Examine, ExNext,
+`ReadLink`, deleting the original, deleting each link and creating through the
+directory link. The test compares every recorded result and the reachable
+on-disk layout (types, sizes, link targets and link chains by path).
+
+```powershell
+$env:COPPERFS_FFS_HANDLER = '<freshly built CopperFFS>'
+$env:COPPERFS_LINK_ARTIFACTS = "$PWD/artifacts/link-reference"
+dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedName~CopperFfsMatchesKickstartLinkBehaviour
+```
+
 ## Sequential reads
 
 The [storage matrix protocol](../../docs/kickstart-storage-matrix.md) extends this
@@ -55,8 +72,7 @@ retain their unavailable records; see the [mount investigation](../../docs/kicks
 Use `-A1200Kickstart 3.1 -A1200Rom31 <licensed-A1200-40.68-ROM>` for the separate
 3.1 machine profile. `-FileSystemProfile Sfs2 -Backend A1200Ide` on the direct
 matrix launcher selects the 288-workload original/CSUN/TRST IDE comparison with
-both RAM and drive profiles. See the [3.1 configuration note](../../docs/kickstart31-sfs2-ide-2026-11-07.md)
-for input identity and coverage. The A500 3.1 image remains the historical control.
+both RAM and drive profiles. The A500 3.1 image remains the historical control.
 
 This project boots a licensed Kickstart 3.1 ROM in CopperScreen's lightweight
 emulator and runs a compiled guest application through real DOS calls and the
@@ -343,8 +359,6 @@ dotnet test tests/CopperFS.Kickstart.Tests -c Release --filter FullyQualifiedNam
 Set `COPPERFS_DIVREM_ARTIFACT_ROOT` to save generated assembly and per-vector
 paired/separate cycle samples. These are synthetic arithmetic measurements;
 the full-ROM workload probes above qualify filesystem performance separately.
-See the [division optimization report](../../docs/divrem-optimization-2026-11-12.md)
-for the measured results and the explicit MC68020 fusion limitation.
 
 ## Partitions crossing 4 GiB
 

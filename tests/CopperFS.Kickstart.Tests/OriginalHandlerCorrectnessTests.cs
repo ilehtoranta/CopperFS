@@ -318,9 +318,10 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 error = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + 24, 4));
                 var measuresMount = entry.StartsWith("CorrectnessProbe::OwnedBenchmark", StringComparison.Ordinal) ||
                     entry.StartsWith("CorrectnessProbe::ReadPlacement", StringComparison.Ordinal);
-                if (entry.StartsWith("TrimQualificationProbe::", StringComparison.Ordinal) || measuresMount)
+                if (entry.StartsWith("TrimQualificationProbe::", StringComparison.Ordinal) || measuresMount ||
+                    entry.StartsWith("LinkProbe::", StringComparison.Ordinal))
                 {
-                    probeData = new uint[8];
+                    probeData = new uint[entry.StartsWith("LinkProbe::", StringComparison.Ordinal) ? 32 : 8];
                     var measurementOffset = measuresMount ? 900 : 512;
                     for (var i = 0; i < probeData.Length; i++)
                         probeData[i] = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + measurementOffset + i * 4, 4));

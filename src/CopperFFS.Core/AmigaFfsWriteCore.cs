@@ -80,7 +80,8 @@ public static partial class AmigaFfsWriteCore
             (w.GroupHeader == key || HasFileWriteGroup(ref p, w.Index)) &&
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingHeader) == key)
             return APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
-        var image = AmigaDiskFileSystemCore.HeaderView(ref p, in g, key, w.Meta, APTR.Null, 0, false);
+        // Hash chains and link chains pass through hard and soft link headers.
+        var image = AmigaDiskFileSystemCore.HeaderView(ref p, in g, key, w.Meta, APTR.Null, 0, true);
         if (image.IsNull) w.Error = DOS.Error.DiskNotValidated;
         return image;
     }
@@ -765,7 +766,8 @@ public static partial class AmigaFfsWriteCore
         if (parent.IsNull) parent = InspectHeader(ref p, ref w, in geometry, r.Directory);
         if (parent.IsNull) return false;
         if (copyParent && parent != w.Meta) p.Copy(parent, w.Meta, geometry.BlockBytes);
-        return unchecked((int)p.ReadUInt32(parent, geometry.Tail + 508)) > 0 || Fail(ref w, DOS.Error.ObjectWrongType);
+        // Only the root (1) and real directories (2) hold entries; links do not.
+        return unchecked((int)p.ReadUInt32(parent, geometry.Tail + 508)) is 1 or 2 || Fail(ref w, DOS.Error.ObjectWrongType);
     }
 
     private static bool FindDestination<T>(ref T p, ref Work w, ref Request r, out uint found, out APTR matched, out int slot)
@@ -777,8 +779,10 @@ public static partial class AmigaFfsWriteCore
         // This packet holds the checked directory. An empty bucket proves the
         // destination is available without reading and hashing its parent again.
         if (p.ReadUInt32(parent, slot) == 0) return true;
+        // The destination name itself, even when it is a link.
         found = AmigaDiskFileSystemCore.ResolveForOpen(ref p, r.Directory, r.Name, r.Length,
-            w.DosType, w.Meta, out var error, out matched, out _, MountIndexEnabled && w.ReadsGroupedRoot ? w.Index : APTR.Null);
+            w.DosType, w.Meta, out var error, out matched, out _, MountIndexEnabled && w.ReadsGroupedRoot ? w.Index : APTR.Null,
+            followFinal: false);
         return found != 0 || error == DOS.Error.ObjectNotFound || Fail(ref w, error);
     }
     private static bool Unlink<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry,
@@ -1122,6 +1126,12 @@ public static partial class AmigaFfsWriteCore
                 AmigaFfsMountIndex.RecordRootChild(ref p, w.Index, slot, 0, 0);
             successor = p.ReadUInt32(header, geometry.Tail + 496);
         }
+        // A link header owns no data, and a soft link stores its path where a
+        // directory keeps its hash table.
+        if (type is 3 or 4 or -4)
+            return truncate ? Fail(ref w, DOS.Error.ObjectWrongType) :
+                RemoveLinked(ref p, ref w, key, type, header, in geometry, slot, successor);
+        var linked = truncate ? 0 : p.ReadUInt32(header, geometry.Tail + 472);
         if (type > 0)
         {
             if (truncate) return Fail(ref w, DOS.Error.ObjectWrongType);
@@ -1130,6 +1140,8 @@ public static partial class AmigaFfsWriteCore
         else if (!(MountIndexEnabled && w.LayoutKnown &&
             AmigaFfsMountIndex.Matches(ref p, w.Index, key, p.ReadUInt32(header, geometry.Tail + 324))) &&
             !Chain(ref p, ref w, key, false)) return false;
+        // An object with hard links survives under its first link's name.
+        if (linked != 0) return PromoteFirstLink(ref p, ref w, key, type, linked, in geometry, slot, successor);
         if (MountIndexEnabled && !AmigaFfsMountIndex.RemovalIsDisjoint(ref p, w.Index, in saved))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         if (MountIndexEnabled && type > 0 && w.LayoutKnown) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
@@ -1222,6 +1234,76 @@ public static partial class AmigaFfsWriteCore
         }
         return Finish(ref p, ref w, in geometry);
     }
+    // Delete one link header. A hard link is also spliced out of its
+    // object's next_link chain so no header keeps pointing at a free block.
+    private static bool RemoveLinked<T>(ref T p, ref Work w, uint key, int type, APTR header,
+        in AmigaFfsGeometry geometry, int slot, uint successor) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var target = p.ReadUInt32(header, geometry.Tail + 468);
+        var following = p.ReadUInt32(header, geometry.Tail + 472);
+        if (MountIndexEnabled && type == 4 && w.LayoutKnown) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
+        if (!Begin(ref p, ref w, in geometry)) return false;
+        if (type != 3)
+        {
+            var owner = target;
+            for (var guard = 0u; owner != 0 && guard < geometry.BlockCount; guard++)
+            {
+                var image = InspectHeader(ref p, ref w, in geometry, owner);
+                if (image.IsNull) return false;
+                var current = p.ReadUInt32(image, geometry.Tail + 472);
+                if (current == key)
+                {
+                    if (image != w.Meta) p.Copy(image, w.Meta, geometry.BlockBytes);
+                    p.WriteUInt32(w.Meta, geometry.Tail + 472, following);
+                    if (!Put(ref p, ref w, owner, w.Meta, 20)) return false;
+                    break;
+                }
+                owner = current;
+            }
+        }
+        if (!Unlink(ref p, ref w, in geometry, key, w.CacheParent, slot, successor)) return false;
+        Bit(ref p, ref w, key, true);
+        return w.Error == DOS.Error.None && Finish(ref p, ref w, in geometry);
+    }
+
+    // Kickstart FFS keeps the object's own header (and so its data and
+    // extension blocks) and moves it into its first link's directory slot
+    // under the link's name, then frees the link header.
+    private static bool PromoteFirstLink<T>(ref T p, ref Work w, uint key, int type, uint link,
+        in AmigaFfsGeometry geometry, int slot, uint successor) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var image = InspectHeader(ref p, ref w, in geometry, link);
+        if (image.IsNull) return false;
+        if (unchecked((int)p.ReadUInt32(image, geometry.Tail + 508)) != (type > 0 ? 4 : -4) ||
+            p.ReadUInt32(image, geometry.Tail + 468) != key) return Fail(ref w, DOS.Error.DiskNotValidated);
+        var linkSlot = StoredNameSlot(ref p, image, in geometry, w.DosType);
+        if (linkSlot == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
+        var linkParent = p.ReadUInt32(image, geometry.Tail + 500);
+        // Data stays untouched until the final bitmap release below.
+        p.Copy(image, w.Data, geometry.BlockBytes);
+        w.CacheOther = linkParent;
+        if (MountIndexEnabled && w.LayoutKnown)
+        {
+            if (type > 0) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
+            if (linkParent == geometry.RootBlock) AmigaFfsMountIndex.RecordRootChild(ref p, w.Index, linkSlot, 0, 0);
+        }
+        if (!Begin(ref p, ref w, in geometry)) return false;
+        if (!Unlink(ref p, ref w, in geometry, key, w.CacheParent, slot, successor)) return false;
+        // Unlinking the object can change the link's own hash successor.
+        image = InspectHeader(ref p, ref w, in geometry, link);
+        if (image.IsNull) return false;
+        var linkSuccessor = p.ReadUInt32(image, geometry.Tail + 496);
+        if (!Unlink(ref p, ref w, in geometry, link, linkParent, linkSlot, key)) return false;
+        if (!Header(ref p, ref w, key)) return false;
+        p.Copy(APTR.FromPointer(w.Data.Raw + (uint)(geometry.Tail + 432)), APTR.FromPointer(w.Meta.Raw + (uint)(geometry.Tail + 432)), 32);
+        p.WriteUInt32(w.Meta, geometry.Tail + 472, p.ReadUInt32(w.Data, geometry.Tail + 472));
+        p.WriteUInt32(w.Meta, geometry.Tail + 496, linkSuccessor);
+        p.WriteUInt32(w.Meta, geometry.Tail + 500, linkParent);
+        if (!Put(ref p, ref w, key, w.Meta, 20)) return false;
+        Bit(ref p, ref w, link, true);
+        return w.Error == DOS.Error.None && Finish(ref p, ref w, in geometry);
+    }
+
     public static bool Rename<T>(ref T p, ref Work w, ref Request r) where T : struct, IAmigaWritableFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);

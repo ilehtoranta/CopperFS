@@ -139,8 +139,9 @@ public static class AmigaDiskFileSystemCore
     // Consume the returned header before another block access. Resolve exposes
     // the same traversal to callers that need a stable copy in their scratch.
     internal static uint ResolveView<T>(ref T p, uint directory, APTR name, uint length,
-        uint dosType, APTR buffer, out DOS.Error error, out APTR image, APTR mountIndex = default) where T : struct, IAmigaFileSystemPlatform
-        => ResolveForOpen(ref p, directory, name, length, dosType, buffer, out error, out image, out _, mountIndex);
+        uint dosType, APTR buffer, out DOS.Error error, out APTR image, APTR mountIndex = default, bool followFinal = true)
+        where T : struct, IAmigaFileSystemPlatform
+        => ResolveForOpen(ref p, directory, name, length, dosType, buffer, out error, out image, out _, mountIndex, followFinal);
 
     internal struct MissingComponent
     {
@@ -150,7 +151,7 @@ public static class AmigaDiskFileSystemCore
 
     internal static uint ResolveForOpen<T>(ref T p, uint directory, APTR name, uint length,
         uint dosType, APTR buffer, out DOS.Error error, out APTR image, out MissingComponent missing,
-        APTR mountIndex = default)
+        APTR mountIndex = default, bool followFinal = true)
         where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
@@ -229,7 +230,8 @@ public static class AmigaDiskFileSystemCore
             var found = false;
             for (var guard = 0u; entry != 0 && guard < geometry.BlockCount; guard++)
             {
-                view = HeaderView(ref p, in geometry, entry, buffer, name, length, false);
+                // Hard and soft link headers share the hash chains of ordinary entries.
+                view = HeaderView(ref p, in geometry, entry, buffer, name, length, true);
                 if (view.IsNull || p.ReadUInt32(view, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 var matches = p.ReadUInt8(view, geometry.Tail + 432) == count;
@@ -252,6 +254,19 @@ public static class AmigaDiskFileSystemCore
                     missing.HashSlot = slot;
                 }
                 return 0;
+            }
+            // Kickstart FFS follows hard links to their object and reports a
+            // soft link to dos.library, which reads it and retries the path.
+            // A caller acting on the named entry itself keeps the final link.
+            var linkType = unchecked((int)p.ReadUInt32(view, geometry.Tail + 508));
+            if (linkType is 3 or 4 or -4 && (offset < length || followFinal))
+            {
+                if (linkType == 3) { error = DOS.Error.IsSoftLink; return 0; }
+                var target = p.ReadUInt32(view, geometry.Tail + 468);
+                view = HeaderView(ref p, in geometry, target, buffer, name, length, false);
+                if (view.IsNull || unchecked((int)p.ReadUInt32(view, geometry.Tail + 508)) != (linkType == 4 ? 2 : -3))
+                { error = DOS.Error.DiskNotValidated; return 0; }
+                entry = target;
             }
             directory = entry;
             if (offset < length)
@@ -739,7 +754,8 @@ public static class AmigaDiskFileSystemCore
     public static DOS.Error ExamineNext<T>(ref T p, ref DirectoryCursor cursor,
         uint directory, APTR fib, APTR metadata, APTR table)
         where T : struct, IAmigaFileSystemPlatform
-        => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, false);
+        // Kickstart FFS lists link entries with their own secondary types.
+        => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, true);
 
     /// <summary>Inspect link entries without resolving them; retained packet enumeration semantics are unchanged.</summary>
     public static DOS.Error ExamineNextIncludingLinks<T>(ref T p, ref DirectoryCursor cursor,

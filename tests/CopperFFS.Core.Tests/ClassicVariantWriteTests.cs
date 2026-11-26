@@ -147,6 +147,74 @@ public sealed partial class VolumeGeometryTests
         Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, 8));
     }
 
+    // Kickstart-made links share hash chains with ordinary entries. Build a
+    // bucket of soft link -> hard link -> plain file and use every entry.
+    // CopperFS.Kickstart.Tests' link reference compares the same semantics
+    // with Kickstart 3.1's own filesystem.
+    [Theory]
+    [InlineData(1)] [InlineData(5)]
+    public void LinksInAHashChainAreFollowedListedAndDeleted(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var target = VariantCreate(ref p, storage, g.RootBlock, "Target");
+        storage.Ram.AsSpan((int)Payload.Raw, 100).Fill(0x5A);
+        target.Buffer = Payload; target.Length = 100; var w = Work();
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref target, out _), w.Error.ToString());
+        static uint Bucket(string name)
+        {
+            var hash = (uint)name.Length;
+            foreach (var c in name) hash = hash * 13 + (uint)char.ToUpperInvariant(c);
+            return (hash & 2047) % 72;
+        }
+        var names = Enumerable.Range(0, 5000).Select(i => "N" + i).Where(n => Bucket(n) == Bucket("Plain")).Take(2).ToArray();
+        var plain = VariantCreate(ref p, storage, g.RootBlock, "Plain");
+        var hard = VariantCreate(ref p, storage, g.RootBlock, names[0]);
+        var soft = VariantCreate(ref p, storage, g.RootBlock, names[1]);
+        void Rewrite(uint key, Action<APTR> edit)
+        {
+            Assert.True(p.ReadBlock(key, Meta)); edit(Meta);
+            p.WriteUInt32(Meta, 20, 0); uint sum = 0;
+            for (var i = 0; i < 512; i += 4) sum = unchecked(sum + p.ReadUInt32(Meta, i));
+            p.WriteUInt32(Meta, 20, unchecked(0u - sum)); Assert.True(p.WriteBlock(key, Meta));
+        }
+        Rewrite(hard.Header, b => { p.WriteUInt32(b, 508, unchecked((uint)-4)); p.WriteUInt32(b, 468, target.Header); });
+        Rewrite(soft.Header, b => { p.WriteUInt32(b, 508, 3); Encoding.Latin1.GetBytes("Target\0").CopyTo(storage.Ram, (int)b.Raw + 24); });
+        Rewrite(target.Header, b => p.WriteUInt32(b, 472, hard.Header));
+        uint Resolve(string path, out DOS.Error error)
+        {
+            Encoding.Latin1.GetBytes(path).CopyTo(storage.Ram, (int)Name.Raw);
+            return AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, (uint)path.Length, type, Meta, out error);
+        }
+        Assert.Equal(plain.Header, Resolve("Plain", out _));
+        Assert.Equal(target.Header, Resolve(names[0], out _));
+        Assert.Equal(0u, Resolve(names[1], out var softError)); Assert.Equal(DOS.Error.IsSoftLink, softError);
+        Assert.Equal(0u, Resolve(names[1] + "/x", out softError)); Assert.Equal(DOS.Error.IsSoftLink, softError);
+        // ExNext reports each entry with its own secondary type.
+        var fib = APTR.FromPointer(0x50000); var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
+        Assert.True(AmigaDiskFileSystemCore.Examine(ref p, g.RootBlock, fib, Meta));
+        var listed = new Dictionary<string, int>();
+        while (AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, g.RootBlock, fib, Meta, Data) == DOS.Error.None)
+            listed[Encoding.Latin1.GetString(storage.Ram, (int)fib.Raw + 9, storage.Ram[fib.Raw + 8])] = unchecked((int)p.ReadUInt32(fib, 4));
+        Assert.Equal(new Dictionary<string, int> { ["Target"] = -3, ["Plain"] = -3, [names[0]] = -4, [names[1]] = 3 }, listed);
+        // Creating and deleting through the same bucket passes both links.
+        var colliding = Enumerable.Range(5000, 5000).Select(i => "N" + i).First(n => Bucket(n) == Bucket("Plain"));
+        var created = VariantCreate(ref p, storage, g.RootBlock, colliding);
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, plain.Header, false), w.Error.ToString());
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, created.Header, false), w.Error.ToString());
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, soft.Header, false), w.Error.ToString());
+        // Deleting the original keeps its header under the link's name.
+        var used = Used(ref p);
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, target.Header, false), w.Error.ToString());
+        Assert.Equal(target.Header, Resolve(names[0], out _));
+        Assert.Equal(unchecked((uint)-3), p.ReadUInt32(Meta, 508)); Assert.Equal(0u, p.ReadUInt32(Meta, 472));
+        Assert.Equal(100u, p.ReadUInt32(Meta, 324));
+        Assert.Equal(0u, Resolve("Target", out var gone)); Assert.Equal(DOS.Error.ObjectNotFound, gone);
+        Assert.Equal(used - 1, Used(ref p));
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+        if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 1);
+    }
+
     // Mark every free block but `keep` as allocated in the volume's bitmap pages.
     private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
     {
