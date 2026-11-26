@@ -228,8 +228,13 @@ public static class AmigaDiskFileSystemCore
                 AmigaFfsMountIndex.SoleRootChildDiffers(ref p, prefixIndex, slot, entry, count))
                 entry = 0;
             var found = false;
+            // Brent's cycle check: a damaged chain that loops back is refused
+            // after about twice its length, not after BlockCount reads.
+            uint mark = 0, power = 1, run = 0;
             for (var guard = 0u; entry != 0 && guard < geometry.BlockCount; guard++)
             {
+                if (entry == mark) { error = DOS.Error.DiskNotValidated; return 0; }
+                if (++run == power) { mark = entry; power <<= 1; run = 0; }
                 // Hard and soft link headers share the hash chains of ordinary entries.
                 view = HeaderView(ref p, in geometry, entry, buffer, name, length, true);
                 if (view.IsNull || p.ReadUInt32(view, geometry.Tail + 500) != directory)

@@ -790,8 +790,11 @@ public static partial class AmigaFfsWriteCore
         where T : struct, IAmigaWritableFileSystemPlatform
     {
         var owner = directory;
+        uint mark = 0, power = 1, run = 0; // Brent's cycle check over the chain
         for (var guard = 0u; guard < geometry.BlockCount; guard++)
         {
+            if (guard != 0 && owner == mark) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (guard != 0 && ++run == power) { mark = owner; power <<= 1; run = 0; }
             var image = APTR.Null;
             if (guard == 0) image = retainedDirectory;
             if (image.IsNull) image = InspectHeader(ref p, ref w, in geometry, owner);

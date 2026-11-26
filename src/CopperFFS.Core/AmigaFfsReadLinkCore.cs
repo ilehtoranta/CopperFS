@@ -52,8 +52,11 @@ public static class AmigaFfsReadLinkCore
             var key = p.ReadUInt32(metadata, 24 + (int)AmigaDiskFileSystemCore.NameBucket(ref p, APTR.FromPointer(path.Raw + start),
                 count, dosType, geometry.TableEntries) * 4);
             var matched = false;
+            uint mark = 0, power = 1, run = 0; // Brent's cycle check over the hash chain
             for (uint visited = 0; key != 0 && visited < geometry.BlockCount; visited++)
             {
+                if (key == mark) { error = DOS.Error.DiskNotValidated; return -1; }
+                if (++run == power) { mark = key; power <<= 1; run = 0; }
                 if (!Header(ref p, in geometry, key, metadata) || p.ReadUInt32(metadata, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return -1; }
                 matched = p.ReadUInt8(metadata, geometry.Tail + 432) == count;
