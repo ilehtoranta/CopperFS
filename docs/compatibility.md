@@ -81,8 +81,9 @@ comparisons.
 
 - `ACTION_DIE` and `ACTION_SERIALIZE_DISK` return error 209 (action not
   known). `ACTION_GET_DISK_FSSM` returns 209 like the ROM.
-- Device I/O failures report 213 (not validated) rather than a separate
-  device error.
+- A new file's header is written when it is opened, so a device that fails
+  every write fails the Open; Kickstart opens the file and fails the later
+  Write or Close. Both report the device's error.
 - Notifications are a superset: CopperFFS also signals on `SetProtection` and
   `SetComment`, signals the directory of a deleted file, and signals a watched
   directory being created or deleted. Every notification Kickstart sends is
@@ -95,8 +96,18 @@ and only then writes the valid root, so an interrupted mutation leaves a
 volume Kickstart's validator repairs. On fixed disks, metadata and small
 appends are grouped and published after three idle seconds or before the next
 unrelated operation. A mutation that would run out of space is refused before
-the root is marked invalid; after a device error during a mutation the root
-stays invalid until a validator repairs the volume.
+the root is marked invalid.
+
+Device errors are reported as the device's own `io_Error` (for example 20),
+as Kickstart does. A failed write is retried once, so a transient error goes
+unnoticed. After a device error, and whenever a volume is mounted with an
+invalid root (for example after a crash), CopperFFS runs its own validator
+before the next packet or after an idle period, like Kickstart's: it walks the
+directory tree, rebuilds the bitmap and marks the root valid. It uses the
+mount index workspace and checks larger volumes in several passes. A damaged
+structure (bad checksum, wrong parent, a block used twice) is left alone and
+the volume stays read-only for a repair tool. It does not rebuild DOS\4/5
+directory caches.
 
 TRIM is available on DOS\0 to DOS\5 through the CopperTrim packet, and as
 automatic TRIM in `-AutoTrim` builds. It discards only blocks free in the
