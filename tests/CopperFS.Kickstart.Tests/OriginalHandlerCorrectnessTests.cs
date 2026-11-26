@@ -321,7 +321,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
                 if (entry.StartsWith("TrimQualificationProbe::", StringComparison.Ordinal) || measuresMount ||
                     ReferenceProbe(entry))
                 {
-                    probeData = new uint[ReferenceProbe(entry) ? 32 : 8];
+                    probeData = new uint[ReferenceProbe(entry) ? 40 : 8];
                     var measurementOffset = measuresMount ? 900 : 512;
                     for (var i = 0; i < probeData.Length; i++)
                         probeData[i] = BinaryPrimitives.ReadUInt32BigEndian(memory.Span.Slice((int)at + measurementOffset + i * 4, 4));
@@ -352,7 +352,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     // Kickstart-filesystem reference probes record 32 result words at control+512.
     private static bool ReferenceProbe(string entry) =>
         entry.StartsWith("LinkProbe::", StringComparison.Ordinal) || entry.StartsWith("ExNextProbe::", StringComparison.Ordinal) ||
-        entry.StartsWith("InhibitProbe::", StringComparison.Ordinal);
+        entry.StartsWith("InhibitProbe::", StringComparison.Ordinal) || entry.StartsWith("LockProbe::", StringComparison.Ordinal);
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     private class WritableHook(Action<FileStream>? afterFlush = null) : IAmigaHardfileIoHook

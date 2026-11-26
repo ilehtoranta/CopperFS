@@ -1640,7 +1640,9 @@ public static partial class NativeAmigaFileSystem
         }
         else
         {
-            if (InUse(state, r.Header, true)) { error = DOS.Error.ObjectInUse; return 0; }
+            // MODE_READWRITE shares the file with other opens and shared locks,
+            // as in Kickstart FFS; MODE_NEWFILE needs it to be unused.
+            if (InUse(state, r.Header, action != DosPacketAction.FindUpdate)) { error = DOS.Error.ObjectInUse; return 0; }
             if (APTR.ReadUInt32(header, ((int)p.BlockBytes - 512) + 508) != 0xFFFFFFFD) { error = DOS.Error.ObjectWrongType; return 0; }
             if (action == DosPacketAction.FindOutput)
             {
@@ -1651,7 +1653,7 @@ public static partial class NativeAmigaFileSystem
             }
             else size = p.ReadUInt32(header, ((int)p.BlockBytes - 512) + 324);
         }
-        return InstallWriteHandle(state, ref p, ref w, handle, r.Header, size, changed, out error);
+        return InstallWriteHandle(state, ref p, ref w, handle, r.Header, size, changed, out error, action == DosPacketAction.FindUpdate ? 0 : 1);
     }
 
     private static bool SimpleOpenComponent(APTR state, ref NativeFileSystemPlatform p, ref AmigaFfsWriteCore.Request r)
@@ -1675,9 +1677,9 @@ public static partial class NativeAmigaFileSystem
     }
 
     private static int InstallWriteHandle(APTR state, ref NativeFileSystemPlatform p, ref AmigaFfsWriteCore.Work w,
-        APTR handle, uint key, uint size, bool changed, out DOS.Error error)
+        APTR handle, uint key, uint size, bool changed, out DOS.Error error, int access = 1)
     {
-        var obj = NewObject(state, key, size, true, 1);
+        var obj = NewObject(state, key, size, true, access);
 #if COPPERFS_FFS_HANDLER
         if (w.GroupHeader != 0)
         {
@@ -1784,7 +1786,8 @@ public static partial class NativeAmigaFileSystem
             RecordMetadataGroup(state, ref w);
 #endif
             if (!created) { error = w.Error; return 0; }
-            var obj = NewObject(state, r.Header, 0, false, -2);
+            // CreateDir returns an exclusive lock, as in Kickstart FFS.
+            var obj = NewObject(state, r.Header, 0, false, -1);
             if (obj.IsNull) { error = DOS.Error.NoFreeStore; return 0; }
             NativeFileSystemNotifications.Changed(state, r.Header);
             return unchecked((int)((obj.Raw + 20) >> 2));
@@ -1793,7 +1796,9 @@ public static partial class NativeAmigaFileSystem
         r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length, APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out var header, w.Index,
             followFinal: false);
         if (r.Header == 0) return 0;
-        if (InUse(state, r.Header, true)) { error = DOS.Error.ObjectInUse; return 0; }
+        // Delete needs the object unused. Kickstart FFS renames under shared
+        // locks and open files and refuses only an exclusive lock.
+        if (InUse(state, r.Header, action != DosPacketAction.RenameObject)) { error = DOS.Error.ObjectInUse; return 0; }
         var oldParent = p.ReadUInt32(header, ((int)p.BlockBytes - 512) + 500);
         bool success;
         if (action == DosPacketAction.RenameObject)
@@ -3060,6 +3065,8 @@ public static partial class NativeAmigaFileSystem
                         key = p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 500);
                     }
                 }
+                // Kickstart FFS refuses a shared copy beside an exclusive lock.
+                if (key != RootKey(state) && InUse(state, key, false)) { error = DOS.Error.ObjectInUse; break; }
                 var duplicate = NewObject(state, key, 0, false, -2);
                 if (duplicate.IsNull) error = DOS.Error.NoFreeStore;
                 else result = unchecked((int)((duplicate.Raw + 20) >> 2));
