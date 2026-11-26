@@ -47,7 +47,43 @@ public static partial class AmigaFfsWriteCore
         internal bool LayoutKnown, WritingIndexedFile, FreeCountKnown;
         internal bool CheckedTracking, TrackFrees;
         internal bool OpenProtectionChecked;
+        // The caller's current DateStamp. When set, creates, deletes and
+        // renames date the directories they change, new headers get their
+        // creation time and the root records the disk-altered date.
+        public bool StampTime;
+        public uint NowDays, NowMinutes, NowTicks;
         public DOS.Error Error;
+    }
+
+    // Write the caller's time into a header or root's date (Tail+420..428)
+    // and keep its checksum at offset 20 consistent for incremental sealing.
+    private static void StampDate<T>(ref T p, ref Work w, APTR image, int at) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        if (!w.StampTime || image.IsNull) return;
+        var sum = unchecked(p.ReadUInt32(image, 20) + p.ReadUInt32(image, at) + p.ReadUInt32(image, at + 4) + p.ReadUInt32(image, at + 8) -
+            w.NowDays - w.NowMinutes - w.NowTicks);
+        p.WriteUInt32(image, at, w.NowDays); p.WriteUInt32(image, at + 4, w.NowMinutes); p.WriteUInt32(image, at + 8, w.NowTicks);
+        p.WriteUInt32(image, 20, sum);
+    }
+
+    // Date a directory whose hash table this operation changed through a
+    // sibling's link instead of its own header.
+    private static bool StampDirectory<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint directory)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        if (!w.StampTime) return true;
+        if (MountIndexEnabled && directory == w.RootKey && w.RootImage.IsNotNull && w.DosType < 0x444F5304)
+        {
+            StampDate(ref p, ref w, w.RootImage, geometry.Tail + 420);
+            w.RootLinkChanged = true;
+            return true;
+        }
+        var current = InspectHeader(ref p, ref w, in geometry, directory);
+        if (current.IsNull) return false;
+        var target = EditDirectoryLinks(ref p, ref w, directory, current, true);
+        if (target.IsNull) return false;
+        StampDate(ref p, ref w, target, geometry.Tail + 420);
+        return target != w.Meta || Put(ref p, ref w, directory, target, SealedHeader);
     }
     public struct Request
     {
@@ -320,6 +356,8 @@ public static partial class AmigaFfsWriteCore
         // the operation. A write-back device can reorder writes between
         // barriers, so make them durable before the root says so.
         if (valid != 0 && !p.Flush()) return Fail(ref w, DOS.Error.DiskNotValidated);
+        // The root's disk-altered date (v_days) follows every published change.
+        if (valid != 0) StampDate(ref p, ref w, image, geometry.Tail + 472);
         var sum = p.ReadUInt32(image, 20);
         var previous = p.ReadUInt32(image, geometry.Tail + 312);
         p.WriteUInt32(image, geometry.Tail + 312, valid);
@@ -809,6 +847,7 @@ public static partial class AmigaFfsWriteCore
                     var sum = p.ReadUInt32(w.RootImage, 20);
                     p.WriteUInt32(w.RootImage, at, successor);
                     p.WriteUInt32(w.RootImage, 20, unchecked(sum + current - successor));
+                    StampDate(ref p, ref w, w.RootImage, geometry.Tail + 420);
                     w.RootLinkChanged = true;
                     return true;
                 }
@@ -816,6 +855,8 @@ public static partial class AmigaFfsWriteCore
                 if (target.IsNull) return false;
                 p.WriteUInt32(target, at, successor);
                 p.WriteUInt32(target, 20, unchecked(p.ReadUInt32(target, 20) + current - successor));
+                // The directory itself changed; a sibling's link edit leaves its date to the caller.
+                if (owner == directory) StampDate(ref p, ref w, target, geometry.Tail + 420);
                 return target != w.Meta || Put(ref p, ref w, owner, target, SealedHeader);
             }
             owner = current; at = geometry.Tail + 496;
@@ -896,6 +937,7 @@ public static partial class AmigaFfsWriteCore
         p.WriteUInt32(header, geometry.Tail + 508, directory ? 2u : 0xFFFFFFFD);
         p.WriteUInt8(header, geometry.Tail + 432, (byte)r.Length);
         for (var i = 0u; i < r.Length; i++) p.WriteUInt8(header, geometry.Tail + 433 + (int)i, p.ReadUInt8(r.Name, (int)i));
+        StampDate(ref p, ref w, header, geometry.Tail + 420);
         if (MountIndexEnabled && w.GroupHeader == key)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingHeader, key);
@@ -920,6 +962,7 @@ public static partial class AmigaFfsWriteCore
             var sum = p.ReadUInt32(parent, 20);
             p.WriteUInt32(parent, slot, key);
             p.WriteUInt32(parent, 20, unchecked(sum + successor - key));
+            StampDate(ref p, ref w, parent, geometry.Tail + 420);
             w.RootLinkChanged = parent == w.RootImage;
         }
         else
@@ -927,6 +970,7 @@ public static partial class AmigaFfsWriteCore
             if (!Header(ref p, ref w, r.Directory)) return false;
             p.WriteUInt32(w.Meta, slot, key);
             p.WriteUInt32(w.Meta, 20, unchecked(p.ReadUInt32(w.Meta, 20) + successor - key));
+            StampDate(ref p, ref w, w.Meta, geometry.Tail + 420);
             if (!Put(ref p, ref w, r.Directory, w.Meta, SealedHeader)) return false;
         }
         if (!Finish(ref p, ref w, in geometry)) return false;
@@ -1233,6 +1277,7 @@ public static partial class AmigaFfsWriteCore
         else
         {
             if (!Unlink(ref p, ref w, in geometry, key, w.CacheParent, slot, successor, retainedDirectory)) return false;
+            if (w.UnlinkedOwner != w.CacheParent && !StampDirectory(ref p, ref w, in geometry, w.CacheParent)) return false;
             Bit(ref p, ref w, key, true);
         }
         return Finish(ref p, ref w, in geometry);
@@ -1265,6 +1310,7 @@ public static partial class AmigaFfsWriteCore
             }
         }
         if (!Unlink(ref p, ref w, in geometry, key, w.CacheParent, slot, successor)) return false;
+        if (w.UnlinkedOwner != w.CacheParent && !StampDirectory(ref p, ref w, in geometry, w.CacheParent)) return false;
         Bit(ref p, ref w, key, true);
         return w.Error == DOS.Error.None && Finish(ref p, ref w, in geometry);
     }
@@ -1292,11 +1338,13 @@ public static partial class AmigaFfsWriteCore
         }
         if (!Begin(ref p, ref w, in geometry)) return false;
         if (!Unlink(ref p, ref w, in geometry, key, w.CacheParent, slot, successor)) return false;
+        if (w.UnlinkedOwner != w.CacheParent && !StampDirectory(ref p, ref w, in geometry, w.CacheParent)) return false;
         // Unlinking the object can change the link's own hash successor.
         image = InspectHeader(ref p, ref w, in geometry, link);
         if (image.IsNull) return false;
         var linkSuccessor = p.ReadUInt32(image, geometry.Tail + 496);
         if (!Unlink(ref p, ref w, in geometry, link, linkParent, linkSlot, key)) return false;
+        if (w.UnlinkedOwner != linkParent && !StampDirectory(ref p, ref w, in geometry, linkParent)) return false;
         if (!Header(ref p, ref w, key)) return false;
         p.Copy(APTR.FromPointer(w.Data.Raw + (uint)(geometry.Tail + 432)), APTR.FromPointer(w.Meta.Raw + (uint)(geometry.Tail + 432)), 32);
         p.WriteUInt32(w.Meta, geometry.Tail + 472, p.ReadUInt32(w.Data, geometry.Tail + 472));
@@ -1369,6 +1417,7 @@ public static partial class AmigaFfsWriteCore
             p.ReadUInt32(w.Index, AmigaFfsMountIndex.PublishedParent) == r.Directory)
             retainedDirectory = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
         if (MountIndexEnabled && w.LayoutKnown && movesDirectory) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
+        w.UnlinkedOwner = 0;
         if (!Begin(ref p, ref w, in geometry)) return false;
         // The destination directory also owns the source bucket head. Patch
         // both links in its final sector write after the renamed header succeeds.
@@ -1401,6 +1450,7 @@ public static partial class AmigaFfsWriteCore
             var sum = p.ReadUInt32(w.RootImage, 20);
             p.WriteUInt32(w.RootImage, slot, r.Header);
             p.WriteUInt32(w.RootImage, 20, unchecked(sum + successor - r.Header));
+            StampDate(ref p, ref w, w.RootImage, geometry.Tail + 420);
             w.RootLinkChanged = true;
         }
         else if (slot != oldSlot)
@@ -1419,8 +1469,13 @@ public static partial class AmigaFfsWriteCore
             sum = unchecked(sum + p.ReadUInt32(target, slot) - r.Header);
             p.WriteUInt32(target, slot, r.Header);
             p.WriteUInt32(target, 20, sum);
+            StampDate(ref p, ref w, target, geometry.Tail + 420);
             if (target == w.Meta && !Put(ref p, ref w, r.Directory, target, SealedHeader)) return false;
         }
+        else if (!StampDirectory(ref p, ref w, in geometry, r.Directory)) return false;
+        // Kickstart dates both directories of a move, not the renamed object.
+        if (w.CacheParent != r.Directory && w.UnlinkedOwner != w.CacheParent &&
+            !StampDirectory(ref p, ref w, in geometry, w.CacheParent)) return false;
         return Finish(ref p, ref w, in geometry);
     }
 

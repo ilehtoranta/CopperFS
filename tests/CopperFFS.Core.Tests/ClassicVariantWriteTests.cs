@@ -241,6 +241,43 @@ public sealed partial class VolumeGeometryTests
         for (var at = 24; at < 312; at += 4) Assert.Equal(0u, p.ReadUInt32(Meta, at));
     }
 
+    // With a caller time, the blocks Kickstart FFS dates get exactly that time:
+    // a new header and its directory on create, the directory (not the object)
+    // on rename and delete, and the root's disk-altered date on publication.
+    [Theory]
+    [InlineData(1)] [InlineData(5)]
+    public void MutationsDateTheBlocksKickstartDates(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var drawer = VariantCreate(ref p, storage, g.RootBlock, "Drawer", true);
+        uint[] Date(uint key, int at = 420)
+        {
+            Assert.True(p.ReadBlock(key, Meta));
+            return [p.ReadUInt32(Meta, g.Tail + at), p.ReadUInt32(Meta, g.Tail + at + 4), p.ReadUInt32(Meta, g.Tail + at + 8)];
+        }
+        AmigaFfsWriteCore.Work Timed(uint days) => Work() with { StampTime = true, NowDays = days, NowMinutes = 7, NowTicks = 9 };
+        Encoding.Latin1.GetBytes("Drawer/File").CopyTo(storage.Ram, (int)Name.Raw);
+        var file = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 11 }; var w = Timed(100);
+        var rootDate = Date(g.RootBlock);
+        Assert.True(AmigaFfsWriteCore.Create(ref p, ref w, ref file, false), w.Error.ToString());
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(file.Header));
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(drawer.Header));
+        Assert.Equal(rootDate, Date(g.RootBlock));
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(g.RootBlock, 472)); // disk altered
+        Encoding.Latin1.GetBytes("Renamed").CopyTo(storage.Ram, (int)Name.Raw);
+        file.Directory = drawer.Header; file.Name = Name; file.Length = 7; w = Timed(200);
+        Assert.True(AmigaFfsWriteCore.Rename(ref p, ref w, ref file), w.Error.ToString());
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(file.Header));
+        Assert.Equal(new uint[] { 200, 7, 9 }, Date(drawer.Header));
+        w = Timed(300);
+        Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, file.Header, false), w.Error.ToString());
+        Assert.Equal(new uint[] { 300, 7, 9 }, Date(drawer.Header));
+        Assert.Equal(rootDate, Date(g.RootBlock));
+        Assert.True(AmigaDiskFileSystemCore.CountUsed(ref p, Meta, Bitmap, out _));
+        if (dos >= 4) InspectDirectoryCache(storage, g, drawer.Header, 0);
+    }
+
     // Mark every free block but `keep` as allocated in the volume's bitmap pages.
     private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
     {

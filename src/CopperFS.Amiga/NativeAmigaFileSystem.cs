@@ -46,7 +46,9 @@ public static partial class NativeAmigaFileSystem
     // Idle publication: an Exec timer request, whether it is queued, and
     // whether a packet arrived since it was queued.
     private const int FfsIdleTimer = FfsObjectSlot + (int)ObjectBytes, FfsIdleQueued = FfsIdleTimer + 4, FfsIdleActivity = FfsIdleQueued + 4;
-    private const uint MountStateBytes = FfsIdleActivity + 4;
+    // A DateStamp the handler fills before each mutation.
+    private const int FfsNow = FfsIdleActivity + 4;
+    private const uint MountStateBytes = FfsNow + 12;
 #if COPPERFS_FFS_INDEX64
     internal const uint FfsIndexBytes = 64 * 1024;
 #elif COPPERFS_FFS_INDEX1024
@@ -1471,6 +1473,13 @@ public static partial class NativeAmigaFileSystem
         work.Index = APTR.FromPointer(APTR.ReadUInt32(state, FfsIndexOffset));
         work.ReadsGroupedRoot = true;
         work.ReadsGroupedDirectories = true;
+#if COPPERSTART_SFS_STANDALONE
+        // Kickstart FFS dates new objects and the directories it changes.
+        var now = APTR.FromPointer(state.Raw + FfsNow);
+        global::Amiga.DOS.DateStamp(now);
+        work.StampTime = true;
+        work.NowDays = APTR.ReadUInt32(now, 0); work.NowMinutes = APTR.ReadUInt32(now, 4); work.NowTicks = APTR.ReadUInt32(now, 8);
+#endif
 #endif
     }
     internal static AmigaSmartFileSystemWriteCore.Work SmartWriteWork(APTR state)
@@ -1918,6 +1927,18 @@ public static partial class NativeAmigaFileSystem
     }
 
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+#if COPPERSTART_SFS_STANDALONE
+    // Close-time date of a changed file. On fixed disks it joins the
+    // metadata group, so it costs no extra root writes of its own.
+    private static void StampClosedFile(APTR state, uint key)
+    {
+        var p = new NativeFileSystemPlatform(state); InitializeWriteWork(state, out var w);
+        w.GroupMetadata = APTR.ReadUInt32(state, FixedHardDiskOffset) != 0;
+        var r = new AmigaFfsWriteCore.Request { Header = key, Buffer = APTR.FromPointer(state.Raw + FfsNow) };
+        AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate);
+        RecordMetadataGroup(state, ref w);
+    }
+#endif
     private static void RecordMetadataGroup(APTR state, ref AmigaFfsWriteCore.Work work)
     {
         if (!work.GroupMetadata || work.Index.IsNull) return;
@@ -2789,6 +2810,10 @@ public static partial class NativeAmigaFileSystem
 #endif
 #if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
                 if (changedKey != 0) NativeSfs2Bridge.RetainOriginalCursor(state, retired, changedKey);
+#endif
+#if COPPERFS_FFS_HANDLER && COPPERSTART_SFS_STANDALONE && !COPPERSTART_PACKED_EXTENSION
+                // Kickstart FFS dates a file when a handle that changed it closes.
+                if (changedKey != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state))) StampClosedFile(state, changedKey);
 #endif
                 if (retired.IsNotNull) FreeObject(state, retired);
                 if (changedKey != 0) NativeFileSystemNotifications.Changed(state, changedKey);

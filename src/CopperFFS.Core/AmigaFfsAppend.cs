@@ -24,7 +24,9 @@ public static partial class AmigaFfsWriteCore
             p.ReadUInt32(image, tail + 500) + p.ReadUInt32(image, tail + 504) + p.ReadUInt32(image, tail + 508));
         if (header)
         {
-            sum = unchecked(sum + p.ReadUInt32(image, 16) + p.ReadUInt32(image, tail + 324) + p.ReadUInt32(image, tail + 496));
+            sum = unchecked(sum + p.ReadUInt32(image, 16) + p.ReadUInt32(image, tail + 324) + p.ReadUInt32(image, tail + 496) +
+                // A fresh header's creation date (zero unless the caller supplied the time).
+                p.ReadUInt32(image, tail + 420) + p.ReadUInt32(image, tail + 424) + p.ReadUInt32(image, tail + 428));
             var nameBytes = (p.ReadUInt8(image, tail + 432) + 4) & ~3;
             for (var offset = 0; offset < nameBytes; offset += 4)
                 sum = unchecked(sum + p.ReadUInt32(image, tail + 432 + offset));

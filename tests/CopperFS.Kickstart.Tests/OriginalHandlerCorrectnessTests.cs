@@ -354,7 +354,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         entry.StartsWith("LinkProbe::", StringComparison.Ordinal) || entry.StartsWith("ExNextProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("InhibitProbe::", StringComparison.Ordinal) || entry.StartsWith("LockProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("DateProbe::", StringComparison.Ordinal) || entry.StartsWith("SameLockProbe::", StringComparison.Ordinal) ||
-        entry.StartsWith("IdleProbe::", StringComparison.Ordinal);
+        entry.StartsWith("IdleProbe::", StringComparison.Ordinal) || entry.StartsWith("DateStampProbe::", StringComparison.Ordinal);
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     private class WritableHook(Action<FileStream>? afterFlush = null) : IAmigaHardfileIoHook
