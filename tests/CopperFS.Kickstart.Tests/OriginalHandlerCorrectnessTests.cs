@@ -352,7 +352,8 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
     // Kickstart-filesystem reference probes record 32 result words at control+512.
     private static bool ReferenceProbe(string entry) =>
         entry.StartsWith("LinkProbe::", StringComparison.Ordinal) || entry.StartsWith("ExNextProbe::", StringComparison.Ordinal) ||
-        entry.StartsWith("InhibitProbe::", StringComparison.Ordinal) || entry.StartsWith("LockProbe::", StringComparison.Ordinal);
+        entry.StartsWith("InhibitProbe::", StringComparison.Ordinal) || entry.StartsWith("LockProbe::", StringComparison.Ordinal) ||
+        entry.StartsWith("DateProbe::", StringComparison.Ordinal);
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     private class WritableHook(Action<FileStream>? afterFlush = null) : IAmigaHardfileIoHook

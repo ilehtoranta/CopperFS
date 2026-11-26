@@ -1836,14 +1836,22 @@ public static partial class NativeAmigaFileSystem
         if (action != DosPacketAction.SetProtection)
         {
             r.Buffer = APTR.FromPointer(value << 2);
-            // Kickstart 3.1's SetFileDate path supplies an expanded address.
-            // CopperStart's DOS path supplies a BPTR. Match the SFS adapter:
-            // use the expanded form when only that form is in guest memory.
+#if COPPERSTART_SFS_STANDALONE
+            // Kickstart defines ACTION_SET_DATE's dp_Arg4 as a CPTR to the
+            // DateStamp. Guessing a BPTR first wrote other RAM as the date
+            // whenever that expanded address was mapped too (low chip memory).
+            if (action == DosPacketAction.SetDate) r.Buffer = APTR.FromPointer(value);
+#else
+            // CopperStart's DOS path supplies a BPTR; Kickstart's an address.
+            // Use the expanded form when only that form is in guest memory.
             if (action == DosPacketAction.SetDate && !p.IsMapped(r.Buffer, 12) &&
                 p.IsMapped(APTR.FromPointer(value), 12))
                 r.Buffer = APTR.FromPointer(value);
+#endif
+            if (action == DosPacketAction.SetDate && !p.IsMapped(r.Buffer, 12)) { error = DOS.Error.BadNumber; return 0; }
             if (action == DosPacketAction.SetComment)
             {
+                if (!p.IsMapped(r.Buffer, 1) || !p.IsMapped(r.Buffer, (uint)p.ReadUInt8(r.Buffer) + 1u)) { error = DOS.Error.BadNumber; return 0; }
                 r.Length = p.ReadUInt8(r.Buffer);
                 r.Buffer = APTR.FromPointer(r.Buffer.Raw + 1);
             }
