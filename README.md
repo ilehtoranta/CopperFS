@@ -177,9 +177,8 @@ policies retain shared dispatch unless explicitly specialized. `-Sfs2` selects
 TRST; use `-Sfs2 -Sfs2CsunWrites` for CSUN.
 The shared source consumer and ordinary managed build retain runtime dispatch.
 Use `Build-Handler.ps1 -SharedDispatch` only as a size/performance comparison
-control. See the [active-code measurements](docs/active-code-size-2026-11-11.md)
-and [initial size pass](docs/handler-size-optimization-2026-11-11.md) for the
-remaining gap to the original handlers and the validation scope.
+control. See the [size pass](docs/handler-size-optimization-2026-11-11.md) for
+the remaining gap to the original handlers and the validation scope.
 
 Published CopperSFS releases remain in the original repository and are immutable.
 This source migration does not publish a package, handler or ROM release. The
