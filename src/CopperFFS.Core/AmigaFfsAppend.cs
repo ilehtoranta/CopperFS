@@ -381,7 +381,7 @@ public static partial class AmigaFfsWriteCore
             if (table == 0)
             {
                 if (oldBlocks == 0) p.WriteUInt32(image, 16, p.ReadUInt32(keys));
-                w.CacheParent = p.ReadUInt32(image, tableTail + 500);
+                w.CacheParent = p.ReadUInt32(image, tableTail + 500); w.CacheKey = r.Header;
                 p.WriteUInt32(image, tableTail + 324, w.RestoreSize);
             }
             if (image != w.Meta) p.WriteUInt32(w.Index, pending, key);
@@ -396,7 +396,7 @@ public static partial class AmigaFfsWriteCore
                 // Growth beyond the first table only changes the file size
                 // in this private header. Close seals it after its extensions.
                 var header = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
-                w.CacheParent = p.ReadUInt32(header, tableTail + 500);
+                w.CacheParent = p.ReadUInt32(header, tableTail + 500); w.CacheKey = r.Header;
                 p.WriteUInt32(header, tableTail + 324, w.RestoreSize);
             }
             else

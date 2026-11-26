@@ -18,6 +18,10 @@ public static partial class AmigaFfsWriteCore
         internal uint BitmapChecksumDelta;
         public uint DosType;
         internal uint CacheParent, CacheOther, CacheNew;
+        // DOS4/5 record edits for Finish: CacheKey's record follows its
+        // header (CacheFresh: it has none yet); CacheDrop's record goes.
+        internal uint CacheKey, CacheDrop;
+        internal bool CacheFresh;
         internal uint UnlinkedOwner;
         internal uint FreedFirst, FreedCount;
         // Optional initialized storage shared by work records of one serial mount.
@@ -203,6 +207,7 @@ public static partial class AmigaFfsWriteCore
     {
         w.RestoreFile = 0; w.GroupHeader = 0; w.WritingIndexedFile = false; w.FreeCountKnown = false;
         w.CacheParent = w.CacheOther = w.CacheNew = 0;
+        w.CacheKey = w.CacheDrop = 0; w.CacheFresh = false;
         w.RootLinkChanged = false;
         w.FreedCount = 0; w.CheckedTracking = false;
         w.Error = DOS.Error.None;
@@ -366,9 +371,7 @@ public static partial class AmigaFfsWriteCore
     }
     private static bool Finish<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry) where T : struct, IAmigaWritableFileSystemPlatform
     {
-        if (w.DosType >= 0x444F5304 &&
-            (!RebuildCache(ref p, ref w, w.CacheNew) || !RebuildCache(ref p, ref w, w.CacheParent) ||
-             (w.CacheOther != w.CacheParent && !RebuildCache(ref p, ref w, w.CacheOther)))) return false;
+        if (w.DosType >= 0x444F5304 && !SyncCaches(ref p, ref w)) return false;
         var keepOpen = MountIndexEnabled && w.WritingIndexedFile && w.GroupFileWrites && w.LayoutKnown && w.RootImage.IsNotNull && w.RestoreFile != 0;
         var keepMetadata = MountIndexEnabled && w.GroupMetadata && !keepOpen && w.LayoutKnown && w.RootImage.IsNotNull && w.DosType < 0x444F5304;
         if (MountIndexEnabled && (keepOpen || keepMetadata) && p.ReadUInt32(w.Index, AmigaFfsMountIndex.BitmapImage) != 0)
@@ -940,6 +943,7 @@ public static partial class AmigaFfsWriteCore
         if (!Begin(ref p, ref w, in geometry)) return false;
         var key = Allocate(ref p, ref w, in geometry); if (key == 0) return false;
         w.CacheParent = r.Directory; if (directory) w.CacheNew = key;
+        w.CacheKey = key; w.CacheFresh = true;
         var parent = MountIndexEnabled ? w.RootImage : APTR.Null;
         if (!MountIndexEnabled || r.Directory != geometry.RootBlock || parent.IsNull)
         {
@@ -1195,6 +1199,7 @@ public static partial class AmigaFfsWriteCore
         if (header.IsNull) return false;
         var type = unchecked((int)p.ReadUInt32(header, geometry.Tail + 508));
         w.CacheParent = p.ReadUInt32(header, geometry.Tail + 500);
+        if (truncate) w.CacheKey = key; else w.CacheDrop = key;
         if ((p.ReadUInt32(header, geometry.Tail + 320) & (truncate ? 4u : 1u)) != 0) return Fail(ref w, truncate ? DOS.Error.WriteProtected : DOS.Error.DeleteProtected);
         var saved = new AmigaFfsMountIndex.SavedFile();
         if (MountIndexEnabled && type < 0 && w.LayoutKnown && w.DosType < 0x444F5304)
@@ -1392,7 +1397,9 @@ public static partial class AmigaFfsWriteCore
         var linkParent = p.ReadUInt32(image, geometry.Tail + 500);
         // Data stays untouched until the final bitmap release below.
         p.Copy(image, w.Data, geometry.BlockBytes);
-        w.CacheOther = linkParent;
+        // The object keeps its key under the link's name and parent; the
+        // link header itself goes.
+        w.CacheOther = linkParent; w.CacheKey = key; w.CacheDrop = link;
         if (MountIndexEnabled && w.LayoutKnown)
         {
             if (type > 0) p.WriteUInt32(w.Index, AmigaFfsMountIndex.PrefixDirectory, 0);
@@ -1434,7 +1441,7 @@ public static partial class AmigaFfsWriteCore
         var source = InspectHeader(ref p, ref w, in geometry, r.Header);
         if (source.IsNull) return false;
         var movesDirectory = p.ReadUInt32(source, geometry.Tail + 508) == 2;
-        w.CacheParent = p.ReadUInt32(source, geometry.Tail + 500); w.CacheOther = r.Directory;
+        w.CacheParent = p.ReadUInt32(source, geometry.Tail + 500); w.CacheOther = r.Directory; w.CacheKey = r.Header;
         if ((p.ReadUInt32(source, geometry.Tail + 320) & 1) != 0) return Fail(ref w, DOS.Error.DeleteProtected);
         var sourceSlot = StoredNameSlot(ref p, source, in geometry, w.DosType);
         if (sourceSlot == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
@@ -1644,7 +1651,7 @@ public static partial class AmigaFfsWriteCore
         KeepFile(ref p, ref w);
         if (!Begin(ref p, ref w, in geometry) ||
             ((!MountIndexEnabled || w.RootImage.IsNull) && !Header(ref p, ref w, r.Header))) return false;
-        w.CacheParent = p.ReadUInt32(image, geometry.Tail + 500);
+        w.CacheParent = p.ReadUInt32(image, geometry.Tail + 500); w.CacheKey = r.Header;
         EditAttribute(ref p, image, geometry.Tail, ref r, action);
         if (MountIndexEnabled && staged)
         {
@@ -2498,7 +2505,7 @@ public static partial class AmigaFfsWriteCore
     private static bool SetFinalSize<T>(ref T p, ref Work w, int tail, uint size)
         where T : struct, IAmigaWritableFileSystemPlatform
     {
-        w.CacheParent = p.ReadUInt32(w.Meta, tail + 500);
+        w.CacheParent = p.ReadUInt32(w.Meta, tail + 500); w.CacheKey = p.ReadUInt32(w.Meta, 4);
         p.WriteUInt32(w.Meta, tail + 324, size);
         return true;
     }

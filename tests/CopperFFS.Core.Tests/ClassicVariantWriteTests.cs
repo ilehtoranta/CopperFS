@@ -131,6 +131,96 @@ public sealed partial class VolumeGeometryTests
         InspectDirectoryCache(storage, g, g.RootBlock, directory ? 1 : siblings);
     }
 
+    // Filling a DOS4/5 directory costs a bounded number of transfers per
+    // entry however many entries it already holds. A full cache rebuild per
+    // change re-read the directory per hash slot and every entry header.
+    [Theory]
+    [InlineData(4, 512u)] [InlineData(5, 512u)] [InlineData(5, 1024u)] [InlineData(5, 4096u)]
+    public void FillingACachedDirectoryCostsBoundedTransfersPerEntry(int dos, uint bytes)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(20000, bytes, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        var drawer = VariantCreate(ref p, storage, g.RootBlock, "Drawer", true);
+        const int entries = 300;
+        var costs = new int[entries];
+        for (var i = 0; i < entries; i++)
+        {
+            storage.Transfers.Clear();
+            var file = VariantCreate(ref p, storage, drawer.Header, $"Entry{i:D4}");
+            OfsWrite(ref p, storage, ref file, 0, [1, 2, 3]);
+            costs[i] = storage.Transfers.Count;
+        }
+        // Hash chains still lengthen (300 entries / 72 buckets at 512 bytes),
+        // so allow a few lookups more per create, not a per-entry term.
+        var early = costs.Take(30).Max(); var late = costs.Skip(entries - 30).Max();
+        Assert.True(late <= early + 12, $"first 30 creates cost at most {early} transfers, last 30 cost up to {late}");
+        Assert.True(InspectDirectoryCache(storage, g, drawer.Header, entries) >= 2);
+        // Cache blocks are allocated next to the directory, not from the
+        // start of the partition.
+        Assert.True(p.ReadBlock(drawer.Header, Meta));
+        for (var key = p.ReadUInt32(Meta, g.Tail + 504); key != 0;)
+        {
+            Assert.True(key > drawer.Header, $"cache block {key} precedes its directory {drawer.Header}");
+            Assert.True(p.ReadBlock(key, Data)); key = p.ReadUInt32(Data, 16);
+        }
+        // Deleting every entry empties the cache back to one block.
+        for (var i = 0; i < entries; i++)
+        {
+            Encoding.Latin1.GetBytes($"Drawer/Entry{i:D4}").CopyTo(storage.Ram, (int)Name.Raw);
+            var key = AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 16, 0x444F5300u + (uint)dos, Meta, out _);
+            var w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, key, false), w.Error.ToString());
+        }
+        Assert.Equal(1, InspectDirectoryCache(storage, g, drawer.Header, 0));
+    }
+
+    // Running out of space mid-update at block sizes other than 512: the
+    // only cache block is full, so a create needs a header and a new cache
+    // block, and a comment that outgrows its block needs a new block too.
+    // Both are refused before Begin; a growth that fits its block proceeds.
+    [Theory]
+    [InlineData(4, 1024u)] [InlineData(5, 1024u)] [InlineData(4, 4096u)] [InlineData(5, 4096u)]
+    public void FullCacheBlockIsRefusedBeforeTheRootIsInvalidatedAtLargerBlocks(int dos, uint bytes)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, bytes, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        // Thirty-character names make 56-byte records.
+        var siblings = (int)((bytes - 24) / 56);
+        var first = VariantCreate(ref p, storage, g.RootBlock, "Sibling000" + new string('s', 20));
+        for (var i = 1; i < siblings; i++) VariantCreate(ref p, storage, g.RootBlock, $"Sibling{i:D3}" + new string('s', 20));
+        Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, siblings));
+        void Refused(Func<AmigaFfsWriteCore.Work, (bool Ok, DOS.Error Error)> attempt)
+        {
+            var before = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+            var (ok, error) = attempt(Work());
+            Assert.False(ok); Assert.Equal(DOS.Error.DiskFull, error);
+            Assert.Equal(before.Keys.Order(), storage.Sectors.Keys.Order());
+            foreach (var (key, data) in before) Assert.Equal(data, storage.Sectors[key]);
+        }
+        (bool, DOS.Error) Comment(AmigaFfsWriteCore.Work w, int length)
+        {
+            Encoding.Latin1.GetBytes(new string('c', length)).CopyTo(storage.Ram, (int)Payload.Raw);
+            var file = first; file.Buffer = Payload; file.Length = (uint)length;
+            var ok = AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref file, DosPacketAction.SetComment);
+            return (ok, w.Error);
+        }
+        LeaveFree(ref p, g, 1);
+        Refused(w =>
+        {
+            Encoding.Latin1.GetBytes("Overflow" + new string('o', 22)).CopyTo(storage.Ram, (int)Name.Raw);
+            var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 30 };
+            var ok = AmigaFfsWriteCore.Create(ref p, ref w, ref r, false);
+            return (ok, w.Error);
+        });
+        LeaveFree(ref p, g, 0);
+        // A 79-byte comment grows the record by 78 bytes, past the block's slack.
+        Refused(w => Comment(w, 79));
+        // Eight more bytes fit the slack of the block holding the record.
+        var fits = Comment(Work(), 8);
+        Assert.True(fits.Item1, fits.Item2.ToString());
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, g.Tail + 312));
+        Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, siblings));
+    }
+
     // The exact budget still admits the last free block when the parent's
     // cache has room for the new record.
     [Theory]

@@ -472,7 +472,7 @@ public static partial class AmigaFfsWriteCore
         }
         if (newSize == size || sizePublished) return Finish(ref p, ref w, in g);
         if (!Header(ref p, ref w, r.Header)) return false;
-        w.CacheParent = p.ReadUInt32(w.Meta, g.Tail + 500);
+        w.CacheParent = p.ReadUInt32(w.Meta, g.Tail + 500); w.CacheKey = r.Header;
         p.WriteUInt32(w.Meta, g.Tail + 324, newSize);
         return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, in g);
     }
