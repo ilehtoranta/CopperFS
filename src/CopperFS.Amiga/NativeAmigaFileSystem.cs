@@ -2189,7 +2189,7 @@ public static partial class NativeAmigaFileSystem
         if ((SpecializeFormat ? FormatIsSmart : Smart(state)) || action is DosPacketAction.Inhibit or DosPacketAction.FreeLock or
             DosPacketAction.End or DosPacketAction.IsFileSystem or DosPacketAction.CurrentVolume or DosPacketAction.Info or
             DosPacketAction.DiskInfo or DosPacketAction.Flush or DosPacketAction.MoreCache or DosPacketAction.DiskType or
-            DosPacketAction.RemoveNotify)
+            DosPacketAction.RemoveNotify or DosPacketAction.Format) // Format is sent to an inhibited volume
             return false;
         var named = action is DosPacketAction.LocateObject or DosPacketAction.FindInput or DosPacketAction.FindOutput or
             DosPacketAction.FindUpdate or DosPacketAction.DeleteObject or DosPacketAction.RenameObject or
@@ -3208,6 +3208,8 @@ public static partial class NativeAmigaFileSystem
                 if (action is DosPacketAction.ExamineFileHandle or DosPacketAction.ExamineFileHandle64)
                     key = file.IsNotNull ? APTR.ReadUInt32(file, 4) : 0;
                 if (key == 0) { error = DOS.Error.InvalidLock; break; }
+                // A FIB outside guest memory is a bad argument, not disk damage.
+                if (b > 0x3FFFFFFF || !p.IsMapped(APTR.FromPointer(b << 2), FileInfoBlock.SizeInBytes)) { error = DOS.Error.BadNumber; break; }
                 result = ((SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.Examine(state, key, APTR.FromPointer(b << 2))
                     : AmigaDiskFileSystemCore.Examine(ref p, key, APTR.FromPointer(b << 2), metadata)) ? -1 : 0;
@@ -3309,7 +3311,7 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.SetFileSize:
 #if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
                 result = -1;
-                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.DiskWriteProtected; break; }
+                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 if (NativeSfs2Bridge.IsSfs2(state))
                 {
@@ -3343,10 +3345,11 @@ public static partial class NativeAmigaFileSystem
                 result = (int)resizeTarget;
                 break;
 #else
-                result = -1; error = DOS.Error.DiskWriteProtected; break;
+                // Not implemented here: say so instead of claiming write protection.
+                result = -1; error = DOS.Error.ActionNotKnown; break;
 #endif
             case DosPacketAction.Format:
-                error = DOS.Error.DiskWriteProtected;
+                error = DOS.Error.ActionNotKnown;
                 break;
             default:
 #if !COPPERSTART_SMART_ONLY
