@@ -20,6 +20,9 @@ param(
     [string]$Rom = $env:COPPERSHARP_KICKSTART31_ROM,
     [string]$Filter = 'FullyQualifiedName~NativeSparseStorageTests',
     [switch]$SkipBuild,
+    # Reuse the already built CopperSharp compiler, for example while another
+    # process holds its output files.
+    [switch]$SkipCompilerBuild,
     [switch]$Run
 )
 
@@ -41,7 +44,7 @@ $handlers = [ordered]@{
 }
 
 if (-not $SkipBuild) {
-    $first = $true
+    $first = -not $SkipCompilerBuild
     foreach ($name in $handlers.Keys) {
         $arguments = @{} + $common + $handlers[$name]
         $arguments.ArtifactRoot = Join-Path $ArtifactRoot $name

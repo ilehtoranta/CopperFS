@@ -2094,6 +2094,28 @@ public static partial class NativeAmigaFileSystem
     }
 #endif
 
+    // While inhibited, Kickstart 3.1 FFS answers media packets without touching
+    // the disk: name lookups see no DOS disk (225) and existing locks and
+    // handles see no mounted volume (218). Release, inhibit and status
+    // packets still run. SFS keeps its own gate in the general dispatcher.
+    private static bool RefuseInhibited(APTR state, APTR packet, DosPacketAction action)
+    {
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)) || action is DosPacketAction.Inhibit or DosPacketAction.FreeLock or
+            DosPacketAction.End or DosPacketAction.IsFileSystem or DosPacketAction.CurrentVolume or DosPacketAction.Info or
+            DosPacketAction.DiskInfo or DosPacketAction.Flush or DosPacketAction.MoreCache or DosPacketAction.DiskType or
+            DosPacketAction.RemoveNotify)
+            return false;
+        var named = action is DosPacketAction.LocateObject or DosPacketAction.FindInput or DosPacketAction.FindOutput or
+            DosPacketAction.FindUpdate or DosPacketAction.DeleteObject or DosPacketAction.RenameObject or
+            DosPacketAction.CreateDirectory or DosPacketAction.SetProtection or DosPacketAction.SetComment or
+            DosPacketAction.SetDate or DosPacketAction.MakeLink or DosPacketAction.ReadLink or DosPacketAction.AddNotify;
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, action is DosPacketAction.Read or DosPacketAction.Write or
+            DosPacketAction.Seek or DosPacketAction.SetFileSize ? uint.MaxValue : 0);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset,
+            (uint)(named ? DOS.Error.NotADosDisk : DOS.Error.DeviceNotMounted));
+        return true;
+    }
+
     public static void Dispatch(APTR state, APTR packet)
     {
         // Read and enumeration packets need no mutation work area. Keep recovery
@@ -2101,6 +2123,7 @@ public static partial class NativeAmigaFileSystem
         // The FFS-only standalone entry reaches packet dispatch only after it
         // accepts an FFS/OFS mount.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 && RefuseInhibited(state, packet, action)) return;
 #if COPPERFS_FFS_HANDLER
         var owner = APTR.ReadUInt32(state, FfsWriteGroupHandle);
         if (owner != 0 && DispatchClassicWriteGroup(state, packet, action, owner)) return;
@@ -2713,9 +2736,22 @@ public static partial class NativeAmigaFileSystem
 
     private static int SetInhibited(ref NativeFileSystemPlatform p, APTR state, bool inhibit, out DOS.Error error)
     {
+        // Kickstart FFS nests inhibits: only the matching last release remounts.
+        var depth = APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset);
+        if (inhibit && depth != 0)
+        {
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, depth + 1);
+            error = DOS.Error.None; return -1;
+        }
+        if (!inhibit && depth > 1)
+        {
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, depth - 1);
+            error = DOS.Error.None; return -1;
+        }
 #if COPPERFS_FFS_HANDLER
-        if (inhibit && APTR.ReadUInt32(state, FfsGroupPublicationFailed) != 0)
-        { error = DOS.Error.DiskNotValidated; return 0; }
+        // A failed group publication left the root invalid on disk. Drop the
+        // group so a repair tool can still inhibit and remount the volume.
+        if (inhibit) APTR.WriteUInt32(state, FfsGroupPublicationFailed, 0);
         p.ForgetFfsIndex();
 #endif
 #if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
