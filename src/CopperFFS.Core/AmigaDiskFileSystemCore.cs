@@ -942,7 +942,7 @@ public static class AmigaDiskFileSystemCore
         where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
-        if (indexMemory.IsNotNull && p.ReadUInt32(indexMemory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean)
+        if (indexMemory.IsNotNull && p.ReadUInt32(indexMemory, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.Summarized)
         {
             used = p.ReadUInt32(indexMemory, AmigaFfsMountIndex.Used);
             return true;

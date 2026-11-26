@@ -22,6 +22,8 @@ public static partial class AmigaFfsWriteCore
         // header (CacheFresh: it has none yet); CacheDrop's record goes.
         internal uint CacheKey, CacheDrop;
         internal bool CacheFresh;
+        // An unindexed mount's summary supplies the free count and bitmap map.
+        internal bool Summary;
         internal uint UnlinkedOwner;
         internal uint FreedFirst, FreedCount;
         // Optional initialized storage shared by work records of one serial mount.
@@ -207,7 +209,7 @@ public static partial class AmigaFfsWriteCore
     {
         w.RestoreFile = 0; w.GroupHeader = 0; w.WritingIndexedFile = false; w.FreeCountKnown = false;
         w.CacheParent = w.CacheOther = w.CacheNew = 0;
-        w.CacheKey = w.CacheDrop = 0; w.CacheFresh = false;
+        w.CacheKey = w.CacheDrop = 0; w.CacheFresh = false; w.Summary = false;
         w.RootLinkChanged = false;
         w.FreedCount = 0; w.CheckedTracking = false;
         w.Error = DOS.Error.None;
@@ -253,6 +255,27 @@ public static partial class AmigaFfsWriteCore
 #endif
     }
 
+    // ACTION_INFO's used count. A clean index or summary answers without I/O.
+    // A volume too large for the index establishes the summary on the first
+    // poll, so later polls stop rereading every bitmap page.
+    public static bool CountUsed<T>(ref T p, ref Work w, out uint used) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        used = 0;
+        if (MountIndexEnabled && w.Index.IsNotNull && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == 0)
+        {
+            var geometry = AmigaFfsGeometry.Read(ref p);
+            if (geometry.BitmapBits != 0 && AmigaFfsMountIndex.Declines(ref p, w.Index, in geometry))
+            {
+                w.Error = DOS.Error.None; w.LayoutKnown = false; w.Summary = false; w.FreeCountKnown = false;
+                w.RootKey = geometry.RootBlock; w.RootImage = APTR.Null;
+                w.BitmapBlock = 0; w.BitmapDirty = 0; w.BitmapChecksumDelta = 0; w.NextKey = geometry.ReservedBlocks;
+                if (PrepareUnindexed(ref p, ref w, in geometry, 0, true)) { used = w.IndexedUsed; return true; }
+                w.Error = DOS.Error.None;
+            }
+        }
+        return AmigaDiskFileSystemCore.CountUsed(ref p, w.Data, w.Bitmap, out used, w.Index);
+    }
+
     // Only a cold or unindexed mount needs validation and bitmap traversal
     // scratch. Keep that work out of indexed mutation packets.
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -262,6 +285,17 @@ public static partial class AmigaFfsWriteCore
         if (!LoadDosType(ref p, ref w)) return false;
         if (!Header(ref p, ref w, geometry.RootBlock) || p.ReadUInt32(w.Meta, geometry.Tail + 312) != uint.MaxValue)
             return Fail(ref w, DOS.Error.DiskNotValidated);
+        if (MountIndexEnabled && w.Index.IsNotNull &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Summarized)
+        {
+            // The single mount owner published every bitmap change since the
+            // summary was checked; any reset or failure would have discarded it.
+            w.Summary = true; w.FreeCountKnown = true;
+            w.IndexedUsed = p.ReadUInt32(w.Index, AmigaFfsMountIndex.Used);
+            w.NextKey = p.ReadUInt32(w.Index, AmigaFfsMountIndex.NextCandidate);
+            if (IsFree(ref p, ref w, geometry.RootBlock) || w.Error != DOS.Error.None) return Fail(ref w, DOS.Error.DiskNotValidated);
+            return geometry.BlockCount - w.IndexedUsed >= needed || Fail(ref w, DOS.Error.DiskFull);
+        }
         if (MountIndexEnabled && scan && w.Index.IsNotNull)
         {
             if (!AmigaFfsMountIndex.Build(ref p, w.Index, w.Meta, w.Bitmap, in geometry, w.DosType))
@@ -291,15 +325,34 @@ public static partial class AmigaFfsWriteCore
         }
         // Bitmap extension blocks are themselves allocated filesystem blocks.
         if (!Header(ref p, ref w, geometry.RootBlock)) return false;
+        // A volume the index declined keeps the checked count and bitmap map
+        // as a summary, so later packets need not repeat this scan.
+        var summary = MountIndexEnabled && w.Index.IsNotNull &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == 0 ? AmigaFfsMountIndex.SummaryMap(w.Index) : APTR.Null;
+        var capacity = summary.IsNull ? 0 : AmigaFfsMountIndex.SummaryCapacity(ref p, w.Index);
+        if (summary.IsNotNull)
+            p.Copy(APTR.FromPointer(w.Meta.Raw + (uint)geometry.Tail + 316), summary, AmigaFfsMountIndex.SummaryRootPointers * 4);
         var extension = p.ReadUInt32(w.Meta, geometry.Tail + 416);
+        var extensions = 0u;
         for (var guard = 0u; extension != 0; guard++)
         {
             if (guard >= geometry.BlockCount || extension < geometry.ReservedBlocks ||
                 extension >= geometry.BlockCount || IsFree(ref p, ref w, extension) ||
                 !p.ReadBlock(extension, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (extensions < capacity)
+                p.WriteUInt32(summary, (int)(AmigaFfsMountIndex.SummaryRootPointers + 1 + extensions) * 4, extension);
+            extensions++;
             extension = p.ReadUInt32(w.Data, (int)geometry.BlockBytes - 4);
         }
         if (w.Error != DOS.Error.None) return false;
+        if (summary.IsNotNull && extensions <= capacity)
+        {
+            p.WriteUInt32(summary, (int)AmigaFfsMountIndex.SummaryRootPointers * 4, extensions);
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.Used, used);
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.NextCandidate, geometry.ReservedBlocks);
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.Summarized);
+            w.Summary = true;
+        }
         if (geometry.BlockCount - used < needed) return Fail(ref w, DOS.Error.DiskFull);
         w.IndexedUsed = used;
         w.FreeCountKnown = true;
@@ -330,6 +383,10 @@ public static partial class AmigaFfsWriteCore
 
     private static bool Begin<T>(ref T p, ref Work w, in AmigaFfsGeometry geometry, uint valid = 0, bool keepRuns = false) where T : struct, IAmigaWritableFileSystemPlatform
     {
+        // The summary's count is unpublished until this mutation's valid root.
+        if (MountIndexEnabled && valid == 0 && w.Summary &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Summarized)
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.SummaryBusy);
         if (MountIndexEnabled && valid == 0 && w.LayoutKnown)
         {
             if (p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.MetadataOpen)
@@ -400,6 +457,13 @@ public static partial class AmigaFfsWriteCore
         }
         else if ((!MountIndexEnabled || !keepOpen) &&
             ((MountIndexEnabled && !PublishGroupHeader(ref p, ref w)) || !Begin(ref p, ref w, in geometry, uint.MaxValue))) return false;
+        if (MountIndexEnabled && w.Summary && w.FreeCountKnown &&
+            p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.SummaryBusy)
+        {
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.Used, w.IndexedUsed);
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.NextCandidate, w.NextKey);
+            p.WriteUInt32(w.Index, AmigaFfsMountIndex.Status, AmigaFfsMountIndex.Summarized);
+        }
         if (MountIndexEnabled && w.LayoutKnown && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Updating)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.Used, w.IndexedUsed);
@@ -476,6 +540,10 @@ public static partial class AmigaFfsWriteCore
         if (w.BitmapDirty != 0 && !FlushBitmap(ref p, ref w)) return false;
         uint block;
         if (MountIndexEnabled && w.LayoutKnown) block = AmigaFfsMountIndex.Map(ref p, w.Index, index);
+        else if (MountIndexEnabled && w.Summary)
+        {
+            if (!SummaryBitmapBlock(ref p, ref w, index, out block)) return Fail(ref w, DOS.Error.DiskNotValidated);
+        }
         else if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref cursor, index, w.Data, out block))
             return Fail(ref w, DOS.Error.DiskNotValidated);
         var pending = MountIndexEnabled && w.LayoutKnown && (w.GroupFileWrites || w.GroupMetadata) ? p.ReadUInt32(w.Index, AmigaFfsMountIndex.PendingBitmap) : 0;
@@ -498,6 +566,27 @@ public static partial class AmigaFfsWriteCore
         w.BitmapBlock = block; w.BitmapFirst = first;
         w.BitmapCount = count > bitmapBits ? bitmapBits : count;
         return true;
+    }
+    // Bitmap page `index` from the summary: the root's pointers directly, a
+    // later page with one read of its extension block (into Data) instead of
+    // walking the chain from the root.
+    private static bool SummaryBitmapBlock<T>(ref T p, ref Work w, uint index, out uint block)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var g = AmigaFfsGeometry.Read(ref p);
+        var map = AmigaFfsMountIndex.SummaryMap(w.Index);
+        const uint roots = AmigaFfsMountIndex.SummaryRootPointers;
+        if (index < roots) block = p.ReadUInt32(map, (int)index * 4);
+        else
+        {
+            block = 0;
+            var slots = g.BlockBytes / 4 - 1;
+            var extension = AmigaGeometryMath.Divide(index - roots, slots);
+            if (extension >= p.ReadUInt32(map, (int)roots * 4)) return false;
+            if (!p.ReadBlock(p.ReadUInt32(map, (int)(roots + 1 + extension) * 4), w.Data)) return false;
+            block = p.ReadUInt32(w.Data, (int)(index - roots - extension * slots) * 4);
+        }
+        return block >= g.ReservedBlocks && block < g.BlockCount && block != g.RootBlock;
     }
     private static bool IsFree<T>(ref T p, ref Work w, uint key) where T : struct, IAmigaWritableFileSystemPlatform
     {

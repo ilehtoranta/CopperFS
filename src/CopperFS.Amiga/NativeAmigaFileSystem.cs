@@ -1464,6 +1464,18 @@ public static partial class NativeAmigaFileSystem
         return error;
     }
 
+    // Classic used-block count for ACTION_INFO and attribute queries. The FFS
+    // handler answers from its mount index or free-count summary.
+    private static bool ClassicUsed(APTR state, ref NativeFileSystemPlatform p, out uint used)
+    {
+#if COPPERFS_FFS_HANDLER
+        InitializeWriteWork(state, out var work);
+        return AmigaFfsWriteCore.CountUsed(ref p, ref work, out used);
+#else
+        return AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out used, p.FfsMountIndex);
+#endif
+    }
+
     internal static void InitializeWriteWork(APTR state, out AmigaFfsWriteCore.Work work)
     {
         var meta = Metadata(state);
@@ -2673,7 +2685,7 @@ public static partial class NativeAmigaFileSystem
             case FileSystemQueryAttribute.NumBlocks: value = p.BlockCount; break;
             case FileSystemQueryAttribute.NumBlocksUsed:
                 if (!((SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.CountUsed(state, out var countedUsed) :
-                    AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out countedUsed, p.FfsMountIndex)))
+                    ClassicUsed(state, ref p, out countedUsed)))
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 value = countedUsed;
                 break;
@@ -3476,7 +3488,7 @@ public static partial class NativeAmigaFileSystem
                 if (!p.IsMapped(info, 36)) { error = DOS.Error.BadNumber; break; }
                 var counted = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.CountUsed(state, out var smartUsed)
-                    : AmigaDiskFileSystemCore.CountUsed(ref p, metadata, data, out smartUsed, p.FfsMountIndex);
+                    : ClassicUsed(state, ref p, out smartUsed);
                 var usedBlocks = smartUsed;
                 if (!counted || (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && !AmigaDiskFileSystemCore.Header(ref p, p.Geometry.RootBlock, metadata)))
                 { error = DOS.Error.DiskNotValidated; break; }
