@@ -1876,6 +1876,87 @@ public static partial class NativeAmigaFileSystem
         return success ? -1 : 0;
     }
 
+#if COPPERFS_FFS_HANDLER && COPPERSTART_SFS_STANDALONE
+    // ACTION_EXAMINE_ALL: Arg2 buffer, Arg3 size, Arg4 ED_ type, Arg5 ExAllControl.
+    // eac_LastKey holds the last returned header key, so a scan resumes the
+    // same way ExNext does. Like Kickstart 3.1 FFS, a record is only started
+    // while its fixed part, a 32-byte name and (for ED_COMMENT and above) an
+    // 80-byte comment would still fit; a too-small buffer returns DOSTRUE with
+    // no entries. The final batch returns DOSFALSE with ERROR_NO_MORE_ENTRIES.
+    private static int ExamineAllPacket(APTR state, APTR packet, uint directory, out DOS.Error error)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        var buffer = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+        var size = unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset));
+        var type = unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset));
+        var control = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument5Offset));
+        error = DOS.Error.None;
+        if (type < 1 || size < 0 || !p.IsMapped(control, 16) || !p.IsMapped(buffer, (uint)size)) { error = DOS.Error.BadNumber; return 0; }
+        if (type > 7) type = 7;
+        // ED_NAME..ED_PROTECTION add a longword each; ED_DATE adds three, then one each.
+        var fixedBytes = type <= 4 ? 4 + type * 4 : type == 5 ? 32 : 4 + type * 4 + 8;
+        var reserve = fixedBytes + 32 + (type >= 6 ? 80 : 0);
+        var pattern = APTR.FromPointer(APTR.ReadUInt32(control, 8));
+        var hook = APTR.ReadUInt32(control, 12);
+        var fib = Bitmap(state);
+        var hookType = APTR.FromPointer(fib.Raw + FileInfoBlock.SizeInBytes);
+        APTR.WriteUInt32(hookType, 0, (uint)type);
+        if (hook != 0 && global::Amiga.Utility.UtilityLibraryBase.IsNull)
+            global::Amiga.Utility.UtilityLibraryBase = global::Amiga.Exec.OpenLibraryRaw("utility.library", 37);
+        var last = APTR.ReadUInt32(control, 4);
+        APTR.WriteUInt32(fib, 0, last == 0 ? directory : last);
+        var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
+        var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        var at = 0; uint entries = 0; var previous = APTR.Null;
+        while (true)
+        {
+            if (size - at < reserve) { APTR.WriteUInt32(control, 0, entries); return -1; }
+            var next = AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, directory, fib, Metadata(state), Data(state), dosType);
+            if (next != DOS.Error.None)
+            {
+                APTR.WriteUInt32(control, 0, entries);
+                error = next;
+                return 0;
+            }
+            APTR.WriteUInt32(control, 4, APTR.ReadUInt32(fib, 0));
+            var record = APTR.FromPointer(buffer.Raw + (uint)at);
+            var text = APTR.FromPointer(record.Raw + (uint)fixedBytes);
+            var nameLength = APTR.ReadUInt8(fib, 8);
+            for (var i = 0; i < nameLength; i++) APTR.WriteUInt8(text, i, APTR.ReadUInt8(fib, 9 + i));
+            APTR.WriteUInt8(text, nameLength, 0);
+            if (pattern.IsNotNull && global::Amiga.DOS.MatchPatternNoCase(CString.FromPointer(pattern.Raw), CString.FromPointer(text.Raw)) == 0)
+                continue;
+            var bytes = fixedBytes + nameLength + 1;
+            APTR.WriteUInt32(record, 0, 0);
+            APTR.WriteUInt32(record, 4, text.Raw);
+            if (type >= 2) APTR.WriteUInt32(record, 8, APTR.ReadUInt32(fib, 4));
+            if (type >= 3) APTR.WriteUInt32(record, 12, APTR.ReadUInt32(fib, 124));
+            if (type >= 4) APTR.WriteUInt32(record, 16, APTR.ReadUInt32(fib, 116));
+            if (type >= 5)
+                for (var i = 0; i < 12; i += 4) APTR.WriteUInt32(record, 20 + i, APTR.ReadUInt32(fib, 132 + i));
+            if (type >= 6)
+            {
+                var comment = APTR.FromPointer(text.Raw + (uint)nameLength + 1);
+                var commentLength = APTR.ReadUInt8(fib, 144);
+                for (var i = 0; i < commentLength; i++) APTR.WriteUInt8(comment, i, APTR.ReadUInt8(fib, 145 + i));
+                APTR.WriteUInt8(comment, commentLength, 0);
+                APTR.WriteUInt32(record, 32, comment.Raw);
+                bytes += commentLength + 1;
+            }
+            if (type >= 7)
+            {
+                APTR.WriteUInt16(record, 36, APTR.ReadUInt16(fib, 224));
+                APTR.WriteUInt16(record, 38, APTR.ReadUInt16(fib, 226));
+            }
+            if (hook != 0 && global::Amiga.Utility.CallHookPkt(hook, hookType.Raw, record.Raw) == 0) continue;
+            if (previous.IsNotNull) APTR.WriteUInt32(previous, 0, record.Raw);
+            previous = record;
+            entries++;
+            at += (bytes + 3) & ~3;
+        }
+    }
+#endif
+
     // ACTION_MAKE_LINK: Arg1 directory lock, Arg2 BSTR name, Arg3 the object's
     // lock (LINK_HARD, Arg4 0) or a C string target (LINK_SOFT, Arg4 1).
     private static int MakeLinkPacket(APTR state, APTR packet, out DOS.Error error)
@@ -3049,6 +3130,17 @@ public static partial class NativeAmigaFileSystem
                 if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
                 result = MakeLinkPacket(state, packet, out error);
                 break;
+#if COPPERFS_FFS_HANDLER && COPPERSTART_SFS_STANDALONE
+            case DosPacketAction.ExamineAll:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                if (key == 0) { error = DOS.Error.InvalidLock; break; }
+                result = ExamineAllPacket(state, packet, key, out error);
+                break;
+            case DosPacketAction.ExamineAllEnd:
+                // The position lives in the caller's ExAllControl; nothing to release.
+                result = -1;
+                break;
+#endif
             case DosPacketAction.ReadLink:
                 // dos.library sends this after a lookup reports ERROR_IS_SOFT_LINK.
                 // A zero lock names the volume root.
