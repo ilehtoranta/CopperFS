@@ -50,7 +50,10 @@ public static partial class NativeAmigaFileSystem
     private const int FfsNow = FfsIdleActivity + 4;
     // ACTION_WRITE_PROTECT's software protection and its pass key.
     internal const int FfsSoftProtect = FfsNow + 12, FfsSoftKey = FfsSoftProtect + 4;
-    private const uint MountStateBytes = FfsSoftKey + 4;
+    // The device's io_Error from this packet's failed transfer, and whether
+    // the root may be invalid and needs the validator once the device works.
+    internal const int FfsDeviceError = FfsSoftKey + 4, FfsNeedsValidation = FfsDeviceError + 4;
+    private const uint MountStateBytes = FfsNeedsValidation + 4;
 #if COPPERFS_FFS_INDEX64
     internal const uint FfsIndexBytes = 64 * 1024;
 #elif COPPERFS_FFS_INDEX1024
@@ -522,6 +525,10 @@ public static partial class NativeAmigaFileSystem
 #endif
         }
         APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
+#if COPPERFS_FFS_HANDLER
+        // A volume left invalid by a crash is validated before first use.
+        APTR.WriteUInt32(s, FfsNeedsValidation, 1);
+#endif
 #if COPPERSTART_CLASSIC_REMOVABLE
         if (unit == 0 && (type & 0xFFFFFF00) == 0x444F5300 && DeviceNamed(deviceName, "trackdisk.device"))
             APTR.WriteUInt32(s, DosNativeMediaStateCodec.MediaSignalOffset, 1);
@@ -1157,7 +1164,8 @@ public static partial class NativeAmigaFileSystem
     {
         APTR.WriteUInt32(state, FfsIdleActivity, 1);
         var request = APTR.FromPointer(APTR.ReadUInt32(state, FfsIdleTimer));
-        if (request.IsNull || APTR.ReadUInt32(state, FfsIdleQueued) != 0 || APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return;
+        if (request.IsNull || APTR.ReadUInt32(state, FfsIdleQueued) != 0 ||
+            (APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0 && APTR.ReadUInt32(state, FfsNeedsValidation) == 0)) return;
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, (ushort)TimerCommand.AddRequest);
         APTR.WriteUInt8(request, NativeExecFieldCodec.IoFlagsOffset, 0);
         APTR.WriteUInt8(request, NativeExecFieldCodec.IoErrorOffset, 0);
@@ -1173,7 +1181,14 @@ public static partial class NativeAmigaFileSystem
     {
         if (message.Raw != APTR.ReadUInt32(state, FfsIdleTimer)) return false;
         APTR.WriteUInt32(state, FfsIdleQueued, 0);
-        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return true;
+        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0)
+        {
+            // An idle period with a pending validation runs the validator.
+            if (APTR.ReadUInt32(state, FfsNeedsValidation) == 0) return true;
+            if (APTR.ReadUInt32(state, FfsIdleActivity) == 0) TryValidate(state);
+            ArmIdleTimer(state);
+            return true;
+        }
         if (APTR.ReadUInt32(state, FfsIdleActivity) != 0) { ArmIdleTimer(state); return true; }
         var platform = new NativeFileSystemPlatform(state);
         InitializeWriteWork(state, out var work);
@@ -1203,8 +1218,22 @@ public static partial class NativeAmigaFileSystem
         var packet = APTR.FromPointer(APTR.ReadUInt32(message, NativeExecFieldCodec.NodeNameOffset));
         if (packet.IsNull) return;
         var replyPort = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.PortOffset));
+        var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+        if (action is not (DosPacketAction.Inhibit or DosPacketAction.Format or DosPacketAction.End or DosPacketAction.FreeLock))
+            TryValidate(state);
+        APTR.WriteUInt32(state, FfsDeviceError, 0);
         Dispatch(state, packet);
-        if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated)
+        var deviceError = APTR.ReadUInt32(state, FfsDeviceError);
+        if (deviceError != 0)
+        {
+            // Nothing cached may stand in for a write the device refused.
+            // The validator rereads the volume once the device works again.
+            PurgeClassicCache(state);
+            APTR.WriteUInt32(state, FfsNeedsValidation, 1);
+            if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated)
+                APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset, deviceError);
+        }
+        if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated || deviceError != 0)
             InvalidateClassicMountProofs(state);
         ArmIdleTimer(state);
         var recordPlatform = new NativeRecordLockPlatform();
@@ -1212,6 +1241,56 @@ public static partial class NativeAmigaFileSystem
             NativeRecordLockCore.IsPending(ref recordPlatform, state, packet)) return;
         APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.PortOffset, port.Raw);
         global::Amiga.Exec.PutMsg(replyPort, message);
+    }
+
+    internal static void PurgeClassicCache(APTR state)
+    {
+        new NativeFileSystemPlatform(state).ForgetFfsIndex();
+        APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
+        var cached = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
+        while (cached.IsNotNull)
+        {
+            APTR.WriteUInt32(cached, 4, uint.MaxValue); APTR.WriteUInt32(cached, 16, 0);
+            cached = APTR.FromPointer(APTR.ReadUInt32(cached, 0));
+        }
+        ReindexCache(state);
+    }
+
+    // Kickstart FFS validates an invalid volume in the background so it is
+    // usable again once the device works. Run the validator before the next
+    // packet or on the idle timer. A device error keeps the request for a
+    // later attempt; a damaged structure ends it and the volume stays
+    // invalid (read-only) for a repair tool.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void TryValidate(APTR state)
+    {
+        if (APTR.ReadUInt32(state, FfsNeedsValidation) == 0 ||
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 ||
+            APTR.ReadUInt32(state, FfsWriteGroupHandle) != 0) return;
+        var p = new NativeFileSystemPlatform(state);
+        var g = p.Geometry;
+        var metadata = Metadata(state);
+        APTR.WriteUInt32(state, FfsDeviceError, 0);
+        if (!p.ReadBlock(g.RootBlock, metadata)) return;
+        // A valid root vouches for everything before it: a failed group's
+        // unpublished changes never reached the disk, which is consistent.
+        if (APTR.ReadUInt32(metadata, (int)g.BlockBytes - 512 + 312) == uint.MaxValue)
+        {
+            APTR.WriteUInt32(state, FfsNeedsValidation, 0);
+            APTR.WriteUInt32(state, FfsGroupPublicationFailed, 0);
+            return;
+        }
+        if (p.WriteProtected()) { APTR.WriteUInt32(state, FfsNeedsValidation, 0); return; }
+        var index = p.FfsMountIndex;
+        if (index.IsNull) return;
+        p.ForgetFfsIndex();
+        InitializeWriteWork(state, out var w);
+        var validated = AmigaFfsWriteCore.Validate(ref p, ref w, AmigaFfsMountIndex.SummaryMap(index),
+            AmigaFfsMountIndex.ScratchWords(ref p, index) * 4);
+        PurgeClassicCache(state);
+        if (validated) APTR.WriteUInt32(state, FfsGroupPublicationFailed, 0);
+        if (validated || APTR.ReadUInt32(state, FfsDeviceError) == 0) APTR.WriteUInt32(state, FfsNeedsValidation, 0);
+        APTR.WriteUInt32(state, FfsDeviceError, 0);
     }
 
     // A metadata read can detect corruption outside the writer. The ordinary
@@ -2158,27 +2237,15 @@ public static partial class NativeAmigaFileSystem
         var now = APTR.FromPointer(state.Raw + FfsNow);
         global::Amiga.DOS.DateStamp(now);
         p.ForgetFfsIndex();
-        InvalidateClassicCache(state);
+        PurgeClassicCache(state);
         var formatted = AmigaDiskFileSystemFormatCore.Format(ref p, type, name, length,
             APTR.ReadUInt32(now, 0), APTR.ReadUInt32(now, 4), APTR.ReadUInt32(now, 8), Metadata(state), out error);
-        InvalidateClassicCache(state);
+        PurgeClassicCache(state);
         if (!formatted) return 0;
         APTR.WriteUInt32(state, NativeFileSystemStateCodec.DosTypeOffset, type);
         if (p.ReadBlock(p.Geometry.RootBlock, Metadata(state))) ReplaceClassicVolume(state, type);
         error = DOS.Error.None;
         return -1;
-    }
-
-    private static void InvalidateClassicCache(APTR state)
-    {
-        APTR.WriteUInt32(state, NativeFileSystemStateCodec.CacheTrackOffset, uint.MaxValue);
-        var cached = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ExtraCacheHeadOffset));
-        while (cached.IsNotNull)
-        {
-            APTR.WriteUInt32(cached, 4, uint.MaxValue); APTR.WriteUInt32(cached, 16, 0);
-            cached = APTR.FromPointer(APTR.ReadUInt32(cached, 0));
-        }
-        ReindexCache(state);
     }
 
     // Publish the formatted volume under its new name and dates. The old node
@@ -3223,6 +3290,9 @@ public static partial class NativeAmigaFileSystem
             if (!mounted)
             { error = DOS.Error.DiskNotValidated; return 0; }
             APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, 0);
+#if COPPERFS_FFS_HANDLER
+            APTR.WriteUInt32(state, FfsNeedsValidation, 1);
+#endif
         }
         return -1;
     }
@@ -3802,6 +3872,14 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         }
         else AmigaFfsMountIndex.Forget(ref this, index);
     }
+    // Kickstart FFS reports the device's own io_Error (a short transfer
+    // counts as error 20) instead of a filesystem error.
+    private void RecordDeviceError(APTR request)
+    {
+        uint error = APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset);
+        if (error == 0 || error > 127) error = 20;
+        APTR.WriteUInt32(state, NativeAmigaFileSystem.FfsDeviceError, error);
+    }
     private void BeforeFfsWrite(bool payload = false)
     {
         var index = FfsMountIndex;
@@ -3905,6 +3983,15 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         global::Amiga.Exec.DoIO(request);
         if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 && APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes) return true;
 #if COPPERFS_FFS_HANDLER
+        // Retry a failed write once, as Kickstart FFS rewrites a buffer whose
+        // write failed; a transient device error then goes unnoticed.
+        if (command is 3 or 25)
+        {
+            APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, (uint)(byteOffset >> 32));
+            global::Amiga.Exec.DoIO(request);
+            if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 && APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes) return true;
+        }
+        RecordDeviceError(request);
         if (command is 2 or 3 or 24 or 25) FailFfsBlockIo();
         else ForgetFfsIndex();
 #endif
@@ -5091,6 +5178,14 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
             APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes) return true;
 #if COPPERFS_FFS_HANDLER
+        if (command == 3)
+        {
+            APTR.WriteUInt32(request, NativeExecFieldCodec.IoActualOffset, 0);
+            global::Amiga.Exec.DoIO(request);
+            if (APTR.ReadUInt8(request, NativeExecFieldCodec.IoErrorOffset) == 0 &&
+                APTR.ReadUInt32(request, NativeExecFieldCodec.IoActualOffset) == bytes) return true;
+        }
+        RecordDeviceError(request);
         FailFfsBlockIo();
 #endif
 #if COPPERFS_AUTOTRIM

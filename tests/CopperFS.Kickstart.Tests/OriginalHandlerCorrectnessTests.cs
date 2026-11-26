@@ -354,7 +354,7 @@ public sealed partial class OriginalHandlerCorrectnessTests(ITestOutputHelper ou
         entry.StartsWith("LinkProbe::", StringComparison.Ordinal) || entry.StartsWith("ExNextProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("DirCacheProbe::", StringComparison.Ordinal) || entry.StartsWith("NotifyProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("VersionProbe::", StringComparison.Ordinal) || entry.StartsWith("SetFileSizeProbe::", StringComparison.Ordinal) ||
-        entry.StartsWith("FormatPacketProbe::", StringComparison.Ordinal) ||
+        entry.StartsWith("FormatPacketProbe::", StringComparison.Ordinal) || entry.StartsWith("DeviceErrorProbe::", StringComparison.Ordinal) || entry.StartsWith("ValidatorProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("InhibitProbe::", StringComparison.Ordinal) || entry.StartsWith("LockProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("DateProbe::", StringComparison.Ordinal) || entry.StartsWith("SameLockProbe::", StringComparison.Ordinal) ||
         entry.StartsWith("IdleProbe::", StringComparison.Ordinal) || entry.StartsWith("DateStampProbe::", StringComparison.Ordinal) ||
