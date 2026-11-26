@@ -1537,7 +1537,7 @@ public sealed partial class VolumeGeometryTests
 
     [Theory]
     [InlineData(2u)] [InlineData(3u)] [InlineData(4u)] [InlineData(5u)]
-    public void IndexedClassicVariantsPersistWritesAndRejectManualDiscard(uint dos)
+    public void IndexedClassicVariantsPersistWritesAndTrimOnlyFreeSpace(uint dos)
     {
         var s = new Storage();
         Assert.True(AmigaVolumeGeometry.Create(12000, 512, 2, out var g));
@@ -1558,8 +1558,13 @@ public sealed partial class VolumeGeometryTests
             file.Length, Meta, Data, out var error));
         Assert.Equal(DOS.Error.None, error);
         Assert.Equal(expected, s.Ram.AsSpan((int)target.Raw, expected.Length).ToArray());
-        Assert.False(AmigaFfsWriteCore.Trim(ref p, ref work, APTR.Null, 0, out _));
-        Assert.Equal(DOS.Error.ActionNotKnown, work.Error); Assert.Empty(s.Discards);
+        // DOS2-DOS5 are trimmed too; DiscardBlocks asserts each block is free.
+        Assert.True(AmigaFfsWriteCore.Trim(ref p, ref work, APTR.Null, 0, out var trimmed), work.Error.ToString());
+        Assert.True(trimmed.Blocks > 0); Assert.NotEmpty(s.Discards);
+        Assert.Equal(expected.Length, AmigaDiskFileSystemCore.Read(ref p, file.Header, type, 0, target,
+            file.Length, Meta, Data, out error));
+        Assert.Equal(expected, s.Ram.AsSpan((int)target.Raw, expected.Length).ToArray());
+        if (dos >= 4) InspectDirectoryCache(s, g, g.RootBlock, 1);
     }
 
     [Theory]

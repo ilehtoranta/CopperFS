@@ -301,7 +301,8 @@ public sealed partial class VolumeGeometryTests
         Assert.True(AmigaVolumeGeometry.Create(3520, 512, 2, out var g));
         var p = new Memory(storage, g); Format(ref p, g); if (ofs) SetDosType(ref p, 0x444F5300); var w = Work();
         if (failure == 3) storage.Limits.Granularity = 0;
-        if (failure == 4) { p.WriteUInt32(Meta, 0, 0x444F5302); Assert.True(p.WriteBlock(0, Meta)); }
+        // DOS0-DOS5 are trimmed; an unsupported variant (DOS6) is refused.
+        if (failure == 4) { p.WriteUInt32(Meta, 0, 0x444F5306); Assert.True(p.WriteBlock(0, Meta)); }
         Assert.False(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 0, out _));
         Assert.Empty(storage.Discards);
     }

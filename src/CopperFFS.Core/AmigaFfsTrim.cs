@@ -61,14 +61,14 @@ public static partial class AmigaFfsWriteCore
         if (validation.IsNull && !tracked)
         {
             if (!p.ReadBlock(0, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301)) return Fail(ref w, DOS.Error.ActionNotKnown);
+            if (p.ReadUInt32(w.Meta) is not (>= 0x444F5300 and <= 0x444F5305)) return Fail(ref w, DOS.Error.ActionNotKnown);
         }
         if (!p.QueryDiscard(control, out result.Limits)) return Fail(ref w, DOS.Error.ActionNotKnown);
         if (!result.Limits.Valid) return Fail(ref w, DOS.Error.BadNumber);
         if (validation.IsNotNull || tracked)
         {
             if (!p.ReadBlock(0, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301)) return Fail(ref w, DOS.Error.ActionNotKnown);
+            if (p.ReadUInt32(w.Meta) is not (>= 0x444F5300 and <= 0x444F5305)) return Fail(ref w, DOS.Error.ActionNotKnown);
         }
         if (flags == AmigaSmartFileSystemTrimPacket.QueryOnly) return true;
         if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);

@@ -3729,7 +3729,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         {
 #if COPPERFS_AUTOTRIM && COPPERFS_FFS_HANDLER
             return
-                APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is 0x444F5300 or 0x444F5301 &&
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is >= 0x444F5300 and <= 0x444F5305 &&
                 APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
 #elif COPPERFS_AUTOTRIM
             return APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
