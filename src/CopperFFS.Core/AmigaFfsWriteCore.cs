@@ -2002,6 +2002,10 @@ public static partial class AmigaFfsWriteCore
         // A failed fit is final for this table. Never probe again per sector.
         var probeAt = fixedHardDisk && end <= size && ((r.Position | r.Length) & (blockBytes - 1)) == 0
             ? first : uint.MaxValue;
+        // Meta keeps the current pointer table across blocks; single-block
+        // growth writes it once, when the loop leaves the table.
+        uint loadedTable = 0;
+        var tableDirty = false;
         while (actual < r.Length)
         {
             var position = r.Position + actual; var index = AmigaGeometryMath.DivRem(position, blockBytes, out var withinRemainder);
@@ -2011,12 +2015,15 @@ public static partial class AmigaFfsWriteCore
             if (MountIndexEnabled && fileTables.IsNotNull && targetTable != tableIndex && oldBlocks != 0 &&
                 targetTable <= (oldBlocks - 1) / geometry.TableEntries)
             {
+                if (!FlushOfsTable(ref p, ref w, loadedTable, ref tableDirty)) return false;
                 table = p.ReadUInt32(fileTables, (int)targetTable * 4);
                 tableIndex = targetTable; runCount = 0;
             }
             while (tableIndex < targetTable)
             {
                 runCount = 0;
+                if (!FlushOfsTable(ref p, ref w, loadedTable, ref tableDirty)) return false;
+                loadedTable = 0;
                 if (!ReadWriteTable(ref p, ref w, table)) return Fail(ref w, DOS.Error.DiskNotValidated);
                 var next = p.ReadUInt32(w.Meta, geometry.Tail + 504);
                 if (next == 0)
@@ -2034,7 +2041,12 @@ public static partial class AmigaFfsWriteCore
                 table = next; tableIndex++;
                 if (MountIndexEnabled && fileTables.IsNotNull) p.WriteUInt32(fileTables, (int)tableIndex * 4, table);
             }
-            if (!ReadWriteTable(ref p, ref w, table)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (loadedTable != table)
+            {
+                if (!FlushOfsTable(ref p, ref w, loadedTable, ref tableDirty)) return false;
+                if (!ReadWriteTable(ref p, ref w, table)) return Fail(ref w, DOS.Error.DiskNotValidated);
+                loadedTable = table;
+            }
             var at = geometry.Tail + 308 - (int)slot * 4; var key = p.ReadUInt32(w.Meta, at);
             // Chain proved every existing slot; never let a stale or zero key
             // reach the boot block, reserved area or root as file data.
@@ -2045,7 +2057,9 @@ public static partial class AmigaFfsWriteCore
                 var countInTable = tableEntries - slot;
                 if (countInTable > limit - index) countInTable = limit - index;
                 probeAt += countInTable;
+                if (!FlushOfsTable(ref p, ref w, loadedTable, ref tableDirty)) return false;
                 if (!RelocateOverwrite(ref p, ref w, in geometry, ref r, table, slot, countInTable, ref actual, out var moved)) return false;
+                loadedTable = 0;
                 if (moved)
                 {
                     w.RestoreFile = 0; fileKeys = APTR.Null; fileTables = APTR.Null;
@@ -2084,6 +2098,7 @@ public static partial class AmigaFfsWriteCore
                     if (table == r.Header && blocks * blockBytes == r.Length - actual)
                         sizePublished = SetFinalSize(ref p, ref w, geometry.Tail, newSize);
                     if (!Put(ref p, ref w, table, w.Meta, 20)) return false;
+                    tableDirty = false;
                     runFirst += blocks - 1; runCount -= blocks - 1;
                     lastData = key + blocks - 1;
                     actual += blocks * blockBytes;
@@ -2112,7 +2127,9 @@ public static partial class AmigaFfsWriteCore
                         continue;
                     }
                 }
-                if (!p.ReadBlock(key, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
+                // A full-block overwrite replaces every byte: no read needed.
+                if ((withinRemainder != 0 || r.Length - actual < blockBytes) && !p.ReadBlock(key, w.Data))
+                    return Fail(ref w, DOS.Error.DiskNotValidated);
             }
             var within = withinRemainder;
             var count = blockBytes - within;
@@ -2128,10 +2145,11 @@ public static partial class AmigaFfsWriteCore
                 if (index == 0) p.WriteUInt32(w.Meta, 16, key);
                 if (table == r.Header && count == r.Length - actual)
                     sizePublished = SetFinalSize(ref p, ref w, geometry.Tail, newSize);
-                if (!Put(ref p, ref w, table, w.Meta, 20)) return false;
+                tableDirty = true;
             }
             actual += count;
         }
+        if (!FlushOfsTable(ref p, ref w, loadedTable, ref tableDirty)) return false;
         if (MountIndexEnabled && w.RestoreFile != 0)
         {
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.FileBlocks, newBlocks);
@@ -2139,7 +2157,7 @@ public static partial class AmigaFfsWriteCore
         }
         if (newSize == size || sizePublished) return Finish(ref p, ref w, in geometry);
         if (!Header(ref p, ref w, r.Header)) return false;
-        w.CacheParent = p.ReadUInt32(w.Meta, geometry.Tail + 500);
+        w.CacheParent = p.ReadUInt32(w.Meta, geometry.Tail + 500); w.CacheKey = r.Header;
         p.WriteUInt32(w.Meta, geometry.Tail + 324, newSize);
         return Put(ref p, ref w, r.Header, w.Meta, 20) && Finish(ref p, ref w, in geometry);
     }
