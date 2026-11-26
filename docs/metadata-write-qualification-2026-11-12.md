@@ -4,8 +4,7 @@ FFS large overwrites use 76.3% fewer cycles than the previous candidate. The
 mixed release workload improves by 0.54% for FFS and 0.25% for SFS2 TRST.
 Original-handler parity still fails. Automatic TRIM remains disabled by default.
 
-The baseline is the candidate in
-[performance gap qualification](performance-gap-qualification-2026-11-12.md).
+The baseline is the candidate from the earlier performance gap qualification.
 FFS and SFS2 TRST are the performance priorities; applicable FFS changes also
 cover OFS. No disk format, packet ABI, recovery protocol or durability barrier
 for a changed transaction is removed.
@@ -158,7 +157,8 @@ means and comparisons. Earlier `bulk`, `final`, `release` and `selected`
 directories are intermediate experiments, not the selected candidate.
 
 Use the environment variables and build/test commands in the preceding
-[qualification report](performance-gap-qualification-2026-11-12.md), pointing
+performance gap qualification (`docs/performance-gap-qualification-2026-11-12.md`
+in git history), pointing
 to this manifest. The large-write test additionally uses `COPPERFS_SIZE_MANIFEST`;
 the full-ROM no-op test uses `COPPERFS_SFS2_TRST_HANDLER` and `COPPERFS_ORIGINAL_SFS`.
 No packages, ROMs or releases are published by this work.

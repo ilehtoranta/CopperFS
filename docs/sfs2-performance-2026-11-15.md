@@ -61,7 +61,7 @@ empty overlays, and first-write before-image preflight/materialization added
 after this measured binary. The latest focused host run passes 98 tests. These
 later changes have no completed paired native performance measurement; the
 table must not be attributed to the exact checkpoint source. The full
-[checkpoint validation](filesystem-checkpoint-validation-2026-11-15.md) passes
+checkpoint validation passes
 2,508 solution tests (nine skipped), rebuilds all six native profiles, and
 passes 234 native replay cases (five skipped). Earlier host,
 native replay, and ROM results below describe their own snapshots.

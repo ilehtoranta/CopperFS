@@ -2,7 +2,7 @@
 
 This report records the earlier scan/certificate implementation. It is retained
 as historical evidence; the current automatic path uses
-[tracked freed ranges](freed-range-trim-qualification-2026-11-12.md) and no
+tracked freed ranges and no
 full-volume allocation scan.
 
 Automatic TRIM remains experimental and disabled by default. The repeated-map

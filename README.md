@@ -180,8 +180,6 @@ Use `Build-Handler.ps1 -SharedDispatch` only as a size/performance comparison
 control. See the [active-code measurements](docs/active-code-size-2026-11-11.md)
 and [initial size pass](docs/handler-size-optimization-2026-11-11.md) for the
 remaining gap to the original handlers and the validation scope.
-The [largest-function follow-up](docs/largest-functions-size-2026-11-12.md)
-records discarded reductions and the additional large-write performance gate.
 
 Published CopperSFS releases remain in the original repository and are immutable.
 This source migration does not publish a package, handler or ROM release. The

@@ -130,7 +130,5 @@ an explicit filesystem ACTION_FLUSH. Separate measurements report initialization
 tracking, deferred service, device commands and reclamation coverage.
 
 See the [current qualification report](deferred-trim-design-qualification-2026-11-12.md).
-Earlier [freed-range results](freed-range-trim-qualification-2026-11-12.md) and
-[cycle profiles](trim-cpu-profile-2026-11-12.md) are retained as historical
-baselines. Emulator tests do not qualify physical SSD/controller latency,
+Emulator tests do not qualify physical SSD/controller latency,
 real DMA behavior or hot replacement. No package or ROM is published here.

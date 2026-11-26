@@ -1,13 +1,6 @@
 # Native TRST handler integration
 
-The latest [buffered TRST integration](native-trst-group.md) selects grouped Writes for classic standalone builds after explicit user approval and compiled qualification. Use `-StrictWrites` for the per-Write durability policy described by this earlier checkpoint.
-
-Follow-up: [qualified TRST and bulk-allocation fixes](native-write-fixes.md)
-records the optimized compiled binaries, shared-source coordination, crash
-recovery, original SFS compatibility and final performance measurements.
-The subsequent [staging-index optimization](native-trst-index.md) records the
-current arena layout. The [encoding and block-copy optimization](native-trst-codec.md)
-records the latest compiled qualification and measurements.
+Classic standalone builds now default to buffered, grouped TRST Writes. Use `-StrictWrites` for the per-Write durability policy described by this earlier checkpoint. The [allocation-transition report](native-trst-transitions.md) records the latest compiled qualification and measurements; the [original SFS study](native-trst-original-study.md) explains the remaining overwrite gap.
 
 The native integration lives in the sibling CopperStart checkout, including
 its newer embedded `external/CopperSFS` core. The portable core's TRST encoder
@@ -115,7 +108,7 @@ CSUN recovery is always retained. Ordinary portable-core APIs keep their
 existing opt-in TRST contract. SFS2 remains a separate opt-in profile, and no
 existing downloadable handler has been replaced.
 
-The subsequent [compiled-handler benchmarks](native-write-benchmark.md) compare
+The subsequent compiled-handler benchmarks compared
 this exact TRST binary with strict CSUN, buffered CSUN and original SFS 1.279.
 They show substantial throughput and memory costs in the current native TRST
 implementation, despite lower journal-write volume for overwrites.

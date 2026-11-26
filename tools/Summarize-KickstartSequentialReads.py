@@ -220,8 +220,7 @@ def main():
                       "matches the pre-existing original-handler reference archive pin.",
                       "- The ignored `reference-provenance.json` retains these receipts."]
         lines += ["", "B uses the frozen Copper HUNKs named by `NativeManifest` and the hash table below. "
-                  "The [read-ahead instruction benchmark](sequential-read-readahead-2026-11-05.md) documents the preceding reader work; "
-                  "the hashes here identify this run's tested binaries. "
+                  "The hashes here identify this run's tested binaries. "
                   "The three Copper binaries have native-compatible reports with zero managed allocation sites. "
                   "No allocation behavior is claimed for the original handlers. The benchmark does not modify the filesystem implementation. "
                   "The same guest probe is used on both arms; its explicit Exec buffer/startup allocation occurs before timing.", ""]
