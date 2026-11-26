@@ -43,7 +43,10 @@ public static partial class NativeAmigaFileSystem
     internal const int FfsCachedSectorBits = FfsCachedBlocks + 4;
     internal const int FfsDirect32Blocks = FfsCachedSectorBits + 64 * 4;
     private const int FfsObjectBusy = FfsDirect32Blocks + 4, FfsObjectSlot = FfsObjectBusy + 4;
-    private const uint MountStateBytes = FfsObjectSlot + ObjectBytes;
+    // Idle publication: an Exec timer request, whether it is queued, and
+    // whether a packet arrived since it was queued.
+    private const int FfsIdleTimer = FfsObjectSlot + (int)ObjectBytes, FfsIdleQueued = FfsIdleTimer + 4, FfsIdleActivity = FfsIdleQueued + 4;
+    private const uint MountStateBytes = FfsIdleActivity + 4;
 #if COPPERFS_FFS_INDEX64
     internal const uint FfsIndexBytes = 64 * 1024;
 #elif COPPERFS_FFS_INDEX1024
@@ -993,6 +996,7 @@ public static partial class NativeAmigaFileSystem
         NativeAutomaticTrim.Initialize(state);
 #endif
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+        OpenIdleTimer(state, port);
         while (true)
         {
             global::Amiga.Exec.WaitPort(port.Raw);
@@ -1129,8 +1133,55 @@ public static partial class NativeAmigaFileSystem
     }
 
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+    // An open write or metadata group keeps the root invalid on disk and its
+    // data in RAM. Kickstart FFS makes the volume valid again shortly after
+    // activity stops; publish the group once a full timer period passes
+    // without a packet. Without timer.device the group still closes normally.
+    private const uint IdlePublicationSeconds = 3;
+
+    private static void OpenIdleTimer(APTR state, APTR port)
+    {
+        var request = global::Amiga.Exec.CreateIORequest(port, TimerRequest.Size);
+        if (request.IsNull) return;
+        if (global::Amiga.Exec.OpenDevice(CString.FromPointer(CString.ToUInt32("timer.device")),
+            (uint)TimerUnit.VBlank, request, 0) != 0)
+        { global::Amiga.Exec.DeleteIORequest(request); return; }
+        APTR.WriteUInt32(state, FfsIdleTimer, request.Raw);
+    }
+
+    private static void ArmIdleTimer(APTR state)
+    {
+        APTR.WriteUInt32(state, FfsIdleActivity, 1);
+        var request = APTR.FromPointer(APTR.ReadUInt32(state, FfsIdleTimer));
+        if (request.IsNull || APTR.ReadUInt32(state, FfsIdleQueued) != 0 || APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return;
+        APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, (ushort)TimerCommand.AddRequest);
+        APTR.WriteUInt8(request, NativeExecFieldCodec.IoFlagsOffset, 0);
+        APTR.WriteUInt8(request, NativeExecFieldCodec.IoErrorOffset, 0);
+        APTR.WriteUInt32(request, NativeTimerRequestFieldCodec.SecondsOffset, IdlePublicationSeconds);
+        APTR.WriteUInt32(request, NativeTimerRequestFieldCodec.MicrosecondsOffset, 0);
+        APTR.WriteUInt32(state, FfsIdleQueued, 1);
+        APTR.WriteUInt32(state, FfsIdleActivity, 0);
+        global::Amiga.Exec.SendIO(request);
+    }
+
+    // The idle timer's reply: publish if nothing arrived during its period.
+    private static bool RetireIdleTimer(APTR state, APTR message)
+    {
+        if (message.Raw != APTR.ReadUInt32(state, FfsIdleTimer)) return false;
+        APTR.WriteUInt32(state, FfsIdleQueued, 0);
+        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return true;
+        if (APTR.ReadUInt32(state, FfsIdleActivity) != 0) { ArmIdleTimer(state); return true; }
+        var platform = new NativeFileSystemPlatform(state);
+        InitializeWriteWork(state, out var work);
+        var published = AmigaFfsWriteCore.FinishFileWriteGroup(ref platform, ref work);
+        APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+        if (!published) APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
+        return true;
+    }
+
     private static bool RetireClassicReply(APTR state, APTR port, APTR message, bool startService)
     {
+        if (RetireIdleTimer(state, message)) return true;
 #if COPPERFS_AUTOTRIM
         if (message.Raw == APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset))
         {
@@ -1151,6 +1202,7 @@ public static partial class NativeAmigaFileSystem
         Dispatch(state, packet);
         if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated)
             InvalidateClassicMountProofs(state);
+        ArmIdleTimer(state);
         var recordPlatform = new NativeRecordLockPlatform();
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RecordWaitersOffset) != 0 &&
             NativeRecordLockCore.IsPending(ref recordPlatform, state, packet)) return;
