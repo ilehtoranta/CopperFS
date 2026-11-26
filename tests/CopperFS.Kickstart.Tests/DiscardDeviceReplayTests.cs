@@ -25,9 +25,15 @@ public sealed partial class OriginalHandlerCorrectnessTests
         Assert.True(File.Exists(handler), $"Missing rebuilt handler: {handler}");
         var root = Path.Combine(handlers, "replay", profile);
         var image = profile == "ffs" ? ReadMedia.Ffs() : profile == "sfs" ? ReadMedia.Sfs() : ReadMedia.Sfs2();
-        var trace = new DiscardTrace();
+        var trace = new DiscardTrace(); var scsi = 0;
+        trace.CommandObserved = command => { if (command == 28) scsi++; }; // HD_SCSICMD
         var entry = "TrimQualificationProbe::" + (profile == "ffs" ? "Ffs" : profile == "sfs" ? "Sfs" : "Sfs2") + "Execute";
         var result = await Run(root, profile, "execute", handler, image, true, entry, storage: trace);
+        // Discovery is three commands (VPD B2, VPD B0, READ CAPACITY 16); the
+        // rest are UNMAPs. copperhdf reports one descriptor per UNMAP in VPD
+        // B0, so FFS's batched manual TRIM must fall back to one range each.
+        var unmaps = scsi - 3;
+        if (profile == "ffs") Assert.Equal(trace.DiscardCount, unmaps);
         using var receipt = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "execute", "result.json")));
         Assert.Equal(uint.MaxValue, receipt.RootElement.GetProperty("Stage").GetUInt32());
         Assert.Equal(0u, receipt.RootElement.GetProperty("IoErr").GetUInt32());
@@ -52,5 +58,38 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 Assert.True(image.AsSpan(block * 512, 512).SequenceEqual(result.AsSpan(block * 512, 512)),
                     $"Non-discarded block {block} changed.");
         if (profile == "sfs2") SfsImageChecker.Check(new MemoryStream(result), reservedBlocks: 1);
+    }
+
+    // With copperhdf opted into eight-range UNMAP (VPD B0), manual FFS TRIM
+    // packs free runs: fewer UNMAP commands than ranges, yet the same ranges,
+    // device operations and final image as the one-range device.
+    [DiscardDeviceReplayTheory]
+    [InlineData(8u)] [InlineData(3u)]
+    public async Task NativeFfsManualTrimPacksRangesIntoMultiRangeUnmap(uint descriptors)
+    {
+        var handlers = Environment.GetEnvironmentVariable("COPPERFS_DISCARD_DEVICE_HANDLER_ROOT")!;
+        var handler = Path.Combine(handlers, "ffs-auto", "CopperFFS");
+        Assert.True(File.Exists(handler), $"Missing rebuilt handler: {handler}");
+        var root = Path.Combine(handlers, "replay", "ffs-multi-range-" + descriptors);
+        async Task<(byte[] Image, DiscardTrace Trace, int Unmaps)> Trim(uint limit)
+        {
+            var trace = new DiscardTrace { MaximumDiscardDescriptors = limit }; var scsi = 0;
+            trace.CommandObserved = command => { if (command == 28) scsi++; };
+            var image = await Run(root, "ffs", "descriptors-" + limit, handler, ReadMedia.Ffs(), true,
+                "TrimQualificationProbe::FfsExecute", storage: trace);
+            using var receipt = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "descriptors-" + limit, "result.json")));
+            Assert.Equal(uint.MaxValue, receipt.RootElement.GetProperty("Stage").GetUInt32());
+            Assert.Equal(0u, receipt.RootElement.GetProperty("IoErr").GetUInt32());
+            return (image, trace, scsi - 3);
+        }
+        var single = await Trim(1);
+        var packed = await Trim(descriptors);
+        Console.WriteLine($"{packed.Trace.DiscardCount} ranges: {single.Unmaps} UNMAPs at 1 range, {packed.Unmaps} at {descriptors}");
+        Assert.Equal(single.Trace.DiscardCount, single.Unmaps);
+        Assert.True(packed.Unmaps < packed.Trace.DiscardCount,
+            $"{packed.Unmaps} UNMAPs for {packed.Trace.DiscardCount} ranges");
+        Assert.True(packed.Unmaps * (int)descriptors >= packed.Trace.DiscardCount);
+        Assert.Equal(single.Trace.Operations.Where(op => op.StartsWith("D:")), packed.Trace.Operations.Where(op => op.StartsWith("D:")));
+        Assert.Equal(Hash(single.Image), Hash(packed.Image));
     }
 }

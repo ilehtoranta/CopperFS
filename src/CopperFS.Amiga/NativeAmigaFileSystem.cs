@@ -4038,6 +4038,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         return success;
     }
 
+    public uint DiscardDescriptors(APTR control) =>
+        NativeAmigaFileSystem.CanQueryDiscard(state) ? AmigaScsiUnmap.MaximumDescriptors(ref this, control) : 0;
+
     public bool DiscardRanges(APTR control, APTR ranges, uint count)
     {
         if (!NativeAmigaFileSystem.CanQueryDiscard(state)) return false;
