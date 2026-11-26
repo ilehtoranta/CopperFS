@@ -15,7 +15,7 @@ internal static class NativeSfsTrim
 #if COPPERFS_FFS_HANDLER
         const bool ffs = true;
 #else
-        var ffs = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is 0x444F5300 or 0x444F5301;
+        var ffs = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is >= 0x444F5300 and <= 0x444F5305;
 #endif
         if (ffs)
         {
@@ -59,7 +59,7 @@ internal static class NativeSfsTrim
 #if COPPERFS_FFS_HANDLER
         const bool ffs = true;
 #else
-        var ffs = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is 0x444F5300 or 0x444F5301;
+        var ffs = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is >= 0x444F5300 and <= 0x444F5305;
 #endif
         if (ffs)
         {

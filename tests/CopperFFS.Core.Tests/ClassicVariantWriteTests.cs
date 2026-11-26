@@ -92,7 +92,373 @@ public sealed partial class VolumeGeometryTests
         Encoding.Latin1.GetBytes("Fail").CopyTo(storage.Ram, (int)Name.Raw);
         var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 4 }; var w = Work();
         Assert.False(AmigaFfsWriteCore.Create(ref p, ref w, ref r, false)); Assert.Equal(DOS.Error.DiskNotValidated, w.Error);
-        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(0u, p.ReadUInt32(Meta, 312));
+        // The budget preflight finds the cycle before Begin, so the root stays valid.
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+    }
+
+    // A DOS4/5 mutation also allocates directory-cache blocks. Running out of
+    // them after the root was marked invalid used to leave the volume
+    // permanently unwritable. The whole budget must be refused up front.
+    [Theory]
+    [InlineData(4, true, 0)] [InlineData(5, true, 0)]
+    [InlineData(4, false, 8)] [InlineData(5, false, 8)]
+    public void DirectoryCacheBudgetIsRefusedBeforeTheRootIsInvalidated(int dos, bool directory, int siblings)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        // Thirty-character names make 56-byte records; eight fill the first cache block.
+        for (var i = 0; i < siblings; i++) VariantCreate(ref p, storage, g.RootBlock, $"Sibling{i}" + new string('s', 22));
+        LeaveFree(ref p, g, 1);
+        var before = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+        var name = directory ? "Drawer" : "Overflow" + new string('o', 22);
+        Encoding.Latin1.GetBytes(name).CopyTo(storage.Ram, (int)Name.Raw);
+        var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = (uint)name.Length }; var w = Work();
+        Assert.False(AmigaFfsWriteCore.Create(ref p, ref w, ref r, directory));
+        Assert.Equal(DOS.Error.DiskFull, w.Error);
+        Assert.Equal(before.Keys.Order(), storage.Sectors.Keys.Order());
+        foreach (var (key, bytes) in before) Assert.Equal(bytes, storage.Sectors[key]);
+        // The volume stays writable: a metadata edit needing no blocks succeeds.
+        var sibling = directory ? VariantCreate(ref p, storage, g.RootBlock, "Last") : new AmigaFfsWriteCore.Request();
+        if (!directory)
+        {
+            Encoding.Latin1.GetBytes("Sibling0" + new string('s', 22)).CopyTo(storage.Ram, (int)Name.Raw);
+            sibling.Header = AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 30, 0x444F5300u + (uint)dos, Meta, out _);
+            Assert.NotEqual(0u, sibling.Header);
+        }
+        sibling.Position = 0x40; w = Work();
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref sibling, DosPacketAction.SetProtection), w.Error.ToString());
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+        InspectDirectoryCache(storage, g, g.RootBlock, directory ? 1 : siblings);
+    }
+
+    // Filling a DOS4/5 directory costs a bounded number of transfers per
+    // entry however many entries it already holds. A full cache rebuild per
+    // change re-read the directory per hash slot and every entry header.
+    [Theory]
+    [InlineData(4, 512u)] [InlineData(5, 512u)] [InlineData(5, 1024u)] [InlineData(5, 4096u)]
+    public void FillingACachedDirectoryCostsBoundedTransfersPerEntry(int dos, uint bytes)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(20000, bytes, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        var drawer = VariantCreate(ref p, storage, g.RootBlock, "Drawer", true);
+        const int entries = 300;
+        var costs = new int[entries];
+        for (var i = 0; i < entries; i++)
+        {
+            storage.Transfers.Clear();
+            var file = VariantCreate(ref p, storage, drawer.Header, $"Entry{i:D4}");
+            OfsWrite(ref p, storage, ref file, 0, [1, 2, 3]);
+            costs[i] = storage.Transfers.Count;
+        }
+        // Hash chains still lengthen (300 entries / 72 buckets at 512 bytes),
+        // so allow a few lookups more per create, not a per-entry term.
+        var early = costs.Take(30).Max(); var late = costs.Skip(entries - 30).Max();
+        Assert.True(late <= early + 12, $"first 30 creates cost at most {early} transfers, last 30 cost up to {late}");
+        Assert.True(InspectDirectoryCache(storage, g, drawer.Header, entries) >= 2);
+        // Cache blocks are allocated next to the directory, not from the
+        // start of the partition.
+        Assert.True(p.ReadBlock(drawer.Header, Meta));
+        for (var key = p.ReadUInt32(Meta, g.Tail + 504); key != 0;)
+        {
+            Assert.True(key > drawer.Header, $"cache block {key} precedes its directory {drawer.Header}");
+            Assert.True(p.ReadBlock(key, Data)); key = p.ReadUInt32(Data, 16);
+        }
+        // Deleting every entry empties the cache back to one block.
+        for (var i = 0; i < entries; i++)
+        {
+            Encoding.Latin1.GetBytes($"Drawer/Entry{i:D4}").CopyTo(storage.Ram, (int)Name.Raw);
+            var key = AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 16, 0x444F5300u + (uint)dos, Meta, out _);
+            var w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, key, false), w.Error.ToString());
+        }
+        Assert.Equal(1, InspectDirectoryCache(storage, g, drawer.Header, 0));
+    }
+
+    // Running out of space mid-update at block sizes other than 512: the
+    // only cache block is full, so a create needs a header and a new cache
+    // block, and a comment that outgrows its block needs a new block too.
+    // Both are refused before Begin; a growth that fits its block proceeds.
+    [Theory]
+    [InlineData(4, 1024u)] [InlineData(5, 1024u)] [InlineData(4, 4096u)] [InlineData(5, 4096u)]
+    public void FullCacheBlockIsRefusedBeforeTheRootIsInvalidatedAtLargerBlocks(int dos, uint bytes)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, bytes, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        // Thirty-character names make 56-byte records.
+        var siblings = (int)((bytes - 24) / 56);
+        var first = VariantCreate(ref p, storage, g.RootBlock, "Sibling000" + new string('s', 20));
+        for (var i = 1; i < siblings; i++) VariantCreate(ref p, storage, g.RootBlock, $"Sibling{i:D3}" + new string('s', 20));
+        Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, siblings));
+        void Refused(Func<AmigaFfsWriteCore.Work, (bool Ok, DOS.Error Error)> attempt)
+        {
+            var before = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+            var (ok, error) = attempt(Work());
+            Assert.False(ok); Assert.Equal(DOS.Error.DiskFull, error);
+            Assert.Equal(before.Keys.Order(), storage.Sectors.Keys.Order());
+            foreach (var (key, data) in before) Assert.Equal(data, storage.Sectors[key]);
+        }
+        (bool, DOS.Error) Comment(AmigaFfsWriteCore.Work w, int length)
+        {
+            Encoding.Latin1.GetBytes(new string('c', length)).CopyTo(storage.Ram, (int)Payload.Raw);
+            var file = first; file.Buffer = Payload; file.Length = (uint)length;
+            var ok = AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref file, DosPacketAction.SetComment);
+            return (ok, w.Error);
+        }
+        LeaveFree(ref p, g, 1);
+        Refused(w =>
+        {
+            Encoding.Latin1.GetBytes("Overflow" + new string('o', 22)).CopyTo(storage.Ram, (int)Name.Raw);
+            var r = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 30 };
+            var ok = AmigaFfsWriteCore.Create(ref p, ref w, ref r, false);
+            return (ok, w.Error);
+        });
+        LeaveFree(ref p, g, 0);
+        // A 79-byte comment grows the record by 78 bytes, past the block's slack.
+        Refused(w => Comment(w, 79));
+        // Eight more bytes fit the slack of the block holding the record.
+        var fits = Comment(Work(), 8);
+        Assert.True(fits.Item1, fits.Item2.ToString());
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, g.Tail + 312));
+        Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, siblings));
+    }
+
+    // The exact budget still admits the last free block when the parent's
+    // cache has room for the new record.
+    [Theory]
+    [InlineData(4)] [InlineData(5)]
+    public void LastFreeBlockStillCreatesAFileWhenTheCacheHasRoom(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        for (var i = 0; i < 7; i++) VariantCreate(ref p, storage, g.RootBlock, $"Sibling{i}" + new string('s', 22));
+        LeaveFree(ref p, g, 1);
+        VariantCreate(ref p, storage, g.RootBlock, "Fits" + new string('f', 26));
+        Assert.Equal(g.BlockCount, Used(ref p));
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+        Assert.Equal(1, InspectDirectoryCache(storage, g, g.RootBlock, 8));
+    }
+
+    // Kickstart-made links share hash chains with ordinary entries. Build a
+    // bucket of soft link -> hard link -> plain file and use every entry.
+    // CopperFS.Kickstart.Tests' link reference compares the same semantics
+    // with Kickstart 3.1's own filesystem.
+    [Theory]
+    [InlineData(1)] [InlineData(5)]
+    public void LinksInAHashChainAreFollowedListedAndDeleted(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var target = VariantCreate(ref p, storage, g.RootBlock, "Target");
+        storage.Ram.AsSpan((int)Payload.Raw, 100).Fill(0x5A);
+        target.Buffer = Payload; target.Length = 100; var w = Work();
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref target, out _), w.Error.ToString());
+        static uint Bucket(string name)
+        {
+            var hash = (uint)name.Length;
+            foreach (var c in name) hash = hash * 13 + (uint)char.ToUpperInvariant(c);
+            return (hash & 2047) % 72;
+        }
+        var names = Enumerable.Range(0, 5000).Select(i => "N" + i).Where(n => Bucket(n) == Bucket("Plain")).Take(2).ToArray();
+        var plain = VariantCreate(ref p, storage, g.RootBlock, "Plain");
+        var hard = VariantCreate(ref p, storage, g.RootBlock, names[0]);
+        var soft = VariantCreate(ref p, storage, g.RootBlock, names[1]);
+        void Rewrite(uint key, Action<APTR> edit)
+        {
+            Assert.True(p.ReadBlock(key, Meta)); edit(Meta);
+            p.WriteUInt32(Meta, 20, 0); uint sum = 0;
+            for (var i = 0; i < 512; i += 4) sum = unchecked(sum + p.ReadUInt32(Meta, i));
+            p.WriteUInt32(Meta, 20, unchecked(0u - sum)); Assert.True(p.WriteBlock(key, Meta));
+        }
+        Rewrite(hard.Header, b => { p.WriteUInt32(b, 508, unchecked((uint)-4)); p.WriteUInt32(b, 468, target.Header); });
+        Rewrite(soft.Header, b => { p.WriteUInt32(b, 508, 3); Encoding.Latin1.GetBytes("Target\0").CopyTo(storage.Ram, (int)b.Raw + 24); });
+        Rewrite(target.Header, b => p.WriteUInt32(b, 472, hard.Header));
+        uint Resolve(string path, out DOS.Error error)
+        {
+            Encoding.Latin1.GetBytes(path).CopyTo(storage.Ram, (int)Name.Raw);
+            return AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, (uint)path.Length, type, Meta, out error);
+        }
+        Assert.Equal(plain.Header, Resolve("Plain", out _));
+        Assert.Equal(target.Header, Resolve(names[0], out _));
+        Assert.Equal(0u, Resolve(names[1], out var softError)); Assert.Equal(DOS.Error.IsSoftLink, softError);
+        Assert.Equal(0u, Resolve(names[1] + "/x", out softError)); Assert.Equal(DOS.Error.IsSoftLink, softError);
+        // ExNext reports each entry with its own secondary type.
+        var fib = APTR.FromPointer(0x50000); var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
+        Assert.True(AmigaDiskFileSystemCore.Examine(ref p, g.RootBlock, fib, Meta));
+        var listed = new Dictionary<string, int>();
+        while (AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, g.RootBlock, fib, Meta, Data) == DOS.Error.None)
+            listed[Encoding.Latin1.GetString(storage.Ram, (int)fib.Raw + 9, storage.Ram[fib.Raw + 8])] = unchecked((int)p.ReadUInt32(fib, 4));
+        Assert.Equal(new Dictionary<string, int> { ["Target"] = -3, ["Plain"] = -3, [names[0]] = -4, [names[1]] = 3 }, listed);
+        // Creating and deleting through the same bucket passes both links.
+        var colliding = Enumerable.Range(5000, 5000).Select(i => "N" + i).First(n => Bucket(n) == Bucket("Plain"));
+        var created = VariantCreate(ref p, storage, g.RootBlock, colliding);
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, plain.Header, false), w.Error.ToString());
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, created.Header, false), w.Error.ToString());
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, soft.Header, false), w.Error.ToString());
+        // Deleting the original keeps its header under the link's name.
+        var used = Used(ref p);
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, target.Header, false), w.Error.ToString());
+        Assert.Equal(target.Header, Resolve(names[0], out _));
+        Assert.Equal(unchecked((uint)-3), p.ReadUInt32(Meta, 508)); Assert.Equal(0u, p.ReadUInt32(Meta, 472));
+        Assert.Equal(100u, p.ReadUInt32(Meta, 324));
+        Assert.Equal(0u, Resolve("Target", out var gone)); Assert.Equal(DOS.Error.ObjectNotFound, gone);
+        Assert.Equal(used - 1, Used(ref p));
+        Assert.True(p.ReadBlock(g.RootBlock, Meta)); Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, 312));
+        if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 1);
+    }
+
+    // Delete ALL pattern: list one entry, delete it, list the next. The native
+    // owner drops its private cursor on every mutation, so each step resumes
+    // from fib_DiskKey alone.
+    [Theory]
+    [InlineData(1)] [InlineData(3)] [InlineData(5)]
+    public void ListOneDeleteItListNextRemovesEveryEntry(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var drawer = VariantCreate(ref p, storage, g.RootBlock, "Drawer", true);
+        for (var i = 0; i < 40; i++) VariantCreate(ref p, storage, drawer.Header, $"Entry{i:00}");
+        var fib = APTR.FromPointer(0x50000);
+        Assert.True(AmigaDiskFileSystemCore.Examine(ref p, drawer.Header, fib, Meta));
+        Assert.Equal(drawer.Header, p.ReadUInt32(fib, 0));
+        var deleted = 0; var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
+        while (AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, drawer.Header, fib, Meta, Data, type) == DOS.Error.None)
+        {
+            var w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, p.ReadUInt32(fib, 0), false), w.Error.ToString());
+            cursor.Ordinal = 0; // the native owner invalidates its private position on every mutation
+            deleted++;
+        }
+        Assert.Equal(40, deleted);
+        Assert.True(p.ReadBlock(drawer.Header, Meta));
+        for (var at = 24; at < 312; at += 4) Assert.Equal(0u, p.ReadUInt32(Meta, at));
+    }
+
+    // With a caller time, the blocks Kickstart FFS dates get exactly that time:
+    // a new header and its directory on create, the directory (not the object)
+    // on rename and delete, and the root's disk-altered date on publication.
+    [Theory]
+    [InlineData(1)] [InlineData(5)]
+    public void MutationsDateTheBlocksKickstartDates(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var drawer = VariantCreate(ref p, storage, g.RootBlock, "Drawer", true);
+        uint[] Date(uint key, int at = 420)
+        {
+            Assert.True(p.ReadBlock(key, Meta));
+            return [p.ReadUInt32(Meta, g.Tail + at), p.ReadUInt32(Meta, g.Tail + at + 4), p.ReadUInt32(Meta, g.Tail + at + 8)];
+        }
+        AmigaFfsWriteCore.Work Timed(uint days) => Work() with { StampTime = true, NowDays = days, NowMinutes = 7, NowTicks = 9 };
+        Encoding.Latin1.GetBytes("Drawer/File").CopyTo(storage.Ram, (int)Name.Raw);
+        var file = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 11 }; var w = Timed(100);
+        var rootDate = Date(g.RootBlock);
+        Assert.True(AmigaFfsWriteCore.Create(ref p, ref w, ref file, false), w.Error.ToString());
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(file.Header));
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(drawer.Header));
+        Assert.Equal(rootDate, Date(g.RootBlock));
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(g.RootBlock, 472)); // disk altered
+        Encoding.Latin1.GetBytes("Renamed").CopyTo(storage.Ram, (int)Name.Raw);
+        file.Directory = drawer.Header; file.Name = Name; file.Length = 7; w = Timed(200);
+        Assert.True(AmigaFfsWriteCore.Rename(ref p, ref w, ref file), w.Error.ToString());
+        Assert.Equal(new uint[] { 100, 7, 9 }, Date(file.Header));
+        Assert.Equal(new uint[] { 200, 7, 9 }, Date(drawer.Header));
+        w = Timed(300);
+        Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, file.Header, false), w.Error.ToString());
+        Assert.Equal(new uint[] { 300, 7, 9 }, Date(drawer.Header));
+        Assert.Equal(rootDate, Date(g.RootBlock));
+        Assert.True(AmigaDiskFileSystemCore.CountUsed(ref p, Meta, Bitmap, out _));
+        if (dos >= 4) InspectDirectoryCache(storage, g, drawer.Header, 0);
+    }
+
+    // fib_NumBlocks follows Kickstart 3.1's size / 512 + 1 on OFS and FFS, and
+    // the owner longword fills fib_OwnerUID/GID (CopperFS.Kickstart.Tests'
+    // FIB reference test measured both against Kickstart's filesystem).
+    [Theory]
+    [InlineData(0, 0u, 1u)] [InlineData(0, 512u, 2u)] [InlineData(1, 489u, 1u)] [InlineData(1, 36000u, 71u)]
+    public void ExamineReportsKickstartBlockCountsAndOwner(int dos, uint size, uint blocks)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        var file = VariantCreate(ref p, storage, g.RootBlock, "Sized");
+        if (size != 0) OfsWrite(ref p, storage, ref file, 0, new byte[size]);
+        Assert.True(p.ReadBlock(file.Header, Meta)); p.WriteUInt32(Meta, 316, 0x1234ABCD); Reseal(ref p, file.Header);
+        var fib = APTR.FromPointer(0x50000);
+        Assert.True(AmigaDiskFileSystemCore.Examine(ref p, file.Header, fib, Meta));
+        Assert.Equal(blocks, p.ReadUInt32(fib, 128));
+        Assert.Equal((ushort)0x1234, p.ReadUInt16(fib, 224)); Assert.Equal((ushort)0xABCD, p.ReadUInt16(fib, 226));
+    }
+
+    // MakeLink writes the layout Kickstart 3.1 FFS writes (the link reference
+    // test compares it with Kickstart's own MakeLink): lookups follow the
+    // hard link, report the soft link, and deleting the link restores the chain.
+    [Theory]
+    [InlineData(1)] [InlineData(5)]
+    public void MakeLinkCreatesFollowableHardAndSoftLinks(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var target = VariantCreate(ref p, storage, g.RootBlock, "Target");
+        Encoding.Latin1.GetBytes("Hard").CopyTo(storage.Ram, (int)Name.Raw);
+        var hard = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 4 }; var w = Work();
+        Assert.True(AmigaFfsWriteCore.MakeLink(ref p, ref w, ref hard, target.Header, APTR.Null, 0, false), w.Error.ToString());
+        Encoding.Latin1.GetBytes("Soft").CopyTo(storage.Ram, (int)Name.Raw);
+        Encoding.Latin1.GetBytes("Target").CopyTo(storage.Ram, (int)Payload.Raw);
+        var soft = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 4 }; w = Work();
+        Assert.True(AmigaFfsWriteCore.MakeLink(ref p, ref w, ref soft, 0, Payload, 6, true), w.Error.ToString());
+        Assert.True(p.ReadBlock(target.Header, Meta)); Assert.Equal(hard.Header, p.ReadUInt32(Meta, 472));
+        Encoding.Latin1.GetBytes("Hard").CopyTo(storage.Ram, (int)Name.Raw);
+        Assert.Equal(target.Header, AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 4, type, Meta, out _));
+        Encoding.Latin1.GetBytes("Soft").CopyTo(storage.Ram, (int)Name.Raw);
+        Assert.Equal(0u, AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 4, type, Meta, out var error));
+        Assert.Equal(DOS.Error.IsSoftLink, error);
+        w = Work(); Assert.False(AmigaFfsWriteCore.MakeLink(ref p, ref w, ref hard, target.Header, APTR.Null, 0, false));
+        Assert.Equal(DOS.Error.ObjectExists, w.Error);
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, hard.Header, false), w.Error.ToString());
+        Assert.True(p.ReadBlock(target.Header, Meta)); Assert.Equal(0u, p.ReadUInt32(Meta, 472));
+        if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 2);
+    }
+
+    // ACTION_RENAME_DISK and ACTION_SET_OWNER (both compared with Kickstart's
+    // filesystem by the misc-packet reference test) on OFS and DOS\5.
+    [Theory]
+    [InlineData(0)] [InlineData(5)]
+    public void RelabelAndSetOwnerPersist(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        var file = VariantCreate(ref p, storage, g.RootBlock, "Owned");
+        Encoding.Latin1.GetBytes("NewLabel").CopyTo(storage.Ram, (int)Name.Raw); var w = Work();
+        Assert.True(AmigaFfsWriteCore.Relabel(ref p, ref w, Name, 8), w.Error.ToString());
+        Assert.True(AmigaDiskFileSystemCore.Header(ref p, g.RootBlock, Meta));
+        Assert.Equal("NewLabel", Encoding.Latin1.GetString(storage.Ram, (int)Meta.Raw + g.Tail + 433, storage.Ram[Meta.Raw + g.Tail + 432]));
+        Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, g.Tail + 312));
+        Encoding.Latin1.GetBytes("Bad:Name").CopyTo(storage.Ram, (int)Name.Raw); w = Work();
+        Assert.False(AmigaFfsWriteCore.Relabel(ref p, ref w, Name, 8)); Assert.Equal(DOS.Error.InvalidComponentName, w.Error);
+        file.Position = 0x00050007; w = Work();
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref file, DosPacketAction.SetOwner), w.Error.ToString());
+        Assert.True(AmigaDiskFileSystemCore.Header(ref p, file.Header, Meta)); Assert.Equal(0x00050007u, p.ReadUInt32(Meta, g.Tail + 316));
+        if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 1);
+    }
+
+    // Mark every free block but `keep` as allocated in the volume's bitmap pages.
+    private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
+    {
+        Assert.True(p.ReadBlock(g.RootBlock, Meta));
+        var maps = (g.BlockCount - g.ReservedBlocks + g.BitmapBits - 1) / g.BitmapBits;
+        for (var map = 0u; map < maps; map++)
+        {
+            var key = p.ReadUInt32(Meta, g.Tail + 316 + (int)map * 4);
+            Assert.True(p.ReadBlock(key, Bitmap));
+            for (var bit = 0u; bit < g.BitmapBits && map * g.BitmapBits + bit < g.BlockCount - g.ReservedBlocks; bit++)
+            {
+                var at = 4 + (int)(bit / 32) * 4; var mask = 1u << (int)(bit % 32);
+                if ((p.ReadUInt32(Bitmap, at) & mask) == 0) continue;
+                if (keep != 0) { keep--; continue; }
+                p.WriteUInt32(Bitmap, at, p.ReadUInt32(Bitmap, at) & ~mask);
+            }
+            uint sum = 0; for (var i = 4; i < g.BlockBytes; i += 4) sum = unchecked(sum + p.ReadUInt32(Bitmap, i));
+            p.WriteUInt32(Bitmap, 0, unchecked(0u - sum));
+            Assert.True(p.WriteBlock(key, Bitmap));
+        }
+        Assert.Equal(0u, keep);
     }
 
     // Independent on-disk cache/canonical comparison, including bitmap ownership.

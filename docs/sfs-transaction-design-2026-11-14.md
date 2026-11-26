@@ -16,7 +16,7 @@ enabled and inlining disabled.
 
 ## Evidence and the decision to make
 
-The [latest qualification](sfs-capacity-qualification-2026-11-13.md) compares
+The latest qualification compares
 original SFS 1.279, the eight-image-per-arena candidate, and the current nine-image
 candidate. Three alternating warm trials use identical media, a 68020, 32 DOS
 buffers and controlled Fast/Chip payload placement. Mutation includes final
@@ -317,7 +317,6 @@ allocation/relocation, journal or lookup attribution to choose the next change.
 - [Recovery and final clean barrier](../src/CopperSFS.Core/AmigaSmartFileSystemNativeRecovery.cs)
 - [Unpublished data relocation](../src/CopperSFS.Core/AmigaSmartFileSystemRelocation.cs)
 - [Native allocation and pressure fallback](../src/CopperFS.Amiga/NativeSfsTrstGroup.cs)
-- [Baseline qualification and binary identities](sfs-capacity-qualification-2026-11-13.md)
 
 Trace aggregation uses ignored local receipts:
 `artifacts/sfs-buffer-reuse/qualification/commit-trace/candidate/commit-trace.json`

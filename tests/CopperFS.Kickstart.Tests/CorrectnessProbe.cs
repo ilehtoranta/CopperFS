@@ -524,13 +524,34 @@ public static class CorrectnessProbe
         return APTR.ReadUInt8(source, offset + value.Length) == 0;
     }
 
-    internal static int Mount(APTR control, uint kind, bool floppy = false, bool unknown = false, uint hardDiskHighCylinder = 127, uint sfs2ReservedBlocks = 1)
+    internal static int Mount(APTR control, uint kind, bool floppy = false, bool unknown = false, uint hardDiskHighCylinder = 127, uint sfs2ReservedBlocks = 1,
+        bool romFileSystem = false)
     {
         var suppliedCylinders = APTR.ReadUInt32(control, 408);
         if (suppliedCylinders != 0) hardDiskHighCylinder = suppliedCylinders - 1;
         var format = kind % 10;
-        var segment = DOS.LoadSeg("HANDLER");
-        if (!segment.HasValue) return 12;
+        uint romSegment = 0, romVector = uint.MaxValue;
+        if (romFileSystem)
+        {
+            // Reference arm: reuse the boot floppy's Kickstart filesystem segment.
+            const uint flags = (uint)(DosListLockFlags.Read | DosListLockFlags.Devices);
+            var list = DOS.LockDosList(flags);
+            var boot = DOS.FindDosEntry(list, CString.FromLiteral("DF0"), flags);
+            if (boot.IsNotNull)
+            {
+                romSegment = APTR.ReadUInt32(boot, DosLayout.DeviceNode.SegmentList);
+                romVector = APTR.ReadUInt32(boot, DosLayout.DeviceNode.GlobalVector);
+            }
+            DOS.UnLockDosList(flags);
+            if (romSegment == 0) return 12;
+        }
+        var segmentList = romSegment;
+        if (!romFileSystem)
+        {
+            var loaded = DOS.LoadSeg("HANDLER");
+            if (!loaded.HasValue) return 12;
+            segmentList = loaded.Value.Raw;
+        }
         Report(224); // Code loaded; capture cold initialization before starting the handler.
         var node = DOS.MakeDosEntry(CString.FromLiteral("SEQ0"), (int)DosListType.Device);
         if (node.IsNull) return 13;
@@ -569,8 +590,8 @@ public static class CorrectnessProbe
         APTR.WriteUInt32(node, DosLayout.DeviceNode.StackSize, 32768);
         APTR.WriteUInt32(node, DosLayout.DeviceNode.Priority, 10);
         APTR.WriteUInt32(node, DosLayout.DeviceNode.Startup, startup.Raw >> 2);
-        APTR.WriteUInt32(node, DosLayout.DeviceNode.SegmentList, segment.Value.Raw);
-        APTR.WriteUInt32(node, DosLayout.DeviceNode.GlobalVector, uint.MaxValue);
+        APTR.WriteUInt32(node, DosLayout.DeviceNode.SegmentList, segmentList);
+        APTR.WriteUInt32(node, DosLayout.DeviceNode.GlobalVector, romVector);
         return DOS.AddDosEntry(node) == 0 ? 14 : 0;
     }
 

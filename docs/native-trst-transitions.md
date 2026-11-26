@@ -1,6 +1,6 @@
 # Native TRST allocation transitions
 
-The native buffered handler now retains continuation state after a general relocation and searches forward when adjacent replacement space runs out. The five-trial benchmark improves overwrite throughput by **7.65%** over the [deferred-metadata build](native-trst-deferred.md), with identical I/O. Overwrite p95 latency improves from 7.85 to 6.34 ms and the worst Write from 73.60 to 57.77 ms. Append throughput is effectively unchanged.
+The native buffered handler now retains continuation state after a general relocation and searches forward when adjacent replacement space runs out. The five-trial benchmark improves overwrite throughput by **7.65%** over the deferred-metadata build, with identical I/O. Overwrite p95 latency improves from 7.85 to 6.34 ms and the worst Write from 73.60 to 57.77 ms. Append throughput is effectively unchanged.
 
 Overwrite reaches **64.10% of original SFS 1.279 throughput**. The change is integrated and qualified, but the performance goal remains unmet. Whole-Write atomicity, buffered delayed durability, CSUN recovery and the shared **192 KiB staging cap** remain requirements.
 

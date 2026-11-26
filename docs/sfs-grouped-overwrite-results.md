@@ -19,7 +19,7 @@ The guarded inlined profile was compared with original SFS 1.279 and merged comm
 | Chip verify | 4,073,507 | 4,004,237 | 3,991,423 |
 | Chip total | 5,784,273 | 6,089,260 | 5,968,867 |
 
-In the separate instruction profile, the overwrite consumed 114,139 Kickstart cycles and 438,263 handler cycles. Continuation admission and checks used 146,626 inclusive cycles, the general relocation used 70,449, and commit streaming used 79,897. These figures overlap their callees. The earlier task/interrupt trace in sfs-overwrite-rom-qualification.md attributes 11,778 of the 14,383 additional ROM cycles to scheduling input.device during the measured interval. The main remaining cost is in the filesystem.
+In the separate instruction profile, the overwrite consumed 114,139 Kickstart cycles and 438,263 handler cycles. Continuation admission and checks used 146,626 inclusive cycles, the general relocation used 70,449, and commit streaming used 79,897. These figures overlap their callees. An earlier task/interrupt trace attributes 11,778 of the 14,383 additional ROM cycles to scheduling input.device during the measured interval. The main remaining cost is in the filesystem.
 
 ## Inlining and recovery
 

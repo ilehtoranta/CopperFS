@@ -3,7 +3,7 @@
 The handler source is CopperFS commit `3ff1de96e24ccd9733301175b95fb58faa129926`.
 The replay and dependency-lock additions accompany this record and do not change
 filesystem production code. This run supersedes the binary qualification in
-[the earlier record](release-candidate-qualification-2026-11-09.md). No package
+the earlier record. No package
 or ROM was published.
 
 ## Dependency and build identity

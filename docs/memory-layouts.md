@@ -62,9 +62,7 @@ regression tests also cover imported generic views, mutable borrowed platforms,
 escaping views, and explicit `NoInlining` accessors. Host tests check big-endian
 bytes and the exact sequence of memory operations.
 
-The complete handler changed and passed a new native A/B run. See the
-[typed-view validation](typed-memory-view-validation.md) for the exact isolated
-candidate hashes, performance counts, recovery results, and coverage limits.
+The complete handler changed and passed a new native A/B run.
 The earlier named-offset-only refactor produced byte-identical preview.3 handlers;
 that evidence applies to those earlier binaries, not to this compiler change.
 

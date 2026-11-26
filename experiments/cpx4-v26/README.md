@@ -1,8 +1,7 @@
 # CPX4 V26 experimental source
 
 This text-only patch preserves the latest measured CPU candidate against the
-default V7 source in the same commit. It is not promoted. See the
-[benchmark report](../../docs/cpx4-benchmark-2026-11-15.md) for results and coverage.
+default V7 source in the same commit. It is not promoted.
 
 Apply it to a clean checkout of this checkpoint, from the repository root:
 

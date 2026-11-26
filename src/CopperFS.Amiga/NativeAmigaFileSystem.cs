@@ -43,7 +43,14 @@ public static partial class NativeAmigaFileSystem
     internal const int FfsCachedSectorBits = FfsCachedBlocks + 4;
     internal const int FfsDirect32Blocks = FfsCachedSectorBits + 64 * 4;
     private const int FfsObjectBusy = FfsDirect32Blocks + 4, FfsObjectSlot = FfsObjectBusy + 4;
-    private const uint MountStateBytes = FfsObjectSlot + ObjectBytes;
+    // Idle publication: an Exec timer request, whether it is queued, and
+    // whether a packet arrived since it was queued.
+    private const int FfsIdleTimer = FfsObjectSlot + (int)ObjectBytes, FfsIdleQueued = FfsIdleTimer + 4, FfsIdleActivity = FfsIdleQueued + 4;
+    // A DateStamp the handler fills before each mutation.
+    private const int FfsNow = FfsIdleActivity + 4;
+    // ACTION_WRITE_PROTECT's software protection and its pass key.
+    internal const int FfsSoftProtect = FfsNow + 12, FfsSoftKey = FfsSoftProtect + 4;
+    private const uint MountStateBytes = FfsSoftKey + 4;
 #if COPPERFS_FFS_INDEX64
     internal const uint FfsIndexBytes = 64 * 1024;
 #elif COPPERFS_FFS_INDEX1024
@@ -993,6 +1000,7 @@ public static partial class NativeAmigaFileSystem
         NativeAutomaticTrim.Initialize(state);
 #endif
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+        OpenIdleTimer(state, port);
         while (true)
         {
             global::Amiga.Exec.WaitPort(port.Raw);
@@ -1129,8 +1137,55 @@ public static partial class NativeAmigaFileSystem
     }
 
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+    // An open write or metadata group keeps the root invalid on disk and its
+    // data in RAM. Kickstart FFS makes the volume valid again shortly after
+    // activity stops; publish the group once a full timer period passes
+    // without a packet. Without timer.device the group still closes normally.
+    private const uint IdlePublicationSeconds = 3;
+
+    private static void OpenIdleTimer(APTR state, APTR port)
+    {
+        var request = global::Amiga.Exec.CreateIORequest(port, TimerRequest.Size);
+        if (request.IsNull) return;
+        if (global::Amiga.Exec.OpenDevice(CString.FromPointer(CString.ToUInt32("timer.device")),
+            (uint)TimerUnit.VBlank, request, 0) != 0)
+        { global::Amiga.Exec.DeleteIORequest(request); return; }
+        APTR.WriteUInt32(state, FfsIdleTimer, request.Raw);
+    }
+
+    private static void ArmIdleTimer(APTR state)
+    {
+        APTR.WriteUInt32(state, FfsIdleActivity, 1);
+        var request = APTR.FromPointer(APTR.ReadUInt32(state, FfsIdleTimer));
+        if (request.IsNull || APTR.ReadUInt32(state, FfsIdleQueued) != 0 || APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return;
+        APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, (ushort)TimerCommand.AddRequest);
+        APTR.WriteUInt8(request, NativeExecFieldCodec.IoFlagsOffset, 0);
+        APTR.WriteUInt8(request, NativeExecFieldCodec.IoErrorOffset, 0);
+        APTR.WriteUInt32(request, NativeTimerRequestFieldCodec.SecondsOffset, IdlePublicationSeconds);
+        APTR.WriteUInt32(request, NativeTimerRequestFieldCodec.MicrosecondsOffset, 0);
+        APTR.WriteUInt32(state, FfsIdleQueued, 1);
+        APTR.WriteUInt32(state, FfsIdleActivity, 0);
+        global::Amiga.Exec.SendIO(request);
+    }
+
+    // The idle timer's reply: publish if nothing arrived during its period.
+    private static bool RetireIdleTimer(APTR state, APTR message)
+    {
+        if (message.Raw != APTR.ReadUInt32(state, FfsIdleTimer)) return false;
+        APTR.WriteUInt32(state, FfsIdleQueued, 0);
+        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return true;
+        if (APTR.ReadUInt32(state, FfsIdleActivity) != 0) { ArmIdleTimer(state); return true; }
+        var platform = new NativeFileSystemPlatform(state);
+        InitializeWriteWork(state, out var work);
+        var published = AmigaFfsWriteCore.FinishFileWriteGroup(ref platform, ref work);
+        APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+        if (!published) APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
+        return true;
+    }
+
     private static bool RetireClassicReply(APTR state, APTR port, APTR message, bool startService)
     {
+        if (RetireIdleTimer(state, message)) return true;
 #if COPPERFS_AUTOTRIM
         if (message.Raw == APTR.ReadUInt32(state, NativeFileSystemStateCodec.SmartTimerOffset))
         {
@@ -1151,6 +1206,7 @@ public static partial class NativeAmigaFileSystem
         Dispatch(state, packet);
         if (APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Result2Offset) == (uint)DOS.Error.DiskNotValidated)
             InvalidateClassicMountProofs(state);
+        ArmIdleTimer(state);
         var recordPlatform = new NativeRecordLockPlatform();
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RecordWaitersOffset) != 0 &&
             NativeRecordLockCore.IsPending(ref recordPlatform, state, packet)) return;
@@ -1395,7 +1451,8 @@ public static partial class NativeAmigaFileSystem
             cursor.Slot = APTR.ReadUInt32(owned, 44); cursor.Entry = APTR.ReadUInt32(owned, 48);
             cursor.Visited = APTR.ReadUInt32(owned, 52);
         }
-        var error = AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, key, fib, metadata, table);
+        var error = AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, key, fib, metadata, table,
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset));
         if (error == DOS.Error.None && owned.IsNotNull)
         {
 #if COPPERFS_FFS_HANDLER
@@ -1405,6 +1462,18 @@ public static partial class NativeAmigaFileSystem
             APTR.WriteUInt32(owned, 48, cursor.Entry); APTR.WriteUInt32(owned, 52, cursor.Visited);
         }
         return error;
+    }
+
+    // Classic used-block count for ACTION_INFO and attribute queries. The FFS
+    // handler answers from its mount index or free-count summary.
+    private static bool ClassicUsed(APTR state, ref NativeFileSystemPlatform p, out uint used)
+    {
+#if COPPERFS_FFS_HANDLER
+        InitializeWriteWork(state, out var work);
+        return AmigaFfsWriteCore.CountUsed(ref p, ref work, out used);
+#else
+        return AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out used, p.FfsMountIndex);
+#endif
     }
 
     internal static void InitializeWriteWork(APTR state, out AmigaFfsWriteCore.Work work)
@@ -1418,6 +1487,13 @@ public static partial class NativeAmigaFileSystem
         work.Index = APTR.FromPointer(APTR.ReadUInt32(state, FfsIndexOffset));
         work.ReadsGroupedRoot = true;
         work.ReadsGroupedDirectories = true;
+#if COPPERSTART_SFS_STANDALONE
+        // Kickstart FFS dates new objects and the directories it changes.
+        var now = APTR.FromPointer(state.Raw + FfsNow);
+        global::Amiga.DOS.DateStamp(now);
+        work.StampTime = true;
+        work.NowDays = APTR.ReadUInt32(now, 0); work.NowMinutes = APTR.ReadUInt32(now, 4); work.NowTicks = APTR.ReadUInt32(now, 8);
+#endif
 #endif
     }
     internal static AmigaSmartFileSystemWriteCore.Work SmartWriteWork(APTR state)
@@ -1639,7 +1715,9 @@ public static partial class NativeAmigaFileSystem
         }
         else
         {
-            if (InUse(state, r.Header, true)) { error = DOS.Error.ObjectInUse; return 0; }
+            // MODE_READWRITE shares the file with other opens and shared locks,
+            // as in Kickstart FFS; MODE_NEWFILE needs it to be unused.
+            if (InUse(state, r.Header, action != DosPacketAction.FindUpdate)) { error = DOS.Error.ObjectInUse; return 0; }
             if (APTR.ReadUInt32(header, ((int)p.BlockBytes - 512) + 508) != 0xFFFFFFFD) { error = DOS.Error.ObjectWrongType; return 0; }
             if (action == DosPacketAction.FindOutput)
             {
@@ -1650,7 +1728,7 @@ public static partial class NativeAmigaFileSystem
             }
             else size = p.ReadUInt32(header, ((int)p.BlockBytes - 512) + 324);
         }
-        return InstallWriteHandle(state, ref p, ref w, handle, r.Header, size, changed, out error);
+        return InstallWriteHandle(state, ref p, ref w, handle, r.Header, size, changed, out error, action == DosPacketAction.FindUpdate ? 0 : 1);
     }
 
     private static bool SimpleOpenComponent(APTR state, ref NativeFileSystemPlatform p, ref AmigaFfsWriteCore.Request r)
@@ -1674,9 +1752,9 @@ public static partial class NativeAmigaFileSystem
     }
 
     private static int InstallWriteHandle(APTR state, ref NativeFileSystemPlatform p, ref AmigaFfsWriteCore.Work w,
-        APTR handle, uint key, uint size, bool changed, out DOS.Error error)
+        APTR handle, uint key, uint size, bool changed, out DOS.Error error, int access = 1)
     {
-        var obj = NewObject(state, key, size, true, 1);
+        var obj = NewObject(state, key, size, true, access);
 #if COPPERFS_FFS_HANDLER
         if (w.GroupHeader != 0)
         {
@@ -1765,7 +1843,7 @@ public static partial class NativeAmigaFileSystem
         }
         else success = NativeSfsExtension.Remove(state, ref w, found);
         if (!success) error = w.Error;
-        else NativeFileSystemNotifications.Changed(state, found, oldParent);
+        else NativeFileSystemNotifications.Changed(state, found, oldParent, removed: true);
         return success ? -1 : 0;
     }
     private static int Mutate(APTR state, APTR packet, DosPacketAction action, out DOS.Error error)
@@ -1783,14 +1861,19 @@ public static partial class NativeAmigaFileSystem
             RecordMetadataGroup(state, ref w);
 #endif
             if (!created) { error = w.Error; return 0; }
-            var obj = NewObject(state, r.Header, 0, false, -2);
+            // CreateDir returns an exclusive lock, as in Kickstart FFS.
+            var obj = NewObject(state, r.Header, 0, false, -1);
             if (obj.IsNull) { error = DOS.Error.NoFreeStore; return 0; }
             NativeFileSystemNotifications.Changed(state, r.Header);
             return unchecked((int)((obj.Raw + 20) >> 2));
         }
-        r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length, APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out var header, w.Index);
+        // Delete and rename act on the named entry, including a link itself.
+        r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length, APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out var header, w.Index,
+            followFinal: false);
         if (r.Header == 0) return 0;
-        if (InUse(state, r.Header, true)) { error = DOS.Error.ObjectInUse; return 0; }
+        // Delete needs the object unused. Kickstart FFS renames under shared
+        // locks and open files and refuses only an exclusive lock.
+        if (InUse(state, r.Header, action != DosPacketAction.RenameObject)) { error = DOS.Error.ObjectInUse; return 0; }
         var oldParent = p.ReadUInt32(header, ((int)p.BlockBytes - 512) + 500);
         bool success;
         if (action == DosPacketAction.RenameObject)
@@ -1803,8 +1886,219 @@ public static partial class NativeAmigaFileSystem
         RecordMetadataGroup(state, ref w);
 #endif
         if (!success) error = w.Error;
-        else NativeFileSystemNotifications.Changed(state, r.Header, oldParent);
+        else NativeFileSystemNotifications.Changed(state, r.Header, oldParent, removed: true);
         return success ? -1 : 0;
+    }
+
+#if COPPERFS_FFS_HANDLER && COPPERSTART_SFS_STANDALONE
+    // ACTION_EXAMINE_ALL: Arg2 buffer, Arg3 size, Arg4 ED_ type, Arg5 ExAllControl.
+    // eac_LastKey holds the last returned header key, so a scan resumes the
+    // same way ExNext does. Like Kickstart 3.1 FFS, a record is only started
+    // while its fixed part, a 32-byte name and (for ED_COMMENT and above) an
+    // 80-byte comment would still fit; a too-small buffer returns DOSTRUE with
+    // no entries. The final batch returns DOSFALSE with ERROR_NO_MORE_ENTRIES.
+    private static int ExamineAllPacket(APTR state, APTR packet, uint directory, out DOS.Error error)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        var buffer = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset));
+        var size = unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset));
+        var type = unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset));
+        var control = APTR.FromPointer(APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument5Offset));
+        error = DOS.Error.None;
+        if (type < 1 || size < 0 || !p.IsMapped(control, 16) || !p.IsMapped(buffer, (uint)size)) { error = DOS.Error.BadNumber; return 0; }
+        if (type > 7) type = 7;
+        // ED_NAME..ED_PROTECTION add a longword each; ED_DATE adds three, then one each.
+        var fixedBytes = type <= 4 ? 4 + type * 4 : type == 5 ? 32 : 4 + type * 4 + 8;
+        var reserve = fixedBytes + 32 + (type >= 6 ? 80 : 0);
+        var pattern = APTR.FromPointer(APTR.ReadUInt32(control, 8));
+        var hook = APTR.ReadUInt32(control, 12);
+        var fib = Bitmap(state);
+        var hookType = APTR.FromPointer(fib.Raw + FileInfoBlock.SizeInBytes);
+        APTR.WriteUInt32(hookType, 0, (uint)type);
+        if (hook != 0 && global::Amiga.Utility.UtilityLibraryBase.IsNull)
+            global::Amiga.Utility.UtilityLibraryBase = global::Amiga.Exec.OpenLibraryRaw("utility.library", 37);
+        var last = APTR.ReadUInt32(control, 4);
+        APTR.WriteUInt32(fib, 0, last == 0 ? directory : last);
+        var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
+        var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        var at = 0; uint entries = 0; var previous = APTR.Null;
+        while (true)
+        {
+            if (size - at < reserve) { APTR.WriteUInt32(control, 0, entries); return -1; }
+            var next = AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, directory, fib, Metadata(state), Data(state), dosType);
+            if (next != DOS.Error.None)
+            {
+                APTR.WriteUInt32(control, 0, entries);
+                error = next;
+                return 0;
+            }
+            APTR.WriteUInt32(control, 4, APTR.ReadUInt32(fib, 0));
+            var record = APTR.FromPointer(buffer.Raw + (uint)at);
+            var text = APTR.FromPointer(record.Raw + (uint)fixedBytes);
+            var nameLength = APTR.ReadUInt8(fib, 8);
+            for (var i = 0; i < nameLength; i++) APTR.WriteUInt8(text, i, APTR.ReadUInt8(fib, 9 + i));
+            APTR.WriteUInt8(text, nameLength, 0);
+            if (pattern.IsNotNull && global::Amiga.DOS.MatchPatternNoCase(CString.FromPointer(pattern.Raw), CString.FromPointer(text.Raw)) == 0)
+                continue;
+            var bytes = fixedBytes + nameLength + 1;
+            APTR.WriteUInt32(record, 0, 0);
+            APTR.WriteUInt32(record, 4, text.Raw);
+            if (type >= 2) APTR.WriteUInt32(record, 8, APTR.ReadUInt32(fib, 4));
+            if (type >= 3) APTR.WriteUInt32(record, 12, APTR.ReadUInt32(fib, 124));
+            if (type >= 4) APTR.WriteUInt32(record, 16, APTR.ReadUInt32(fib, 116));
+            if (type >= 5)
+                for (var i = 0; i < 12; i += 4) APTR.WriteUInt32(record, 20 + i, APTR.ReadUInt32(fib, 132 + i));
+            if (type >= 6)
+            {
+                var comment = APTR.FromPointer(text.Raw + (uint)nameLength + 1);
+                var commentLength = APTR.ReadUInt8(fib, 144);
+                for (var i = 0; i < commentLength; i++) APTR.WriteUInt8(comment, i, APTR.ReadUInt8(fib, 145 + i));
+                APTR.WriteUInt8(comment, commentLength, 0);
+                APTR.WriteUInt32(record, 32, comment.Raw);
+                bytes += commentLength + 1;
+            }
+            if (type >= 7)
+            {
+                APTR.WriteUInt16(record, 36, APTR.ReadUInt16(fib, 224));
+                APTR.WriteUInt16(record, 38, APTR.ReadUInt16(fib, 226));
+            }
+            if (hook != 0 && global::Amiga.Utility.CallHookPkt(hook, hookType.Raw, record.Raw) == 0) continue;
+            if (previous.IsNotNull) APTR.WriteUInt32(previous, 0, record.Raw);
+            previous = record;
+            entries++;
+            at += (bytes + 3) & ~3;
+        }
+    }
+#endif
+
+    // ACTION_MAKE_LINK: Arg1 directory lock, Arg2 BSTR name, Arg3 the object's
+    // lock (LINK_HARD, Arg4 0) or a C string target (LINK_SOFT, Arg4 1).
+    private static int MakeLinkPacket(APTR state, APTR packet, out DOS.Error error)
+    {
+        var p = new NativeFileSystemPlatform(state); var r = new AmigaFfsWriteCore.Request();
+        error = DOS.Error.None;
+        if (!PacketName(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset),
+            APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset), ref r)) { error = DOS.Error.InvalidLock; return 0; }
+        if (p.WriteProtected()) { error = DOS.Error.DiskWriteProtected; return 0; }
+        var target = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+        var soft = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset) != 0;
+        uint key = 0, length = 0;
+        if (soft)
+        {
+            while (length < 256 && p.IsMapped(APTR.FromPointer(target + length), 1) && APTR.ReadUInt8(APTR.FromPointer(target), (int)length) != 0) length++;
+            if (length == 0 || length == 256) { error = DOS.Error.BadNumber; return 0; }
+        }
+        else
+        {
+            var owned = Object(state, target, false);
+            if (owned.IsNull) { error = DOS.Error.InvalidLock; return 0; }
+            key = APTR.ReadUInt32(owned, 4);
+        }
+        if (!FinishOpenGroup(state, out error)) return 0;
+        InitializeWriteWork(state, out var w);
+        if (!AmigaFfsWriteCore.MakeLink(ref p, ref w, ref r, key, APTR.FromPointer(target), length, soft)) { error = w.Error; return 0; }
+        NativeFileSystemNotifications.Changed(state, r.Header);
+        return -1;
+    }
+
+    // Packets that update the root themselves publish any open group first.
+    private static bool FinishOpenGroup(APTR state, out DOS.Error error)
+    {
+        error = DOS.Error.None;
+#if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) == 0) return true;
+        var p = new NativeFileSystemPlatform(state);
+        InitializeWriteWork(state, out var group);
+        var published = AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref group);
+        APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+        if (published) return true;
+        APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1);
+        error = group.Error;
+        return false;
+#else
+        return true;
+#endif
+    }
+
+    // ACTION_RENAME_DISK (Arg1 BSTR): the root's name and the volume node's.
+    private static int RelabelPacket(APTR state, APTR packet, out DOS.Error error)
+    {
+        var p = new NativeFileSystemPlatform(state);
+        var token = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
+        var name = APTR.FromPointer(token << 2);
+        if (token > 0x3FFFFFFF || !p.IsMapped(name, 1) || !p.IsMapped(name, (uint)APTR.ReadUInt8(name, 0) + 1u))
+        { error = DOS.Error.BadNumber; return 0; }
+        var length = APTR.ReadUInt8(name, 0);
+        if (p.WriteProtected()) { error = DOS.Error.DiskWriteProtected; return 0; }
+        if (!FinishOpenGroup(state, out error)) return 0;
+        InitializeWriteWork(state, out var w);
+        if (!AmigaFfsWriteCore.Relabel(ref p, ref w, APTR.FromPointer(name.Raw + 1), length)) { error = w.Error; return 0; }
+        var volume = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.VolumeOffset));
+        if (volume.IsNotNull)
+        {
+            // dos.library allocates dol_Name with AllocVec; FreeDosEntry frees it the same way.
+            var replacement = APTR.FromPointer(global::Amiga.Exec.AllocVec((uint)length + 2,
+                (uint)(global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Clear)));
+            if (replacement.IsNotNull)
+            {
+                for (var i = 0; i <= length; i++) APTR.WriteUInt8(replacement, i, APTR.ReadUInt8(name, i));
+                const uint flags = (uint)(DosListLockFlags.Write | DosListLockFlags.Volumes);
+                global::Amiga.DOS.LockDosList(flags);
+                var old = APTR.ReadUInt32(volume, 40);
+                APTR.WriteUInt32(volume, 40, replacement.Raw >> 2);
+                global::Amiga.DOS.UnLockDosList(flags);
+                if (old != 0) global::Amiga.Exec.FreeVec(APTR.FromPointer(old << 2));
+            }
+        }
+        return -1;
+    }
+
+    // ACTION_CHANGE_MODE: Arg1 CHANGE_LOCK (0) or CHANGE_FH (1), Arg2 the
+    // object, Arg3 the new mode. Exclusive needs no other lock or handle.
+    private static int ChangeModePacket(APTR state, APTR packet, out DOS.Error error)
+    {
+        error = DOS.Error.None;
+        var kind = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset);
+        var token = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset);
+        var mode = unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset));
+        var target = kind == 0 ? Object(state, token, false)
+            : Object(state, token > 0x3FFFFFFF ? 0 : APTR.ReadUInt32(APTR.FromPointer(token << 2), 36), true);
+        if (target.IsNull) { error = DOS.Error.InvalidLock; return 0; }
+        var exclusive = mode == -1 || (kind == 1 && mode == 1006);
+        if (exclusive)
+        {
+            var key = APTR.ReadUInt32(target, 4);
+            for (var other = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.ObjectsOffset)); other.IsNotNull;
+                other = APTR.FromPointer(APTR.ReadUInt32(other, 0)))
+                if (other != target && APTR.ReadUInt32(other, 4) == key) { error = DOS.Error.ObjectInUse; return 0; }
+        }
+        APTR.WriteUInt32(target, 28, kind == 0 ? unchecked((uint)(exclusive ? -1 : -2)) : exclusive ? 1u : 0u);
+        return -1;
+    }
+
+    // ACTION_WRITE_PROTECT: Arg1 TRUE protects with pass key Arg2; FALSE
+    // releases it when the key matches (or no key was set).
+    private static int WriteProtectPacket(APTR state, APTR packet, out DOS.Error error)
+    {
+        error = DOS.Error.None;
+#if COPPERFS_FFS_HANDLER
+        var protect = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset) != 0;
+        var key = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset);
+        if (protect)
+        {
+            if (APTR.ReadUInt32(state, FfsSoftProtect) != 0) { error = DOS.Error.DiskWriteProtected; return 0; }
+            if (!FinishOpenGroup(state, out error)) return 0;
+            APTR.WriteUInt32(state, FfsSoftProtect, 1); APTR.WriteUInt32(state, FfsSoftKey, key);
+            return -1;
+        }
+        var stored = APTR.ReadUInt32(state, FfsSoftKey);
+        if (APTR.ReadUInt32(state, FfsSoftProtect) != 0 && stored != 0 && stored != key) { error = DOS.Error.InvalidLock; return 0; }
+        APTR.WriteUInt32(state, FfsSoftProtect, 0); APTR.WriteUInt32(state, FfsSoftKey, 0);
+        return -1;
+#else
+        error = DOS.Error.ActionNotKnown;
+        return 0;
+#endif
     }
 
     private static int SetMetadata(APTR state, APTR packet, DosPacketAction action, out DOS.Error error)
@@ -1817,24 +2111,33 @@ public static partial class NativeAmigaFileSystem
         if (!PacketName(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset), APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset), ref r))
         { error = DOS.Error.InvalidLock; return 0; }
         r.Header = AmigaDiskFileSystemCore.ResolveView(ref p, r.Directory, r.Name, r.Length,
-            APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out _, w.Index);
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), w.Meta, out error, out _, w.Index,
+            followFinal: false);
         if (r.Header == 0) return 0;
         // FFS refuses date changes under an exclusive lock; RAM: permits them.
         if (action == DosPacketAction.SetDate && APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) == 0 && InUse(state, r.Header, false))
         { error = DOS.Error.ObjectInUse; return 0; }
         var value = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset);
         r.Position = value;
-        if (action != DosPacketAction.SetProtection)
+        if (action is not (DosPacketAction.SetProtection or DosPacketAction.SetOwner))
         {
             r.Buffer = APTR.FromPointer(value << 2);
-            // Kickstart 3.1's SetFileDate path supplies an expanded address.
-            // CopperStart's DOS path supplies a BPTR. Match the SFS adapter:
-            // use the expanded form when only that form is in guest memory.
+#if COPPERSTART_SFS_STANDALONE
+            // Kickstart defines ACTION_SET_DATE's dp_Arg4 as a CPTR to the
+            // DateStamp. Guessing a BPTR first wrote other RAM as the date
+            // whenever that expanded address was mapped too (low chip memory).
+            if (action == DosPacketAction.SetDate) r.Buffer = APTR.FromPointer(value);
+#else
+            // CopperStart's DOS path supplies a BPTR; Kickstart's an address.
+            // Use the expanded form when only that form is in guest memory.
             if (action == DosPacketAction.SetDate && !p.IsMapped(r.Buffer, 12) &&
                 p.IsMapped(APTR.FromPointer(value), 12))
                 r.Buffer = APTR.FromPointer(value);
+#endif
+            if (action == DosPacketAction.SetDate && !p.IsMapped(r.Buffer, 12)) { error = DOS.Error.BadNumber; return 0; }
             if (action == DosPacketAction.SetComment)
             {
+                if (!p.IsMapped(r.Buffer, 1) || !p.IsMapped(r.Buffer, (uint)p.ReadUInt8(r.Buffer) + 1u)) { error = DOS.Error.BadNumber; return 0; }
                 r.Length = p.ReadUInt8(r.Buffer);
                 r.Buffer = APTR.FromPointer(r.Buffer.Raw + 1);
             }
@@ -1849,6 +2152,18 @@ public static partial class NativeAmigaFileSystem
     }
 
 #if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+#if COPPERSTART_SFS_STANDALONE
+    // Close-time date of a changed file. On fixed disks it joins the
+    // metadata group, so it costs no extra root writes of its own.
+    private static void StampClosedFile(APTR state, uint key)
+    {
+        var p = new NativeFileSystemPlatform(state); InitializeWriteWork(state, out var w);
+        w.GroupMetadata = APTR.ReadUInt32(state, FixedHardDiskOffset) != 0;
+        var r = new AmigaFfsWriteCore.Request { Header = key, Buffer = APTR.FromPointer(state.Raw + FfsNow) };
+        AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref r, DosPacketAction.SetDate);
+        RecordMetadataGroup(state, ref w);
+    }
+#endif
     private static void RecordMetadataGroup(APTR state, ref AmigaFfsWriteCore.Work work)
     {
         if (!work.GroupMetadata || work.Index.IsNull) return;
@@ -2090,6 +2405,28 @@ public static partial class NativeAmigaFileSystem
     }
 #endif
 
+    // While inhibited, Kickstart 3.1 FFS answers media packets without touching
+    // the disk: name lookups see no DOS disk (225) and existing locks and
+    // handles see no mounted volume (218). Release, inhibit and status
+    // packets still run. SFS keeps its own gate in the general dispatcher.
+    private static bool RefuseInhibited(APTR state, APTR packet, DosPacketAction action)
+    {
+        if ((SpecializeFormat ? FormatIsSmart : Smart(state)) || action is DosPacketAction.Inhibit or DosPacketAction.FreeLock or
+            DosPacketAction.End or DosPacketAction.IsFileSystem or DosPacketAction.CurrentVolume or DosPacketAction.Info or
+            DosPacketAction.DiskInfo or DosPacketAction.Flush or DosPacketAction.MoreCache or DosPacketAction.DiskType or
+            DosPacketAction.RemoveNotify or DosPacketAction.Format) // Format is sent to an inhibited volume
+            return false;
+        var named = action is DosPacketAction.LocateObject or DosPacketAction.FindInput or DosPacketAction.FindOutput or
+            DosPacketAction.FindUpdate or DosPacketAction.DeleteObject or DosPacketAction.RenameObject or
+            DosPacketAction.CreateDirectory or DosPacketAction.SetProtection or DosPacketAction.SetComment or
+            DosPacketAction.SetDate or DosPacketAction.MakeLink or DosPacketAction.ReadLink or DosPacketAction.AddNotify;
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result1Offset, action is DosPacketAction.Read or DosPacketAction.Write or
+            DosPacketAction.Seek or DosPacketAction.SetFileSize ? uint.MaxValue : 0);
+        APTR.WriteUInt32(packet, NativeDosPacketFieldCodec.Result2Offset,
+            (uint)(named ? DOS.Error.NotADosDisk : DOS.Error.DeviceNotMounted));
+        return true;
+    }
+
     public static void Dispatch(APTR state, APTR packet)
     {
         // Read and enumeration packets need no mutation work area. Keep recovery
@@ -2097,6 +2434,7 @@ public static partial class NativeAmigaFileSystem
         // The FFS-only standalone entry reaches packet dispatch only after it
         // accepts an FFS/OFS mount.
         var action = (DosPacketAction)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.TypeOffset);
+        if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset) != 0 && RefuseInhibited(state, packet, action)) return;
 #if COPPERFS_FFS_HANDLER
         var owner = APTR.ReadUInt32(state, FfsWriteGroupHandle);
         if (owner != 0 && DispatchClassicWriteGroup(state, packet, action, owner)) return;
@@ -2347,7 +2685,7 @@ public static partial class NativeAmigaFileSystem
             case FileSystemQueryAttribute.NumBlocks: value = p.BlockCount; break;
             case FileSystemQueryAttribute.NumBlocksUsed:
                 if (!((SpecializeFormat ? FormatIsSmart : Smart(state)) ? NativeSfsExtension.CountUsed(state, out var countedUsed) :
-                    AmigaDiskFileSystemCore.CountUsed(ref p, Metadata(state), Data(state), out countedUsed, p.FfsMountIndex)))
+                    ClassicUsed(state, ref p, out countedUsed)))
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 value = countedUsed;
                 break;
@@ -2698,6 +3036,10 @@ public static partial class NativeAmigaFileSystem
 #if COPPERFS_SFS2_ORIGINAL_DATA_WRITES
                 if (changedKey != 0) NativeSfs2Bridge.RetainOriginalCursor(state, retired, changedKey);
 #endif
+#if COPPERFS_FFS_HANDLER && COPPERSTART_SFS_STANDALONE && !COPPERSTART_PACKED_EXTENSION
+                // Kickstart FFS dates a file when a handle that changed it closes.
+                if (changedKey != 0 && !(SpecializeFormat ? FormatIsSmart : Smart(state))) StampClosedFile(state, changedKey);
+#endif
                 if (retired.IsNotNull) FreeObject(state, retired);
                 if (changedKey != 0) NativeFileSystemNotifications.Changed(state, changedKey);
                 result = -1;
@@ -2709,9 +3051,22 @@ public static partial class NativeAmigaFileSystem
 
     private static int SetInhibited(ref NativeFileSystemPlatform p, APTR state, bool inhibit, out DOS.Error error)
     {
+        // Kickstart FFS nests inhibits: only the matching last release remounts.
+        var depth = APTR.ReadUInt32(state, NativeFileSystemStateCodec.InhibitedOffset);
+        if (inhibit && depth != 0)
+        {
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, depth + 1);
+            error = DOS.Error.None; return -1;
+        }
+        if (!inhibit && depth > 1)
+        {
+            APTR.WriteUInt32(state, NativeFileSystemStateCodec.InhibitedOffset, depth - 1);
+            error = DOS.Error.None; return -1;
+        }
 #if COPPERFS_FFS_HANDLER
-        if (inhibit && APTR.ReadUInt32(state, FfsGroupPublicationFailed) != 0)
-        { error = DOS.Error.DiskNotValidated; return 0; }
+        // A failed group publication left the root invalid on disk. Drop the
+        // group so a repair tool can still inhibit and remount the volume.
+        if (inhibit) APTR.WriteUInt32(state, FfsGroupPublicationFailed, 0);
         p.ForgetFfsIndex();
 #endif
 #if COPPERFS_SFS_POOL && !COPPERFS_SFS_IN_PLACE
@@ -2876,6 +3231,45 @@ public static partial class NativeAmigaFileSystem
                     unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset)),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), metadata, data, out error);
                 break;
+            case DosPacketAction.MakeLink:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                result = MakeLinkPacket(state, packet, out error);
+                break;
+            case DosPacketAction.RenameDisk:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                result = RelabelPacket(state, packet, out error);
+                break;
+            case DosPacketAction.SetOwner:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                result = FinishOpenGroup(state, out error) ? SetMetadata(state, packet, action, out error) : 0;
+                break;
+            case DosPacketAction.ChangeMode:
+                result = ChangeModePacket(state, packet, out error);
+                break;
+            case DosPacketAction.WriteProtect:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                result = WriteProtectPacket(state, packet, out error);
+                break;
+#if COPPERFS_FFS_HANDLER && COPPERSTART_SFS_STANDALONE
+            case DosPacketAction.ExamineAll:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                if (key == 0) { error = DOS.Error.InvalidLock; break; }
+                result = ExamineAllPacket(state, packet, key, out error);
+                break;
+            case DosPacketAction.ExamineAllEnd:
+                // The position lives in the caller's ExAllControl; nothing to release.
+                result = -1;
+                break;
+#endif
+            case DosPacketAction.ReadLink:
+                // dos.library sends this after a lookup reports ERROR_IS_SOFT_LINK.
+                // A zero lock names the volume root.
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                if (a != 0 && key == 0) { result = -1; error = DOS.Error.InvalidLock; break; }
+                result = AmigaFfsReadLinkCore.Read(ref p, a == 0 ? RootKey(state) : key, APTR.FromPointer(b), APTR.FromPointer(c),
+                    unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset)),
+                    APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), metadata, data, out error, stored: true);
+                break;
             case DosPacketAction.AddNotify:
                 result = NativeFileSystemNotifications.Add(state, APTR.FromPointer(a), out error); break;
             case DosPacketAction.RemoveNotify:
@@ -3011,6 +3405,8 @@ public static partial class NativeAmigaFileSystem
                         key = p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 500);
                     }
                 }
+                // Kickstart FFS refuses a shared copy beside an exclusive lock.
+                if (key != RootKey(state) && InUse(state, key, false)) { error = DOS.Error.ObjectInUse; break; }
                 var duplicate = NewObject(state, key, 0, false, -2);
                 if (duplicate.IsNull) error = DOS.Error.NoFreeStore;
                 else result = unchecked((int)((duplicate.Raw + 20) >> 2));
@@ -3048,7 +3444,13 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.SameLock:
                 var other = Object(state, b, false);
                 if (key == 0 || (b != 0 && other.IsNull)) error = DOS.Error.InvalidLock;
+#if COPPERSTART_SFS_STANDALONE
+                // Kickstart's packet reply is a Boolean: DOSTRUE for the same object.
+                else result = key == (b == 0 ? RootKey(state) : APTR.ReadUInt32(other, 4)) ? -1 : 0;
+#else
+                // CopperStart's dos.library expects LOCK_SAME (0) / LOCK_SAME_VOLUME (1).
                 else result = key == (b == 0 ? RootKey(state) : APTR.ReadUInt32(other, 4)) ? 0 : 1;
+#endif
                 break;
             case DosPacketAction.QueryAttribute:
                 result = QueryAttribute(state, (FileSystemQueryAttribute)a,
@@ -3061,6 +3463,8 @@ public static partial class NativeAmigaFileSystem
                 if (action is DosPacketAction.ExamineFileHandle or DosPacketAction.ExamineFileHandle64)
                     key = file.IsNotNull ? APTR.ReadUInt32(file, 4) : 0;
                 if (key == 0) { error = DOS.Error.InvalidLock; break; }
+                // A FIB outside guest memory is a bad argument, not disk damage.
+                if (b > 0x3FFFFFFF || !p.IsMapped(APTR.FromPointer(b << 2), FileInfoBlock.SizeInBytes)) { error = DOS.Error.BadNumber; break; }
                 result = ((SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.Examine(state, key, APTR.FromPointer(b << 2))
                     : AmigaDiskFileSystemCore.Examine(ref p, key, APTR.FromPointer(b << 2), metadata)) ? -1 : 0;
@@ -3084,7 +3488,7 @@ public static partial class NativeAmigaFileSystem
                 if (!p.IsMapped(info, 36)) { error = DOS.Error.BadNumber; break; }
                 var counted = (SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.CountUsed(state, out var smartUsed)
-                    : AmigaDiskFileSystemCore.CountUsed(ref p, metadata, data, out smartUsed, p.FfsMountIndex);
+                    : ClassicUsed(state, ref p, out smartUsed);
                 var usedBlocks = smartUsed;
                 if (!counted || (!(SpecializeFormat ? FormatIsSmart : Smart(state)) && !AmigaDiskFileSystemCore.Header(ref p, p.Geometry.RootBlock, metadata)))
                 { error = DOS.Error.DiskNotValidated; break; }
@@ -3162,7 +3566,7 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.SetFileSize:
 #if COPPERSTART_NATIVE_SFS_WRITES && !COPPERSTART_FFS_ONLY
                 result = -1;
-                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.DiskWriteProtected; break; }
+                if (!(SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
                 if (file.IsNull) { error = DOS.Error.InvalidLock; break; }
                 if (NativeSfs2Bridge.IsSfs2(state))
                 {
@@ -3196,10 +3600,11 @@ public static partial class NativeAmigaFileSystem
                 result = (int)resizeTarget;
                 break;
 #else
-                result = -1; error = DOS.Error.DiskWriteProtected; break;
+                // Not implemented here: say so instead of claiming write protection.
+                result = -1; error = DOS.Error.ActionNotKnown; break;
 #endif
             case DosPacketAction.Format:
-                error = DOS.Error.DiskWriteProtected;
+                error = DOS.Error.ActionNotKnown;
                 break;
             default:
 #if !COPPERSTART_SMART_ONLY
@@ -3324,7 +3729,7 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
         {
 #if COPPERFS_AUTOTRIM && COPPERFS_FFS_HANDLER
             return
-                APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is 0x444F5300 or 0x444F5301 &&
+                APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is >= 0x444F5300 and <= 0x444F5305 &&
                 APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
 #elif COPPERFS_AUTOTRIM
             return APTR.ReadUInt32(state, NativeAmigaFileSystem.AutoTrimPendingOffset) != 2;
@@ -3693,6 +4098,9 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
     public bool WriteProtected()
     {
         if (APTR.ReadUInt32(state, NativeFileSystemStateCodec.RamBlocksOffset) != 0) return false;
+#if COPPERFS_FFS_HANDLER
+        if (APTR.ReadUInt32(state, NativeAmigaFileSystem.FfsSoftProtect) != 0) return true;
+#endif
         var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, 15);
         global::Amiga.Exec.DoIO(request);

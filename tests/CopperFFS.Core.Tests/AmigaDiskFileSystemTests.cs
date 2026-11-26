@@ -519,6 +519,32 @@ public sealed class AmigaDiskFileSystemTests
         Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, dir.Header, false));
         Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32BigEndian(disk.Bytes.AsSpan(880 * 512 + 312)));
     }
+    // A header whose pointer table holds fewer keys than byte_size implies
+    // must never steer an overwrite onto block 0 or any other unvalidated key.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GrowingOverwriteRejectsPointerTableShorterThanFileSize(bool missingExtension)
+    {
+        var disk = DosDiskImage.Create(true); var p = new Memory(disk.Bytes); var w = Scratch();
+        var r = new AmigaFfsWriteCore.Request { Directory = 880, Name = p.Name("Short"), Length = 5 };
+        Assert.True(AmigaFfsWriteCore.Create(ref p, ref w, ref r, false)); var file = r.Header;
+        var length = missingExtension ? 80u * 512 : 3u * 512;
+        for (var i = 0; i < length; i++) p.Ram[9000 + i] = (byte)(i * 7);
+        r = new() { Header = file, Buffer = APTR.FromPointer(9000), Length = length };
+        Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref r, out var actual)); Assert.Equal(length, actual);
+        if (missingExtension) disk.Write(file, 504, 0); // Size still claims 80 blocks; only 72 remain reachable.
+        else { disk.Write(file, 8, 1); disk.Write(file, 304, 0); disk.Write(file, 300, 0); } // Size claims 3 blocks.
+        disk.Checksum(file);
+        var before = disk.Bytes.ToArray();
+        // Start inside the existing file and grow it, so the whole chain is walked.
+        var position = missingExtension ? 70u * 512 + 100 : 600u;
+        r = new() { Header = file, Buffer = APTR.FromPointer(9000), Position = position, Length = length - position + 700 };
+        Assert.False(AmigaFfsWriteCore.Write(ref p, ref w, ref r, out _));
+        Assert.Equal(DOS.Error.DiskNotValidated, w.Error);
+        Assert.Equal(before.AsSpan(0, 2 * 512).ToArray(), disk.Bytes.AsSpan(0, 2 * 512).ToArray());
+        Assert.Equal(before, disk.Bytes);
+    }
     [Fact]
     public void DeviceFailureLeavesMetadataInvalidRatherThanPublishingPartialSuccess()
     {

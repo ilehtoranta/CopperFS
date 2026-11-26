@@ -53,14 +53,20 @@ public sealed class DesktopIoCoreTests
         var disk = DosDiskImage.Create(true); var directory = disk.AddDrawer("Many");
         for (var i = 0; i < 96; i++) disk.AddDrawerFile(directory, $"Item{i:00}", []);
         var p = new Memory(disk.Bytes); Assert.True(AmigaDiskFileSystemCore.Examine(ref p, directory, Fib, Meta));
-        var cursor = new AmigaDiskFileSystemCore.DirectoryCursor(); var actual = new List<string>(); p.Reads = 0;
+        var cursor = new AmigaDiskFileSystemCore.DirectoryCursor(); var actual = new List<string>(); var keys = new List<uint>(); p.Reads = 0;
         for (var i = 0; i < 96; i++)
         {
             Assert.Equal(DOS.Error.None, AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, directory, Fib, Meta, Table));
-            Assert.Equal((uint)i + 1, p.ReadUInt32(Fib)); actual.Add(p.Name(Fib));
+            // fib_DiskKey is the returned entry's own header key, as in Kickstart FFS.
+            keys.Add(p.ReadUInt32(Fib)); actual.Add(p.Name(Fib));
         }
         Assert.Equal(DOS.Error.NoMoreEntries, AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, directory, Fib, Meta, Table));
-        Assert.Equal(193u, p.Reads); Assert.Equal(96, actual.Distinct().Count());
+        Assert.Equal(193u, p.Reads);
+        for (var i = 0; i < 96; i++)
+        {
+            Assert.True(AmigaDiskFileSystemCore.Header(ref p, keys[i], Meta));
+            Assert.Equal(actual[i], System.Text.Encoding.Latin1.GetString(p.Ram, (int)Meta.Raw + 433, p.Ram[Meta.Raw + 432]));
+        } Assert.Equal(96, actual.Distinct().Count());
         Assert.Equal(Enumerable.Range(0, 96).Select(i => $"Item{i:00}"), actual.Order());
         // A fresh private record can rebuild every position from the same public key.
         Assert.True(AmigaDiskFileSystemCore.Examine(ref p, directory, Other, Meta));

@@ -129,10 +129,12 @@ public sealed partial class VolumeGeometryTests
         Array.Resize(ref expected, (int)(file.Position + file.Length));
         s.Ram.AsSpan((int)Payload.Raw, (int)file.Length).Fill(0xD3);
         expected.AsSpan((int)file.Position).Fill(0xD3);
+        s.Flushes = 0;
         var w = Work(); Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref file, out var actual, true), w.Error.ToString());
         Assert.Equal(file.Length, actual);
         Assert.Equal(old, InspectAllocation(s, g, file.Header, false, expected).Take(old.Length));
-        Assert.Equal(0, s.Flushes);
+        // Only the barrier before the validating root write; no relocation barriers.
+        Assert.Equal(1, s.Flushes);
     }
 
     [Fact]
@@ -142,10 +144,10 @@ public sealed partial class VolumeGeometryTests
         file.Position = 512; file.Length = 8 * 512;
         s.Ram.AsSpan((int)Payload.Raw, (int)file.Length).Fill(0x63);
         expected.AsSpan((int)file.Position, (int)file.Length).Fill(0x63);
-        var w = Work();
+        var w = Work(); s.Flushes = 0;
         Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref file, out _, true));
         Assert.Equal(old, InspectAllocation(s, g, file.Header, false, expected));
-        Assert.Equal(0, s.Flushes);
+        Assert.Equal(1, s.Flushes);
     }
 
     [Fact]
@@ -189,7 +191,7 @@ public sealed partial class VolumeGeometryTests
             g.MaxTransfer = 3 * 512; p = new Memory(s, g);
             var w = Work(); file.Position = 0;
             s.Ram.AsSpan((int)Payload.Raw, expected.Length).Fill(0xDC);
-            s.WriteCalls = 0; s.FailWriteCall = failWrite; s.FailFlushCall = failFlush;
+            s.WriteCalls = 0; s.Flushes = 0; s.FailWriteCall = failWrite; s.FailFlushCall = failFlush;
             var ok = AmigaFfsWriteCore.Write(ref p, ref w, ref file, out var actual, true);
             Assert.Equal(failWrite == 0 && failFlush == 0, ok);
             if (!ok) Assert.Equal(DOS.Error.DiskNotValidated, w.Error);
@@ -230,10 +232,11 @@ public sealed partial class VolumeGeometryTests
         {
             var (s, p, g, file, expected, _) = FragmentedFile(blocks, run);
             file.Position = 0; s.Ram.AsSpan((int)Payload.Raw, expected.Length).Fill(0xAC);
-            var w = Work(); s.Transfers.Clear();
+            var w = Work(); s.Transfers.Clear(); s.Flushes = 0;
             Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref file, out var actual, disk), w.Error.ToString());
             Assert.Equal(file.Length, actual);
-            Assert.Equal(disk && shouldMove, s.Flushes != 0);
+            // One barrier always precedes the validating root write; relocation adds its own.
+            Assert.Equal(disk && shouldMove, s.Flushes > 1);
             var writes = s.Transfers.ToArray(); s.Transfers.Clear();
             var reader = new Memory(s, g);
             Assert.Equal(expected.Length, AmigaDiskFileSystemCore.Read(ref reader, file.Header, 0x444F5301, 0,

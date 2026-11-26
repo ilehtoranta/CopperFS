@@ -76,6 +76,26 @@ public sealed partial class VolumeGeometryTests
         Assert.Empty(storage.Discards);
     }
 
+    // The worst case for MapCapacity: eight sorted ranges totalling at most
+    // 4096 blocks touch at most sixteen bitmap pages at 512-byte blocks, each
+    // range straddling its own page boundary (a third page per range needs
+    // 4090 blocks, leaving fewer blocks than the other ranges need). The
+    // collector must accept that case and find every free block.
+    [Fact]
+    public void AutomaticFfsAcceptsEightRangesTouchingSixteenBitmapPages()
+    {
+        var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(100000, 512, 2, out var g));
+        var p = new Memory(storage, g); Format(ref p, g);
+        var ranges = Enumerable.Range(0, 8).Select(i => (g.ReservedBlocks + (uint)(2 * i + 1) * g.BitmapBits - 1, 2u)).ToArray();
+        var batch = AutomaticBatch(ref p, storage, ranges); var work = Work();
+        var ok = true; var done = false;
+        for (var turn = 0; ok && !done && turn < 16; turn++)
+            ok = AmigaFfsWriteCore.CollectAutomaticTrim(ref p, ref work, batch, 11, 7, out done);
+        Assert.True(ok, work.Error.ToString()); Assert.True(done);
+        Assert.Equal(16u, p.ReadUInt32(batch, AmigaAutomaticTrimBatch.MapCount));
+        Assert.Equal(16u, p.ReadUInt32(batch, AmigaAutomaticTrimBatch.OutputBlocks));
+    }
+
     [Fact]
     public void AutomaticFfsFailedBarrierProducesNoAuthorization()
     {

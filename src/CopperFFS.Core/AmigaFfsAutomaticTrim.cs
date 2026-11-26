@@ -24,7 +24,7 @@ public static partial class AmigaFfsWriteCore
             // The mutation Prepare() also resolves the root's allocation map.
             // Defer that lookup to the budgeted shared walk below as well.
             if (p.WriteProtected()) return Fail(ref w, DOS.Error.DiskWriteProtected);
-            if (!p.ReadBlock(0, w.Meta) || p.ReadUInt32(w.Meta) is not (0x444F5300 or 0x444F5301) ||
+            if (!p.ReadBlock(0, w.Meta) || p.ReadUInt32(w.Meta) is not (>= 0x444F5300 and <= 0x444F5305) ||
                 !Header(ref p, ref w, g.RootBlock) || p.ReadUInt32(w.Meta, g.Tail + 312) != uint.MaxValue || !p.Flush())
             {
 #if !COPPERFS_NO_FFS_MOUNT_INDEX

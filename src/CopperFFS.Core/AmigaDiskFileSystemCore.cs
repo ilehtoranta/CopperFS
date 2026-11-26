@@ -139,8 +139,9 @@ public static class AmigaDiskFileSystemCore
     // Consume the returned header before another block access. Resolve exposes
     // the same traversal to callers that need a stable copy in their scratch.
     internal static uint ResolveView<T>(ref T p, uint directory, APTR name, uint length,
-        uint dosType, APTR buffer, out DOS.Error error, out APTR image, APTR mountIndex = default) where T : struct, IAmigaFileSystemPlatform
-        => ResolveForOpen(ref p, directory, name, length, dosType, buffer, out error, out image, out _, mountIndex);
+        uint dosType, APTR buffer, out DOS.Error error, out APTR image, APTR mountIndex = default, bool followFinal = true)
+        where T : struct, IAmigaFileSystemPlatform
+        => ResolveForOpen(ref p, directory, name, length, dosType, buffer, out error, out image, out _, mountIndex, followFinal);
 
     internal struct MissingComponent
     {
@@ -150,7 +151,7 @@ public static class AmigaDiskFileSystemCore
 
     internal static uint ResolveForOpen<T>(ref T p, uint directory, APTR name, uint length,
         uint dosType, APTR buffer, out DOS.Error error, out APTR image, out MissingComponent missing,
-        APTR mountIndex = default)
+        APTR mountIndex = default, bool followFinal = true)
         where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
@@ -227,9 +228,15 @@ public static class AmigaDiskFileSystemCore
                 AmigaFfsMountIndex.SoleRootChildDiffers(ref p, prefixIndex, slot, entry, count))
                 entry = 0;
             var found = false;
+            // Brent's cycle check: a damaged chain that loops back is refused
+            // after about twice its length, not after BlockCount reads.
+            uint mark = 0, power = 1, run = 0;
             for (var guard = 0u; entry != 0 && guard < geometry.BlockCount; guard++)
             {
-                view = HeaderView(ref p, in geometry, entry, buffer, name, length, false);
+                if (entry == mark) { error = DOS.Error.DiskNotValidated; return 0; }
+                if (++run == power) { mark = entry; power <<= 1; run = 0; }
+                // Hard and soft link headers share the hash chains of ordinary entries.
+                view = HeaderView(ref p, in geometry, entry, buffer, name, length, true);
                 if (view.IsNull || p.ReadUInt32(view, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return 0; }
                 var matches = p.ReadUInt8(view, geometry.Tail + 432) == count;
@@ -252,6 +259,19 @@ public static class AmigaDiskFileSystemCore
                     missing.HashSlot = slot;
                 }
                 return 0;
+            }
+            // Kickstart FFS follows hard links to their object and reports a
+            // soft link to dos.library, which reads it and retries the path.
+            // A caller acting on the named entry itself keeps the final link.
+            var linkType = unchecked((int)p.ReadUInt32(view, geometry.Tail + 508));
+            if (linkType is 3 or 4 or -4 && (offset < length || followFinal))
+            {
+                if (linkType == 3) { error = DOS.Error.IsSoftLink; return 0; }
+                var target = p.ReadUInt32(view, geometry.Tail + 468);
+                view = HeaderView(ref p, in geometry, target, buffer, name, length, false);
+                if (view.IsNull || unchecked((int)p.ReadUInt32(view, geometry.Tail + 508)) != (linkType == 4 ? 2 : -3))
+                { error = DOS.Error.DiskNotValidated; return 0; }
+                entry = target;
             }
             directory = entry;
             if (offset < length)
@@ -696,6 +716,8 @@ public static class AmigaDiskFileSystemCore
         var blockBytes = geometry.BlockBytes;
         if (blockBytes == 0) return false;
         p.Clear(fib, FileInfoBlock.SizeInBytes);
+        // fib_DiskKey is the header key, as in Kickstart FFS.
+        p.WriteUInt32(fib, 0, key);
         var type = p.ReadUInt32(buffer, geometry.Tail + 508);
         p.WriteUInt32(fib, 4, type);
         p.WriteUInt32(fib, 120, type);
@@ -706,10 +728,19 @@ public static class AmigaDiskFileSystemCore
         p.WriteUInt8(fib, 8, nameLength);
         for (var i = 0; i < nameLength; i++) p.WriteUInt8(fib, 9 + i, p.ReadUInt8(buffer, geometry.Tail + 433 + i));
         p.WriteUInt32(fib, 116, key == geometry.RootBlock ? 0 : p.ReadUInt32(buffer, geometry.Tail + 320));
-        var size = unchecked((int)type) < 0 ? p.ReadUInt32(buffer, geometry.Tail + 324) : 0;
+        var file = unchecked((int)type) < 0;
+        var size = file ? p.ReadUInt32(buffer, geometry.Tail + 324) : 0;
         p.WriteUInt32(fib, 124, size);
-        var blocks = AmigaGeometryMath.DivRem(size, blockBytes, out var remainder);
-        p.WriteUInt32(fib, 128, blocks + (remainder == 0 ? 0u : 1u));
+        // Kickstart 3.1 FFS reports size / block size + 1 for OFS and FFS files
+        // alike (0 bytes -> 1, 512 -> 2), not the blocks actually used.
+        p.WriteUInt32(fib, 128, file ? AmigaGeometryMath.Divide(size, blockBytes) + 1 : 0);
+        // fib_OwnerUID and fib_OwnerGID from the header's owner longword.
+        if (key != geometry.RootBlock)
+        {
+            var owner = p.ReadUInt32(buffer, geometry.Tail + 316);
+            p.WriteUInt16(fib, 224, (ushort)(owner >> 16));
+            p.WriteUInt16(fib, 226, (ushort)owner);
+        }
         for (var i = 0; i < 12; i += 4) p.WriteUInt32(fib, 132 + i, p.ReadUInt32(buffer, geometry.Tail + 420 + i));
         if (key != geometry.RootBlock)
         {
@@ -721,9 +752,9 @@ public static class AmigaDiskFileSystemCore
         return true;
     }
 
-    // Private acceleration only: the public disk key remains the ordinal.
-    // A different/interleaved cursor or an invalidated mount record can always
-    // rebuild the position from that ordinal without extra caller requirements.
+    // Private acceleration only: fib_DiskKey (the last returned header key)
+    // is authoritative. A different, interleaved or invalidated cursor resumes
+    // from that key. Ordinal holds the key this cursor last returned.
     public struct DirectoryCursor
     {
         public uint Directory, Ordinal, Slot, Entry, Visited;
@@ -736,10 +767,12 @@ public static class AmigaDiskFileSystemCore
         return ExamineNext(ref p, ref cursor, directory, fib, metadata, table);
     }
 
+    // dosType selects the name hash used to resume; 0 reads it from the boot block.
     public static DOS.Error ExamineNext<T>(ref T p, ref DirectoryCursor cursor,
-        uint directory, APTR fib, APTR metadata, APTR table)
+        uint directory, APTR fib, APTR metadata, APTR table, uint dosType = 0)
         where T : struct, IAmigaFileSystemPlatform
-        => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, false);
+        // Kickstart FFS lists link entries with their own secondary types.
+        => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, true, dosType);
 
     /// <summary>Inspect link entries without resolving them; retained packet enumeration semantics are unchanged.</summary>
     public static DOS.Error ExamineNextIncludingLinks<T>(ref T p, ref DirectoryCursor cursor,
@@ -748,38 +781,67 @@ public static class AmigaDiskFileSystemCore
         => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, true);
 
     private static DOS.Error ExamineNextCore<T>(ref T p, ref DirectoryCursor cursor,
-        uint directory, APTR fib, APTR metadata, APTR table, bool includeLinks)
+        uint directory, APTR fib, APTR metadata, APTR table, bool includeLinks, uint dosType = 0)
         where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes) || !Header(ref p, directory, table)) return DOS.Error.InvalidLock;
         if (unchecked((int)p.ReadUInt32(table, geometry.Tail + 508)) < 0) return DOS.Error.ObjectWrongType;
+        // Like Kickstart FFS, fib_DiskKey holds the last returned header key
+        // (the directory's own key after Examine). The scan continues from
+        // that header's hash bucket and successor, so deleting the returned
+        // entry between calls skips nothing.
         var wanted = p.ReadUInt32(fib);
         if (wanted >= geometry.BlockCount) return DOS.Error.NoMoreEntries;
         var next = cursor;
-        if (wanted == 0 || next.Directory != directory || next.Ordinal != wanted)
-            next = new DirectoryCursor { Directory = directory };
+        if (wanted == 0 || wanted == directory) next = new DirectoryCursor { Directory = directory };
+        else if (next.Directory != directory || next.Ordinal != wanted)
+        {
+            // A deleted entry's header keeps its name and old successor on disk.
+            if (dosType == 0)
+            {
+                if (!p.ReadBlock(0, metadata)) return DOS.Error.DiskNotValidated;
+                dosType = p.ReadUInt32(metadata);
+            }
+            var nameLength = 0u;
+            if (Header(ref p, in geometry, wanted, metadata, true) && p.ReadUInt32(metadata, geometry.Tail + 500) == directory)
+            {
+                nameLength = p.ReadUInt8(metadata, geometry.Tail + 432);
+                if (nameLength == 0 || nameLength > 30) return DOS.Error.DiskNotValidated;
+            }
+            if (nameLength != 0)
+            {
+                next = new DirectoryCursor
+                {
+                    Directory = directory,
+                    Slot = NameBucket(ref p, APTR.FromPointer(metadata.Raw + (uint)geometry.Tail + 433), nameLength, dosType, geometry.TableEntries),
+                    Entry = p.ReadUInt32(metadata, geometry.Tail + 496)
+                };
+                if (next.Entry == 0) next.Slot++;
+            }
+            // The freed header was already reused. The invalidated private
+            // cursor still knows the bucket: restart at its head.
+            else if (next.Directory == directory && next.Slot < geometry.TableEntries)
+                next = new DirectoryCursor { Directory = directory, Slot = next.Slot, Visited = next.Visited };
+            else return DOS.Error.NoMoreEntries;
+        }
         for (; next.Slot < geometry.TableEntries; next.Slot++)
         {
             var entry = next.Entry;
             if (entry == 0) entry = p.ReadUInt32(table, 24 + (int)next.Slot * 4);
-            while (entry != 0)
+            if (entry != 0)
             {
                 if (next.Visited >= geometry.BlockCount || !Header(ref p, in geometry, entry, metadata, includeLinks) ||
                     p.ReadUInt32(metadata, geometry.Tail + 500) != directory) return DOS.Error.DiskNotValidated;
                 next.Visited++;
                 var successor = p.ReadUInt32(metadata, geometry.Tail + 496);
-                if (next.Ordinal == wanted)
-                {
-                    if (!ExamineHeader(ref p, entry, fib, metadata)) return DOS.Error.DiskNotValidated;
-                    next.Ordinal++;
-                    if (successor == 0) { next.Slot++; next.Entry = 0; }
-                    else next.Entry = successor;
-                    p.WriteUInt32(fib, 0, next.Ordinal);
-                    cursor = next;
-                    return DOS.Error.None;
-                }
-                next.Ordinal++; entry = successor;
+                if (!ExamineHeader(ref p, entry, fib, metadata)) return DOS.Error.DiskNotValidated;
+                // Ordinal carries the last returned key for the private fast path.
+                next.Ordinal = entry;
+                if (successor == 0) { next.Slot++; next.Entry = 0; }
+                else next.Entry = successor;
+                cursor = next;
+                return DOS.Error.None;
             }
             next.Entry = 0;
         }
@@ -880,7 +942,7 @@ public static class AmigaDiskFileSystemCore
         where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
-        if (indexMemory.IsNotNull && p.ReadUInt32(indexMemory, AmigaFfsMountIndex.Status) == AmigaFfsMountIndex.Clean)
+        if (indexMemory.IsNotNull && p.ReadUInt32(indexMemory, AmigaFfsMountIndex.Status) is AmigaFfsMountIndex.Clean or AmigaFfsMountIndex.Summarized)
         {
             used = p.ReadUInt32(indexMemory, AmigaFfsMountIndex.Used);
             return true;

@@ -17,6 +17,21 @@ public sealed partial class VolumeGeometryTests
         public readonly List<(uint Block, uint Count)> Discards = [];
     }
 
+    // The key of bitmap page `index`, read from the persisted root and its
+    // extension chain (the layout differs by variant: DOS4/5 put the
+    // directory cache directly after the root).
+    private static uint PersistedBitmapPage(Storage storage, AmigaVolumeGeometry g, uint index)
+    {
+        byte[] Block(uint key) => storage.Sectors[g.StartByte + key * (ulong)g.BlockBytes];
+        static uint Word(byte[] b, int at) => System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(at));
+        var root = Block(g.RootBlock);
+        if (index < 25) return Word(root, g.Tail + 316 + (int)index * 4);
+        var slots = g.BlockBytes / 4 - 1; index -= 25;
+        var extension = Word(root, g.Tail + 416);
+        for (; index >= slots; index -= slots) extension = Word(Block(extension), (int)g.BlockBytes - 4);
+        return Word(Block(extension), (int)index * 4);
+    }
+
     private partial struct Memory
     {
         public bool QueryDiscard(APTR control, out AmigaFileSystemDiscardLimits limits)
@@ -31,7 +46,7 @@ public sealed partial class VolumeGeometryTests
                 // Read actual persisted allocation independently of the scan's scratch.
                 var index = (key - geometry.ReservedBlocks) / geometry.BitmapBits;
                 var bit = (key - geometry.ReservedBlocks) % geometry.BitmapBits;
-                var address = geometry.StartByte + (geometry.RootBlock + 1 + index) * (ulong)geometry.BlockBytes;
+                var address = geometry.StartByte + PersistedBitmapPage(storage, geometry, index) * (ulong)geometry.BlockBytes;
                 var word = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(
                     storage.Sectors[address].AsSpan(4 + (int)(bit / 32) * 4));
                 Assert.NotEqual(0u, word & 1u << (int)(bit % 32));
@@ -180,6 +195,7 @@ public sealed partial class VolumeGeometryTests
         keep.Buffer = Payload; keep.Length = 1001;
         Assert.True(AmigaFfsWriteCore.Write(ref p, ref w, ref keep, out var written)); Assert.Equal(1001u, written);
         var before = storage.Sectors.ToDictionary(x => x.Key, x => x.Value.ToArray());
+        storage.Flushes = 0; // Setup mutations flush before validating the root.
         Assert.True(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 2, out _));
         Assert.Equal(0, storage.Flushes);
         Assert.True(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 1, out var dry));
@@ -300,7 +316,8 @@ public sealed partial class VolumeGeometryTests
         Assert.True(AmigaVolumeGeometry.Create(3520, 512, 2, out var g));
         var p = new Memory(storage, g); Format(ref p, g); if (ofs) SetDosType(ref p, 0x444F5300); var w = Work();
         if (failure == 3) storage.Limits.Granularity = 0;
-        if (failure == 4) { p.WriteUInt32(Meta, 0, 0x444F5302); Assert.True(p.WriteBlock(0, Meta)); }
+        // DOS0-DOS5 are trimmed; an unsupported variant (DOS6) is refused.
+        if (failure == 4) { p.WriteUInt32(Meta, 0, 0x444F5306); Assert.True(p.WriteBlock(0, Meta)); }
         Assert.False(AmigaFfsWriteCore.Trim(ref p, ref w, APTR.Null, 0, out _));
         Assert.Empty(storage.Discards);
     }

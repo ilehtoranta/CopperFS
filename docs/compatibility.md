@@ -39,3 +39,56 @@ against original SmartFilesystem 1.279, including clean handoff and an
 unsampled write/flush interruption sweep; see
 [validation](validation.md) for the exact boundary. There is no formatter or
 RDB autoboot installer here.
+
+## CopperFFS
+
+CopperFFS reads and writes DOS\0 to DOS\5 (OFS, FFS, their international and
+directory-cache variants) with block sizes of 512 to 4096 bytes. DOS\6 and
+DOS\7 (long file names) are refused. Its reference is the FastFileSystem in
+Kickstart 3.1's ROM: the `CopperFS.Kickstart.Tests` reference tests run the same
+DOS workloads on both and compare results (links, ExNext and ExAll, locks,
+dates, inhibit, error codes, FIB fields, directory caches, notifications,
+Format layout). No original FFS 40.1 handler binary was available for these
+comparisons.
+
+### Behaviour that matches Kickstart 3.1
+
+- Hard and soft links: lookups follow hard links, report soft links, and
+  deletes promote the first link as Kickstart does. MakeLink, ReadLink,
+  ExAll, RenameDisk, SetOwner, ChangeMode and WriteProtect are implemented.
+- ExNext resumes from `fib_DiskKey`, so delete-while-listing works.
+- Inhibit, lock compatibility, `SetDate` (CPTR argument), `SameLock` results,
+  object and directory dates, and `fib_NumBlocks` follow the ROM.
+- DOS\4/5 directory caches are updated record by record. Their record order
+  differs from Kickstart's, but Kickstart lists and edits them correctly.
+- The FFS format core (used by CopperStart and host tools) writes the same
+  blocks as Kickstart's Format, apart from the root's dates and checksum and
+  the last bitmap page's padding past the end of the volume.
+
+### Known differences
+
+- `ACTION_FORMAT`, `ACTION_SET_FILE_SIZE`, `ACTION_DIE` and `ACTION_SERIALIZE_DISK`
+  return error 209 (action not known) in the standalone handler; Kickstart
+  implements the first two. `ACTION_GET_DISK_FSSM` returns 209 like the ROM.
+- Device I/O failures report 213 (not validated) rather than a separate
+  device error.
+- Notifications are a superset: CopperFFS also signals on `SetProtection` and
+  `SetComment`, signals the directory of a deleted file, and signals a watched
+  directory being created or deleted. Every notification Kickstart sends is
+  also sent.
+
+### Durability and maintenance
+
+Each mutation marks the root invalid, writes its changes, flushes the device
+and only then writes the valid root, so an interrupted mutation leaves a
+volume Kickstart's validator repairs. On fixed disks, metadata and small
+appends are grouped and published after three idle seconds or before the next
+unrelated operation. A mutation that would run out of space is refused before
+the root is marked invalid; after a device error during a mutation the root
+stays invalid until a validator repairs the volume.
+
+TRIM is available on DOS\0 to DOS\5 through the CopperTrim packet, and as
+automatic TRIM in `-AutoTrim` builds. It discards only blocks free in the
+on-disk bitmap; directory-cache blocks stay allocated. Manual TRIM sends one
+UNMAP per free run. Automatic TRIM retries after a failed collection and
+suspends itself after four consecutive failures or any failed UNMAP.

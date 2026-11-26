@@ -1,8 +1,8 @@
 # Standalone handler size reduction, 2026-11-11
 
-This records the first pass. The subsequent
-[active-code pass](active-code-size-2026-11-11.md) reduces the handlers further
-and requalifies TRST specialization with the changed code and new measurements.
+This records the first pass. A subsequent active-code pass (its report has
+since been retired) reduced the handlers further and requalified TRST
+specialization with the changed code and new measurements.
 
 FFS, classic SFS and SFS2 CSUN are smaller without a measured performance
 regression in the qualified workloads. Original-handler size parity has **not**

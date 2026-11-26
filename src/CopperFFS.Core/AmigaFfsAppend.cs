@@ -24,7 +24,9 @@ public static partial class AmigaFfsWriteCore
             p.ReadUInt32(image, tail + 500) + p.ReadUInt32(image, tail + 504) + p.ReadUInt32(image, tail + 508));
         if (header)
         {
-            sum = unchecked(sum + p.ReadUInt32(image, 16) + p.ReadUInt32(image, tail + 324) + p.ReadUInt32(image, tail + 496));
+            sum = unchecked(sum + p.ReadUInt32(image, 16) + p.ReadUInt32(image, tail + 324) + p.ReadUInt32(image, tail + 496) +
+                // A fresh header's creation date (zero unless the caller supplied the time).
+                p.ReadUInt32(image, tail + 420) + p.ReadUInt32(image, tail + 424) + p.ReadUInt32(image, tail + 428));
             var nameBytes = (p.ReadUInt8(image, tail + 432) + 4) & ~3;
             for (var offset = 0; offset < nameBytes; offset += 4)
                 sum = unchecked(sum + p.ReadUInt32(image, tail + 432 + offset));
@@ -379,7 +381,7 @@ public static partial class AmigaFfsWriteCore
             if (table == 0)
             {
                 if (oldBlocks == 0) p.WriteUInt32(image, 16, p.ReadUInt32(keys));
-                w.CacheParent = p.ReadUInt32(image, tableTail + 500);
+                w.CacheParent = p.ReadUInt32(image, tableTail + 500); w.CacheKey = r.Header;
                 p.WriteUInt32(image, tableTail + 324, w.RestoreSize);
             }
             if (image != w.Meta) p.WriteUInt32(w.Index, pending, key);
@@ -394,7 +396,7 @@ public static partial class AmigaFfsWriteCore
                 // Growth beyond the first table only changes the file size
                 // in this private header. Close seals it after its extensions.
                 var header = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.HeaderImage));
-                w.CacheParent = p.ReadUInt32(header, tableTail + 500);
+                w.CacheParent = p.ReadUInt32(header, tableTail + 500); w.CacheKey = r.Header;
                 p.WriteUInt32(header, tableTail + 324, w.RestoreSize);
             }
             else

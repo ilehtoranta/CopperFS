@@ -128,7 +128,11 @@ internal static class NativeFileSystemNotifications
         return -1;
     }
 
-    internal static void Changed(APTR state, uint changed, uint oldParent = 0)
+    // Each watch caches the key its path resolved to. Adding an entry or
+    // changing an object's contents or attributes cannot change where an
+    // existing path leads, so only unresolved watches resolve again then.
+    // A delete or rename (`removed`) can move or end any path: resolve all.
+    internal static void Changed(APTR state, uint changed, uint oldParent = 0, bool removed = false)
     {
         if (R(state, Watches) == 0) return;
         var p = new NativeFileSystemPlatform(state); var metadata = NativeAmigaFileSystem.Metadata(state);
@@ -136,7 +140,8 @@ internal static class NativeFileSystemNotifications
             ? p.ReadUInt32(metadata, ((int)p.BlockBytes - 512) + 500) : 0;
         for (var watch = APTR.FromPointer(R(state, Watches)); watch.IsNotNull; watch = APTR.FromPointer(R(watch, 0)))
         {
-            var previous = R(watch, Key); var current = Resolve(state, APTR.FromPointer(R(watch, Request)), out _);
+            var previous = R(watch, Key);
+            var current = removed || previous == 0 ? Resolve(state, APTR.FromPointer(R(watch, Request)), out _) : previous;
             W(watch, Key, current);
             if (previous != current || current != 0 && (current == changed || current == parent || current == oldParent)) Send(state, watch);
         }

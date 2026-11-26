@@ -12,51 +12,7 @@ The [SFS2 file reopen profile](kickstart-sfs2-trst-reopen-object-2026-11-08.md) 
 
 The [cached TRST 64 KiB reopen profile](kickstart-sfs2-trst-reopen-read-2026-11-08.md) measures the first read from a reopened file and compares all four packet sizes with original SFS.
 
-The [cached TRST remount and first-open profile](kickstart-sfs2-trst-remount-2026-11-08.md) measures the two phases of the 4 KiB regression and includes the four-size A/B and extended reopen timings.
-
-The [SFS2 TRST 64 KiB session profile](kickstart-sfs2-trst-large-session-2026-11-08.md) compares open, read and close across three repetitions under both CopperHDF payload-cache policies.
-
-The [SFS2 64-byte read profile](kickstart-sfs2-partial-read-2026-11-08.md) compares partial-sector reads under both payload-cache policies and records the four-size Kickstart A/B.
-
-The [cached SFS2 session profile](kickstart-sfs2-cached-session-2026-11-08.md) measures open, read and close in each repetition and compares end-to-end throughput with original SFS.
-
-The [CILica and cached FFS investigation](kickstart-cilica-cached-ffs-2026-11-08.md)
-checks the standalone IL optimizer pipeline, removes recurring dispatch work,
-and records the remaining CF gap and HDD qualification limits.
-
-The [SFS2 extent-tree read profile](kickstart-sfs2-extent-prefix-2026-11-08.md) follows the first extent from mount to the first read and compares all four packet sizes.
-
-The [SFS2 read-loop profile and A/B results](kickstart-sfs2-read-loop-2026-11-07.md) measure reads served from a handle's validated extent.
-
-The [SFS2 mount and first-open comparison](kickstart-sfs2-mount-and-open-2026-11-07.md) traces the metadata reads from device startup through the first DOS open.
-
-The [FFS HDD and cached 4 KiB follow-up](kickstart-ffs-hdd-cached-followup-2026-11-07.md)
-records stream-resumption fixes, bounded metadata prefetch, the cache-hit fast
-path, code-generation fixes and the final original-handler IDE comparisons.
-
-The [first-open checksum and copy measurements](kickstart-sfs2-first-open-metadata-2026-11-07.md) cover direct SFS2 metadata reads into verified cache slots.
-
-The [FFS small-read and cached-copy profile](kickstart-ffs-small-read-profile-2026-11-07.md)
-measures the retained partial-sector path through native IDE and records the
-4 KiB copy alternatives rejected after full-ROM profiling.
-
-The [SFS2 first-open profile and A/B results](kickstart-sfs2-first-open-2026-11-07.md) measure reuse of the root information validated during mount.
-
-The [SFS2 pathname cache measurements](kickstart-sfs2-path-cache-2026-11-07.md) compare first open and reopen against original SmartFilesystem.
-
-The [IDE cache-policy follow-up](kickstart-ide-read-optimization-2026-11-07.md)
-measures cold mounts, single-sector batching and large FFS reads through native
-A1200 scsi.device with both Kickstart ROMs and RAM profiles.
-
-The [SFS2 cache-view profile and A/B results](kickstart-sfs2-cache-views-2026-11-07.md)
-measure the cost of reading metadata directly from the cache during open.
-
-The [SFS2 open profiles and Kickstart A/B results](kickstart-sfs2-repeated-open-2026-11-07.md)
-compare the first open after remount with a second open of the same file.
-
-The [64 KiB Kickstart profile and A/B results](kickstart-64k-phase-profile-2026-11-06.md)
-break out open, read-loop and close costs and compare both CopperHDF cache
-policies with original FastFileSystem and SmartFilesystem at all four read sizes.
+The [FFS HDD gap closure](kickstart-ffs-hdd-gap-closure-2026-11-08.md) records the final FFS IDE comparison against original FastFileSystem.
 
 FFS and the SFS/SFS2 read-only traversal API provide `Read` overloads taking a
 caller-owned `ReadCursor` by reference. Existing overloads remain available and
@@ -126,22 +82,6 @@ guest-probe images, with different mount control values. Original-handler arms
 always receive control zero and retain their own cache policy. Raw trials record
 the applied control word as well as device requests and bytes transferred.
 
-The [CopperHDF payload-policy benchmark](kickstart-payload-cache-policies-2026-11-06.md)
-compares both policies with the original FFS and SFS2 handlers at all four read
-sizes, including request counts and read-loop versus open/read/close throughput.
-
-The [native read-ahead benchmark](sequential-read-readahead-2026-11-05.md)
-compares this policy with both the original reader and the first direct-read
-optimization, including CPU cycles and device-request counts.
-
-The [Kickstart throughput benchmark](kickstart-sequential-read-benchmark-2026-11-05.md)
-measures the same read sizes through real guest DOS and the loaded handlers,
-including read-loop and open/read/close throughput on the virtual CopperHDF backend.
-
-The [original-handler A/B](kickstart-original-handler-ab-2026-11-05.md) compares
-the optimized Copper handlers with unmodified Amiga FastFileSystem and
-SmartFilesystem binaries on those same Kickstart workloads.
-
 The [Kickstart CPU profiling report](kickstart-read-profiling-2026-11-05.md)
 records the subsequent C# optimizations and the
 [rerun original-handler A/B](kickstart-profiled-original-ab-2026-11-05.md).
@@ -152,9 +92,7 @@ packet decoder; inhibited/recovery and packed-integration behavior keeps its
 existing route. Power-of-two 64-bit division is optimized in CopperSharp68k's
 C# runtime for all generated callers.
 
-The [follow-up profiling report](kickstart-read-followup-2026-11-06.md) and
-[fresh original-handler A/B](kickstart-followup-original-ab-2026-11-06.md)
-cover the next optimization pass. FFS metadata misses read the requested block
+In the next optimization pass, FFS metadata misses read the requested block
 without replacing the data read-ahead window, while metadata already in that
 window is reused. Aligned cached reads copy each contiguous span once; the
 single-block path keeps its own small frame. Aliased private buffers retain
@@ -162,32 +100,24 @@ sector-at-a-time copying. Checksums still include every word, using eight-word
 tiles and the trailing-word loop. CopperSharp68k computes power-of-two divisor
 shifts with bounded tests.
 
-The [copy optimization report](kickstart-copy-optimization-2026-11-06.md) and
-[new original-handler A/B](kickstart-copy-original-ab-2026-11-06.md) cover the
-next pass. Retained FFS runs use the stable block-size scalar; full geometry is
+Retained FFS runs use the stable block-size scalar; full geometry is
 constructed for table traversal. The C# RAM copy loop advances its pointers
 after each longword. CopperSharp68k's `CompactGuestMemory` pass folds those
 advances and removes dead copy temporaries, producing ordinary postincrement
 memory-to-memory moves while preserving the C# access order, widths and flags.
 The 32-byte chunks, alignment, tail and overlap handling remain in C#.
 
-The [remaining FFS overhead report](kickstart-ffs-overhead-2026-11-06.md) and
-[current original-handler A/B](kickstart-ffs-original-ab-2026-11-06.md) cover
-the cache-hit and cursor-writeback follow-up. A complete 512-byte-sector cache
+A complete 512-byte-sector cache
 hit copies its contiguous span without entering the refill loop. Metadata-cache
 priority, logical overlays, aliased buffers and the read-ahead threshold retain
 their existing behavior. Other sector sizes use the existing path.
 
-The [FFS copy hotspot follow-up](kickstart-ffs-copy-hotspot-2026-11-06.md) and
-[original-handler comparison](kickstart-ffs-copy-original-ab-2026-11-06.md)
-measure the next change with identical compiler and SDK inputs. Eligible even,
+Eligible even,
 non-overlapping cache spans use a small C# countdown copy loop. It keeps the
 eight longword copies per 32-byte chunk and their access order. Odd addresses,
 refills and aliased buffers keep their existing paths; read-ahead is unchanged.
 
-The [paired original/Copper FFS profiles](kickstart-paired-ffs-profiling-2026-11-06.md)
-and [new original-handler A/B](kickstart-paired-ffs-original-ab-2026-11-06.md)
-trace device transfer destinations as well as CPU cycles. Original FFS reads
+Original FFS reads
 4 KiB payloads directly into the caller; Copper retains its read-ahead cache and
 copies its payload. The native adapter now consumes validated retained run
 scalars directly for aligned 512-byte–4 KiB packets. Other packets and aliases

@@ -22,6 +22,13 @@ public static class AmigaFfsMountIndex
         Sorted = 20, Chain = 24, Capacity = 28, Header = 32, FileBytes = 36,
         FileBlocks = 40, Tables = 44, Stage = 48, StageBytes = 52, Type = 56, RootImage = 60;
     internal const uint Clean = 1, Updating = 2, GroupOpen = 3, GroupFailed = 4, MetadataOpen = 5;
+    // A volume too large for the index keeps a free-count summary instead.
+    // Summarized: Used and NextCandidate describe the published bitmap, and
+    // SummaryMap holds the root's 25 bitmap pointers, the extension count and
+    // the extension keys. SummaryBusy: a mutation owns them until its valid
+    // root write. Forget (any reset, inhibit or I/O failure) discards both.
+    internal const uint Summarized = 6, SummaryBusy = 7;
+    internal const uint SummaryRootPointers = 25;
     internal const int PendingHeader = 64, HeaderImage = 68, PendingBitmap = 72, BitmapImage = 76;
     // The clean mount can reuse the pending-bitmap sector for one verified OFS
     // payload. Begin expires its identity before the first grouped allocation.
@@ -438,6 +445,37 @@ public static class AmigaFfsMountIndex
     internal static uint Map<T>(ref T p, APTR memory, uint index) where T : struct, IAmigaFileSystemPlatform
         => p.ReadUInt32(memory, Directory + (int)index * 4);
 
+    // The volume's bitmap keys do not fit this workspace, so Build leaves it unindexed.
+    internal static bool Declines<T>(ref T p, APTR memory, in AmigaFfsGeometry g) where T : struct, IAmigaFileSystemPlatform
+    {
+        var bytes = p.ReadUInt32(memory, Bytes);
+        var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
+        var extensionSlots = g.BlockBytes / 4 - 1;
+        var extensions = maps <= 25 ? 0 : (maps - 26) / extensionSlots + 1;
+        var keys = maps + extensions + 1;
+        return bytes < Directory || keys > (bytes - Directory) / 8;
+    }
+
+    // Words a forgotten index can lend to maintenance as a sort buffer.
+    internal static uint ScratchWords<T>(ref T p, APTR memory) where T : struct, IAmigaFileSystemPlatform
+    {
+        var bytes = p.ReadUInt32(memory, Bytes);
+        return bytes < Directory ? 0 : (bytes - (uint)Directory) / 4;
+    }
+
+    internal static bool SortedContains<T>(ref T p, APTR start, uint entries, uint key) where T : struct, IAmigaFileSystemPlatform
+        => SortedIntersects(ref p, start, entries, key, 1);
+
+    internal static APTR SummaryMap(APTR memory) => APTR.FromPointer(memory.Raw + (uint)Directory);
+
+    // Extension keys the summary map can hold after the root pointers and count.
+    internal static uint SummaryCapacity<T>(ref T p, APTR memory) where T : struct, IAmigaFileSystemPlatform
+    {
+        var bytes = p.ReadUInt32(memory, Bytes);
+        var fixedBytes = (uint)Directory + (SummaryRootPointers + 1) * 4;
+        return bytes < fixedBytes ? 0 : (bytes - fixedBytes) / 4;
+    }
+
     // The sorted copy supports both exact duplicate detection and intersection
     // tests for arbitrary hints without scanning the pointer chain again.
     internal static bool Intersects<T>(ref T p, APTR memory, uint first, uint count) where T : struct, IAmigaFileSystemPlatform
@@ -498,12 +536,12 @@ public static class AmigaFfsMountIndex
         in AmigaFfsGeometry g, uint type) where T : struct, IAmigaFileSystemPlatform
     {
         Forget(ref p, memory);
+        if (Declines(ref p, memory, in g)) return true;
         var bytes = p.ReadUInt32(memory, Bytes);
         var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
         var extensionSlots = g.BlockBytes / 4 - 1;
         var extensions = maps <= 25 ? 0 : (maps - 26) / extensionSlots + 1;
         var keys = maps + extensions + 1;
-        if (bytes < Directory || keys > (bytes - Directory) / 8) return true;
         p.WriteUInt32(memory, PrefixDirectory, 0);
         p.WriteUInt32(memory, RunHeader, 0);
         var available = bytes - Directory - keys * 8;

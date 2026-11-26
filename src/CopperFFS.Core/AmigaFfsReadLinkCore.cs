@@ -13,8 +13,11 @@ public static class AmigaFfsReadLinkCore
     private static byte Upper(byte c, uint dosType) => c is >= 97 and <= 122 ||
         (dosType >= 0x444F5302 && c is >= 224 and <= 254 && c != 247) ? unchecked((byte)(c - 32)) : c;
 
+    // `stored`: ACTION_READ_LINK (1024) returns a soft link's text as stored,
+    // followed by the rest of the path, as Kickstart 3.1 FFS does. The
+    // MorphOS packet resolves that text to a volume-qualified path instead.
     public static int Read<T>(ref T p, uint directory, APTR path, APTR output, int capacity,
-        uint dosType, APTR metadata, APTR data, out DOS.Error error) where T : struct, IAmigaFileSystemPlatform
+        uint dosType, APTR metadata, APTR data, out DOS.Error error, bool stored = false) where T : struct, IAmigaFileSystemPlatform
     {
         // Mount geometry is immutable during a serialized packet. Reuse this
         // snapshot through the parent and target walks instead of repeatedly
@@ -49,8 +52,11 @@ public static class AmigaFfsReadLinkCore
             var key = p.ReadUInt32(metadata, 24 + (int)AmigaDiskFileSystemCore.NameBucket(ref p, APTR.FromPointer(path.Raw + start),
                 count, dosType, geometry.TableEntries) * 4);
             var matched = false;
+            uint mark = 0, power = 1, run = 0; // Brent's cycle check over the hash chain
             for (uint visited = 0; key != 0 && visited < geometry.BlockCount; visited++)
             {
+                if (key == mark) { error = DOS.Error.DiskNotValidated; return -1; }
+                if (++run == power) { mark = key; power <<= 1; run = 0; }
                 if (!Header(ref p, in geometry, key, metadata) || p.ReadUInt32(metadata, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return -1; }
                 matched = p.ReadUInt8(metadata, geometry.Tail + 432) == count;
@@ -61,8 +67,14 @@ public static class AmigaFfsReadLinkCore
             }
             if (!matched) { error = key == 0 ? DOS.Error.ObjectNotFound : DOS.Error.DiskNotValidated; return -1; }
             var type = unchecked((int)p.ReadUInt32(metadata, geometry.Tail + 508));
-            if (type is 3 or 4 or -4)
-                return Target(ref p, in geometry, key, directory, path, offset, length - offset, output, capacity, metadata, data, out error);
+            // The handler itself follows hard links; only a soft link reaches dos.library.
+            if (stored && type is 4 or -4)
+            {
+                key = p.ReadUInt32(metadata, geometry.Tail + 468);
+                type = type == 4 ? 2 : -3;
+            }
+            if (type is 3 || (!stored && type is 4 or -4))
+                return Target(ref p, in geometry, key, directory, path, offset, length - offset, output, capacity, metadata, data, out error, stored);
             directory = key;
             if (offset < length) offset++;
         }
@@ -106,11 +118,12 @@ public static class AmigaFfsReadLinkCore
     }
 
     private static int Target<T>(ref T p, in AmigaFfsGeometry geometry, uint key, uint parent, APTR suffix, uint suffixOffset, uint suffixLength,
-        APTR output, int capacity, APTR metadata, APTR data, out DOS.Error error) where T : struct, IAmigaFileSystemPlatform
+        APTR output, int capacity, APTR metadata, APTR data, out DOS.Error error, bool stored = false) where T : struct, IAmigaFileSystemPlatform
     {
         error = DOS.Error.None;
         if (!Header(ref p, in geometry, key, data)) { error = DOS.Error.DiskNotValidated; return -1; }
         var soft = p.ReadUInt32(data, geometry.Tail + 508) == 3;
+        if (stored && !soft) { error = DOS.Error.ObjectWrongType; return -1; }
         uint prefix = 0, targetLength = 0;
         var relative = true;
         var volumeRelative = soft && p.ReadUInt8(data, 24) == ':';
@@ -123,6 +136,7 @@ public static class AmigaFfsReadLinkCore
                 targetLength++;
             }
             if (24 + targetLength == end) { error = DOS.Error.DiskNotValidated; return -1; }
+            if (stored) relative = volumeRelative = false;
             if (relative || volumeRelative)
             {
                 if (!relative) parent = geometry.RootBlock;

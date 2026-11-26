@@ -4,9 +4,9 @@ Original SFS avoids allocation and extent edits when overwriting existing data; 
 
 Earlier work concentrated too heavily on our generated code after establishing that original SFS overwrites in place. That left useful differences in its cache and commit paths insufficiently investigated. This study compares the published SFS-derived C implementation with disassembly, actual calls and sector writes from the exact SFS 1.279 binary used in our benchmarks.
 
-The initial [comparison receipt](../artifacts/native-trst-original-study/comparison.json) contains input hashes, call counts, timings, source verification and sector evidence. That investigation used the [qualified preflight build](native-trst-preflight.md), SHA-256 `698DBD56AF82F99B0F99B2E108D4056515179290215E0248664B238CB62944DF`. The study itself changed no production code; later integrations are identified separately.
+The initial [comparison receipt](../artifacts/native-trst-original-study/comparison.json) contains input hashes, call counts, timings, source verification and sector evidence. That investigation used the qualified preflight build, SHA-256 `698DBD56AF82F99B0F99B2E108D4056515179290215E0248664B238CB62944DF`. The study itself changed no production code; later integrations are identified separately.
 
-Subsequent implementation: the [inline TRST writer](native-trst-inline.md) adopts the confirmed single-sector shortcut and has passed crash recovery and original-handler compatibility qualification. Its report includes the benchmark gains and latency tradeoffs.
+Subsequent implementation: the inline TRST writer adopts the confirmed single-sector shortcut and has passed crash recovery and original-handler compatibility qualification.
 
 ## Current overwrite comparison
 
@@ -514,7 +514,7 @@ The older published [extension path](https://github.com/aros-development-team/AR
 
 ## Deferred metadata checkpoint
 
-The [deferred metadata implementation](native-trst-deferred.md) introduced a bounded accepted run and materializes its extent/bitmap edits before reads, mutations or commit. It preserves whole-Write atomicity, pending-read visibility, failed-Write rollback and the 192 KiB staging cap. Its qualified 160,204-byte native HUNK has SHA-256 `DAE8EBD105D7C00935E4CB140F7645D58F932DEA0A498CBCDFD4503BA3FB8741`; the live build at that checkpoint reproduced it exactly.
+The deferred metadata implementation introduced a bounded accepted run and materializes its extent/bitmap edits before reads, mutations or commit. It preserves whole-Write atomicity, pending-read visibility, failed-Write rollback and the 192 KiB staging cap. Its qualified 160,204-byte native HUNK has SHA-256 `DAE8EBD105D7C00935E4CB140F7645D58F932DEA0A498CBCDFD4503BA3FB8741`; the live build at that checkpoint reproduced it exactly.
 
 The five-trial benchmark improves overwrite throughput by **13.79%**, reaching **59.73% of original SFS**. Append throughput regresses by 1.82–2.41% from the preceding build but still reaches 103.90–126.71% of original. Worst-Write and checkpoint latency increase. These tradeoffs, renewed crash tests and original-handler compatibility results are documented in the implementation report; the overall parity goal is still unmet.
 
@@ -522,7 +522,7 @@ A [new packet analysis](../artifacts/native-trst-deferred/original-comparison-v4
 
 ## Pending-entry comparison before deferred metadata
 
-Two diagnostics compare the exact SFS 1.279 binary with the then-qualified [pending-entry handler](native-trst-pending.md), SHA-256 `B6184E8D7A4CC56AC512BF0652803F937AA8FB682FAF49331C8D2BBE8FD5ACB4`. Both write the same 1 MiB through 128 8 KiB overwrite packets on the same emulated 68020 and fixture. Both pass independent deep image checking and exact-byte extraction. The [receipt](../artifacts/native-trst-original-current/comparison.json) verifies both binary and map hashes, all 52 reference-source hashes, packet classifications and test results. Its [analysis script](../artifacts/native-trst-original-current/analyze.py) reproduces the partition below.
+Two diagnostics compare the exact SFS 1.279 binary with the then-qualified pending-entry handler, SHA-256 `B6184E8D7A4CC56AC512BF0652803F937AA8FB682FAF49331C8D2BBE8FD5ACB4`. Both write the same 1 MiB through 128 8 KiB overwrite packets on the same emulated 68020 and fixture. Both pass independent deep image checking and exact-byte extraction. The [receipt](../artifacts/native-trst-original-current/comparison.json) verifies both binary and map hashes, all 52 reference-source hashes, packet classifications and test results. Its [analysis script](../artifacts/native-trst-original-current/analyze.py) reproduces the partition below.
 
 The original again executes 128 extent lookups, zero file-extension/allocation calls and one metadata compression over the complete interval. It retains file size, protection and extent state between requests. The older published source shows explicit updates or invalidation when protection, file size or extent placement changes. This is the useful design lesson: retain state whose lifetime is defined, rather than repeatedly retrieving unchanged metadata. The original's in-place payload writes do not provide our required whole-Write atomicity.
 

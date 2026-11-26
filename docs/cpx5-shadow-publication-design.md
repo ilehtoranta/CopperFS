@@ -3,8 +3,7 @@
 This is a proposed incompatible format, not a CPX4 journal-policy change. The
 publication kernel uses magic `CPX5` and page version 5. The experimental branch
 now mounts and mutates independently formatted CPX5 fixtures. Its first passing
-filesystem benchmark is slower than CPX4 and both references; see the
-[experiment report](coppernova-architecture-2026-11-16.md). Existing
+filesystem benchmark is slower than CPX4 and both references. Existing
 CPX4 media, namespaces, handler identities and published packages are unchanged.
 
 ## Publication invariant
