@@ -61,7 +61,7 @@ public sealed partial class VolumeGeometryTests
         foreach (var key in owned)
         {
             var bit = key - g.ReservedBlocks;
-            var map = Block(g.RootBlock + 1 + bit / g.BitmapBits);
+            var map = Block(PersistedBitmapPage(storage, g, bit / g.BitmapBits));
             Assert.Equal(0u, Word(map, 4 + (int)(bit % g.BitmapBits / 32) * 4) & 1u << (int)(bit % 32));
         }
         Assert.Equal(uint.MaxValue, Word(Block(g.RootBlock), g.Tail + 312)); return owned;

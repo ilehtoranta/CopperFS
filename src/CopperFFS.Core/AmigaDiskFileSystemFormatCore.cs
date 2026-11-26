@@ -18,15 +18,18 @@ public static class AmigaDiskFileSystemFormatCore
         var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
         var entries = g.BlockBytes / 4 - 1;
         var extensions = maps <= 25 ? 0 : (maps - 26) / entries + 1;
-        var first = g.RootBlock + 1;
-        var cache = dosType >= 0x444F5304 ? first + maps + extensions : 0;
-        var end = first + maps + extensions + (cache != 0 ? 1u : 0u);
+        // Kickstart 3.1 Format's layout (measured by the Format reference
+        // test): a DOS4/5 directory cache directly after the root, then the
+        // bitmap pages, then their extension blocks.
+        var cache = dosType >= 0x444F5304 ? g.RootBlock + 1 : 0;
+        var first = g.RootBlock + 1 + (cache != 0 ? 1u : 0u);
+        var end = first + maps + extensions;
         error = DOS.Error.DiskNotValidated;
+        // Withdraw the old boot block first, so an interrupted format never
+        // pairs the old volume with new allocation pages. Like Kickstart,
+        // leave the other reserved blocks and the last block untouched.
         p.Clear(scratch, g.BlockBytes);
-        if (!p.WriteFormatBlock(0, scratch) || !p.WriteFormatBlock(g.BlockCount - 1, scratch) || !p.Flush()) return false;
-        // Clear the remaining reserved area; no boot program is installed by Format().
-        for (var block = 1u; block < g.ReservedBlocks; block++)
-            if (!p.WriteFormatBlock(block, scratch)) return false;
+        if (!p.WriteFormatBlock(0, scratch) || !p.Flush()) return false;
         for (var map = 0u; map < maps; map++)
         {
             p.Clear(scratch, g.BlockBytes);
@@ -59,7 +62,9 @@ public static class AmigaDiskFileSystemFormatCore
             if (!p.WriteFormatBlock(cache, scratch)) return false;
         }
         p.Clear(scratch, g.BlockBytes); p.WriteUInt32(scratch, 0, 2); p.WriteUInt32(scratch, 12, g.TableEntries);
-        if (cache != 0) p.WriteUInt32(scratch, g.Tail + 504, cache);
+        // Kickstart stores the block after the root here on every variant;
+        // only DOS4/5 use it (as the directory cache).
+        p.WriteUInt32(scratch, g.Tail + 504, g.RootBlock + 1);
         p.WriteUInt32(scratch, g.Tail + 312, uint.MaxValue);
         for (var i = 0u; i < maps && i < 25; i++) p.WriteUInt32(scratch, g.Tail + 316 + (int)i * 4, first + i);
         if (extensions != 0) p.WriteUInt32(scratch, g.Tail + 416, first + maps);
@@ -72,7 +77,8 @@ public static class AmigaDiskFileSystemFormatCore
         }
         p.WriteUInt32(scratch, (int)g.BlockBytes - 4, 1); Seal(ref p, scratch, 20);
         if (!p.WriteFormatBlock(g.RootBlock, scratch) || !p.Flush()) return false;
-        p.Clear(scratch, g.BlockBytes); p.WriteUInt32(scratch, 0, dosType); p.WriteUInt32(scratch, 8, g.RootBlock);
+        // Kickstart's Format writes only the DOS type into the boot block.
+        p.Clear(scratch, g.BlockBytes); p.WriteUInt32(scratch, 0, dosType);
         if (!p.WriteFormatBlock(0, scratch) || !p.Flush()) return false;
         error = DOS.Error.None; return true;
     }

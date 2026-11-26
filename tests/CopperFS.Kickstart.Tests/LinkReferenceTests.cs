@@ -18,6 +18,16 @@ public sealed class LinkReferenceFactAttribute : FactAttribute
     }
 }
 
+public sealed class LinkReferenceTheoryAttribute : TheoryAttribute
+{
+    public LinkReferenceTheoryAttribute()
+    {
+        if (!File.Exists(Environment.GetEnvironmentVariable("COPPERSHARP_KICKSTART31_ROM")) ||
+            !File.Exists(Environment.GetEnvironmentVariable("COPPERFS_FFS_HANDLER")))
+            Skip = "Supply a licensed Kickstart 3.1 ROM and COPPERFS_FFS_HANDLER (a freshly built CopperFFS).";
+    }
+}
+
 public sealed partial class OriginalHandlerCorrectnessTests
 {
     private static readonly string[] LinkPhases = ["Inspect", "DeleteOriginal", "DeleteLink", "DirLink"];
