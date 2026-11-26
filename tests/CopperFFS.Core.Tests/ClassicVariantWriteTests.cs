@@ -326,6 +326,28 @@ public sealed partial class VolumeGeometryTests
         if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 2);
     }
 
+    // ACTION_RENAME_DISK and ACTION_SET_OWNER (both compared with Kickstart's
+    // filesystem by the misc-packet reference test) on OFS and DOS\5.
+    [Theory]
+    [InlineData(0)] [InlineData(5)]
+    public void RelabelAndSetOwnerPersist(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        var file = VariantCreate(ref p, storage, g.RootBlock, "Owned");
+        Encoding.Latin1.GetBytes("NewLabel").CopyTo(storage.Ram, (int)Name.Raw); var w = Work();
+        Assert.True(AmigaFfsWriteCore.Relabel(ref p, ref w, Name, 8), w.Error.ToString());
+        Assert.True(AmigaDiskFileSystemCore.Header(ref p, g.RootBlock, Meta));
+        Assert.Equal("NewLabel", Encoding.Latin1.GetString(storage.Ram, (int)Meta.Raw + g.Tail + 433, storage.Ram[Meta.Raw + g.Tail + 432]));
+        Assert.Equal(uint.MaxValue, p.ReadUInt32(Meta, g.Tail + 312));
+        Encoding.Latin1.GetBytes("Bad:Name").CopyTo(storage.Ram, (int)Name.Raw); w = Work();
+        Assert.False(AmigaFfsWriteCore.Relabel(ref p, ref w, Name, 8)); Assert.Equal(DOS.Error.InvalidComponentName, w.Error);
+        file.Position = 0x00050007; w = Work();
+        Assert.True(AmigaFfsWriteCore.SetMetadata(ref p, ref w, ref file, DosPacketAction.SetOwner), w.Error.ToString());
+        Assert.True(AmigaDiskFileSystemCore.Header(ref p, file.Header, Meta)); Assert.Equal(0x00050007u, p.ReadUInt32(Meta, g.Tail + 316));
+        if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 1);
+    }
+
     // Mark every free block but `keep` as allocated in the volume's bitmap pages.
     private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
     {

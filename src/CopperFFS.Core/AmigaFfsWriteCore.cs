@@ -1565,11 +1565,40 @@ public static partial class AmigaFfsWriteCore
         p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingParent, key);
         return image;
     }
+    // ACTION_RENAME_DISK: the root's 32-byte name field. Like the other root
+    // changes, it is published with the valid root at Finish.
+    public static bool Relabel<T>(ref T p, ref Work w, APTR name, uint length) where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var geometry = AmigaFfsGeometry.Read(ref p);
+        if (length == 0 || length > 30 || !p.IsMapped(name, length)) return Fail(ref w, DOS.Error.InvalidComponentName);
+        for (var i = 0u; i < length; i++)
+            if (p.ReadUInt8(name, (int)i) is (byte)':' or (byte)'/') return Fail(ref w, DOS.Error.InvalidComponentName);
+        if (!Prepare(ref p, ref w, in geometry, 0) || !Begin(ref p, ref w, in geometry)) return false;
+        var image = MountIndexEnabled && w.RootImage.IsNotNull ? w.RootImage : APTR.Null;
+        if (image.IsNull)
+        {
+            if (!Header(ref p, ref w, geometry.RootBlock)) return false;
+            image = w.Meta;
+        }
+        var field = APTR.FromPointer(image.Raw + (uint)(geometry.Tail + 432));
+        var checksum = p.ReadUInt32(image, 20);
+        for (var at = 0; at < 32; at += 4) checksum = unchecked(checksum + p.ReadUInt32(field, at));
+        p.Clear(field, 32);
+        p.WriteUInt8(field, 0, (byte)length);
+        for (var i = 0u; i < length; i++) p.WriteUInt8(field, 1 + (int)i, p.ReadUInt8(name, (int)i));
+        for (var at = 0; at < 32; at += 4) checksum = unchecked(checksum - p.ReadUInt32(field, at));
+        p.WriteUInt32(image, 20, checksum);
+        if (image == w.Meta) { if (!Put(ref p, ref w, geometry.RootBlock, image, SealedHeader)) return false; }
+        else w.RootLinkChanged = true;
+        return Finish(ref p, ref w, in geometry);
+    }
+
     public static bool SetMetadata<T>(ref T p, ref Work w, ref Request r,
         DosPacketAction action) where T : struct, IAmigaWritableFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
-        if (action != DosPacketAction.SetProtection && action != DosPacketAction.SetComment && action != DosPacketAction.SetDate)
+        if (action != DosPacketAction.SetProtection && action != DosPacketAction.SetComment && action != DosPacketAction.SetDate &&
+            action != DosPacketAction.SetOwner)
             return Fail(ref w, DOS.Error.ActionNotKnown);
         // The volume root has a different layout: these file-header fields
         // hold bitmap pointers there, rather than protection/comment data.
@@ -1632,10 +1661,12 @@ public static partial class AmigaFfsWriteCore
         // Keep the verified image available to later namespace lookups until
         // the group publishes. Only the attribute words and their sum change.
         var checksum = p.ReadUInt32(image, 20);
-        if (action == DosPacketAction.SetProtection)
+        if (action is DosPacketAction.SetProtection or DosPacketAction.SetOwner)
         {
-            checksum = unchecked(checksum + p.ReadUInt32(image, tail + 320) - r.Position);
-            p.WriteUInt32(image, tail + 320, r.Position);
+            // Protection bits, or the owner longword (UID << 16 | GID).
+            var at = tail + (action == DosPacketAction.SetOwner ? 316 : 320);
+            checksum = unchecked(checksum + p.ReadUInt32(image, at) - r.Position);
+            p.WriteUInt32(image, at, r.Position);
         }
         else if (action == DosPacketAction.SetDate)
             for (var offset = 0; offset < 12; offset += 4)
