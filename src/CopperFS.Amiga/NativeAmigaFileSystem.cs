@@ -1843,7 +1843,7 @@ public static partial class NativeAmigaFileSystem
         }
         else success = NativeSfsExtension.Remove(state, ref w, found);
         if (!success) error = w.Error;
-        else NativeFileSystemNotifications.Changed(state, found, oldParent);
+        else NativeFileSystemNotifications.Changed(state, found, oldParent, removed: true);
         return success ? -1 : 0;
     }
     private static int Mutate(APTR state, APTR packet, DosPacketAction action, out DOS.Error error)
@@ -1886,7 +1886,7 @@ public static partial class NativeAmigaFileSystem
         RecordMetadataGroup(state, ref w);
 #endif
         if (!success) error = w.Error;
-        else NativeFileSystemNotifications.Changed(state, r.Header, oldParent);
+        else NativeFileSystemNotifications.Changed(state, r.Header, oldParent, removed: true);
         return success ? -1 : 0;
     }
 
