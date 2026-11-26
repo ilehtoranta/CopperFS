@@ -274,25 +274,31 @@ public sealed partial class AmigaSmartFileSystemTests
         var gate = new object(); using var entered = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
         using var writerAReady = new ManualResetEventSlim(); using var writerBReady = new ManualResetEventSlim();
         using var readerReady = new ManualResetEventSlim(); using var secondReady = new ManualResetEventSlim();
+        // The discard is held until the test explicitly releases it: no timeout may end the hold, otherwise a
+        // slow scheduler would let queued work through and change the observed outcome. Each participant runs
+        // on its own dedicated thread so thread-pool starvation from parallel tests cannot delay them either.
+        // The long timeouts below only turn a genuine deadlock into a failure instead of a hung CI job.
+        var hang = TimeSpan.FromMinutes(5);
         var once = 0;
-        disk.BeforeDiscard = () => { if (Interlocked.Exchange(ref once, 1) == 0) { entered.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(20))); } };
-        var trim = Task.Run(() => { lock (gate) Assert.True(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _)); });
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(20)));
-        var a = Task.Run(() => { writerAReady.Set(); lock (gate) TrimMutation(ref disk, ref work, 0); });
-        var b = Task.Run(() => { writerBReady.Set(); lock (gate) BufferedOverwrite(ref disk, ref work, 0xA7); });
-        var reader = Task.Run(() => { readerReady.Set(); lock (gate) Assert.Equal("hello", System.Text.Encoding.ASCII.GetString(ReadBufferedFile(ref disk, 4, 5))); });
-        var second = Task.Run(() => { secondReady.Set(); lock (gate) Assert.True(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _)); });
+        disk.BeforeDiscard = () => { if (Interlocked.Exchange(ref once, 1) == 0) { entered.Set(); release.Wait(); } };
+        var trim = Dedicated(() => { lock (gate) Assert.True(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _)); });
+        Task a, b, reader, second;
         try
         {
-            Assert.True(writerAReady.Wait(TimeSpan.FromSeconds(20))); Assert.True(writerBReady.Wait(TimeSpan.FromSeconds(20)));
-            Assert.True(readerReady.Wait(TimeSpan.FromSeconds(20))); Assert.True(secondReady.Wait(TimeSpan.FromSeconds(20)));
+            Assert.True(entered.Wait(hang));
+            a = Dedicated(() => { writerAReady.Set(); lock (gate) TrimMutation(ref disk, ref work, 0); });
+            b = Dedicated(() => { writerBReady.Set(); lock (gate) BufferedOverwrite(ref disk, ref work, 0xA7); });
+            reader = Dedicated(() => { readerReady.Set(); lock (gate) Assert.Equal("hello", System.Text.Encoding.ASCII.GetString(ReadBufferedFile(ref disk, 4, 5))); });
+            second = Dedicated(() => { secondReady.Set(); lock (gate) Assert.True(AmigaSmartFileSystemWriteCore.Trim(ref disk, ref work, APTR.Null, 0, out _)); });
+            Assert.True(writerAReady.Wait(hang)); Assert.True(writerBReady.Wait(hang));
+            Assert.True(readerReady.Wait(hang)); Assert.True(secondReady.Wait(hang));
             var enteredGate = Monitor.TryEnter(gate);
             if (enteredGate) Monitor.Exit(gate);
             Assert.False(enteredGate);
             Assert.False(a.IsCompleted); Assert.False(b.IsCompleted); Assert.False(reader.IsCompleted); Assert.False(second.IsCompleted);
         }
         finally { release.Set(); }
-        await Task.WhenAll(trim, a, b, reader, second).WaitAsync(TimeSpan.FromSeconds(30));
+        await Task.WhenAll(trim, a, b, reader, second).WaitAsync(hang);
         Assert.True(AmigaSmartFileSystemWriteCore.Flush(ref disk, ref work));
         var recovered = new Disk(disk.Snapshot());
         Assert.All(ReadBufferedFile(ref recovered), value => Assert.Equal(0xA7, value));
@@ -331,6 +337,10 @@ public sealed partial class AmigaSmartFileSystemTests
                 yield return new[] { value }.Concat(suffix).ToArray();
         }
     }
+
+    // LongRunning gives the action its own thread instead of a thread-pool slot.
+    private static Task Dedicated(Action action) =>
+        Task.Factory.StartNew(action, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     private static AmigaSmartFileSystemWriteCore.Work TrimWork(ref Disk disk, bool buffered, uint capacity)
     {
