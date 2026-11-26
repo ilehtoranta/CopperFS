@@ -278,6 +278,24 @@ public sealed partial class VolumeGeometryTests
         if (dos >= 4) InspectDirectoryCache(storage, g, drawer.Header, 0);
     }
 
+    // fib_NumBlocks follows Kickstart 3.1's size / 512 + 1 on OFS and FFS, and
+    // the owner longword fills fib_OwnerUID/GID (CopperFS.Kickstart.Tests'
+    // FIB reference test measured both against Kickstart's filesystem).
+    [Theory]
+    [InlineData(0, 0u, 1u)] [InlineData(0, 512u, 2u)] [InlineData(1, 489u, 1u)] [InlineData(1, 36000u, 71u)]
+    public void ExamineReportsKickstartBlockCountsAndOwner(int dos, uint size, uint blocks)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        VariantFormat(ref p, storage, 0x444F5300u + (uint)dos);
+        var file = VariantCreate(ref p, storage, g.RootBlock, "Sized");
+        if (size != 0) OfsWrite(ref p, storage, ref file, 0, new byte[size]);
+        Assert.True(p.ReadBlock(file.Header, Meta)); p.WriteUInt32(Meta, 316, 0x1234ABCD); Reseal(ref p, file.Header);
+        var fib = APTR.FromPointer(0x50000);
+        Assert.True(AmigaDiskFileSystemCore.Examine(ref p, file.Header, fib, Meta));
+        Assert.Equal(blocks, p.ReadUInt32(fib, 128));
+        Assert.Equal((ushort)0x1234, p.ReadUInt16(fib, 224)); Assert.Equal((ushort)0xABCD, p.ReadUInt16(fib, 226));
+    }
+
     // Mark every free block but `keep` as allocated in the volume's bitmap pages.
     private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
     {

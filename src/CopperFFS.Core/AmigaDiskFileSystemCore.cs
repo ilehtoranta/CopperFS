@@ -728,10 +728,19 @@ public static class AmigaDiskFileSystemCore
         p.WriteUInt8(fib, 8, nameLength);
         for (var i = 0; i < nameLength; i++) p.WriteUInt8(fib, 9 + i, p.ReadUInt8(buffer, geometry.Tail + 433 + i));
         p.WriteUInt32(fib, 116, key == geometry.RootBlock ? 0 : p.ReadUInt32(buffer, geometry.Tail + 320));
-        var size = unchecked((int)type) < 0 ? p.ReadUInt32(buffer, geometry.Tail + 324) : 0;
+        var file = unchecked((int)type) < 0;
+        var size = file ? p.ReadUInt32(buffer, geometry.Tail + 324) : 0;
         p.WriteUInt32(fib, 124, size);
-        var blocks = AmigaGeometryMath.DivRem(size, blockBytes, out var remainder);
-        p.WriteUInt32(fib, 128, blocks + (remainder == 0 ? 0u : 1u));
+        // Kickstart 3.1 FFS reports size / block size + 1 for OFS and FFS files
+        // alike (0 bytes -> 1, 512 -> 2), not the blocks actually used.
+        p.WriteUInt32(fib, 128, file ? AmigaGeometryMath.Divide(size, blockBytes) + 1 : 0);
+        // fib_OwnerUID and fib_OwnerGID from the header's owner longword.
+        if (key != geometry.RootBlock)
+        {
+            var owner = p.ReadUInt32(buffer, geometry.Tail + 316);
+            p.WriteUInt16(fib, 224, (ushort)(owner >> 16));
+            p.WriteUInt16(fib, 226, (ushort)owner);
+        }
         for (var i = 0; i < 12; i += 4) p.WriteUInt32(fib, 132 + i, p.ReadUInt32(buffer, geometry.Tail + 420 + i));
         if (key != geometry.RootBlock)
         {
