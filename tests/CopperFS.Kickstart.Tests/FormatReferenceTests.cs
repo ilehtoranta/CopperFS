@@ -34,9 +34,18 @@ public sealed partial class OriginalHandlerCorrectnessTests
         "Format"u8.ToArray().CopyTo(image.Ram, (int)FormatImage.Name);
         Assert.True(AmigaDiskFileSystemFormatCore.Format(ref image, type, APTR.FromPointer(FormatImage.Name), 6, 1, 2, 3,
             APTR.FromPointer(FormatImage.Scratch), out var error), error.ToString());
-        // Expected differences: the root's dates (tail 420, 472, 484) and
-        // checksum, and the last bitmap page past the volume's end, where
-        // Kickstart rounds the final word up and leaves buffer contents.
+        var differences = FormatDifferences(initial, rom, copper, g, variant);
+        foreach (var line in differences) output.WriteLine(line);
+        Assert.True(differences.Count == 0, "Differs from Kickstart Format:\n" + string.Join("\n", differences.Take(400)));
+        Directory.Delete(root, true);
+    }
+
+    // Blocks both formats changed must agree, except the root's dates and
+    // checksum and the last bitmap page past the volume's end, where
+    // Kickstart rounds the final word up and leaves buffer contents.
+    private List<string> FormatDifferences(byte[] initial, byte[] rom, byte[] copper, AmigaVolumeGeometry g, uint variant)
+    {
+        var blocks = (int)g.BlockCount;
         var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
         var lastMap = (int)(g.RootBlock + (variant >= 4 ? 2 : 1) + maps - 1);
         var validBits = (int)(g.BlockCount - g.ReservedBlocks - (maps - 1) * g.BitmapBits);
@@ -70,9 +79,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 }
             if (differences.Count > 400) break;
         }
-        foreach (var line in differences) output.WriteLine(line);
-        Assert.True(differences.Count == 0, "Differs from Kickstart Format:\n" + string.Join("\n", differences.Take(400)));
-        Directory.Delete(root, true);
+        return differences;
     }
 
     // A minimal host platform over a disk image and a small private RAM.

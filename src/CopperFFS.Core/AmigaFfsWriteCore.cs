@@ -24,6 +24,10 @@ public static partial class AmigaFfsWriteCore
         internal bool CacheFresh;
         // An unindexed mount's summary supplies the free count and bitmap map.
         internal bool Summary;
+        // SetSize growth: allocate and link data blocks without writing
+        // payload. FFS data blocks keep their previous contents (as Kickstart
+        // 3.1's SetFileSize does); OFS blocks get headers and zero payload.
+        internal bool SkipData;
         internal uint UnlinkedOwner;
         internal uint FreedFirst, FreedCount;
         // Optional initialized storage shared by work records of one serial mount.
@@ -1858,7 +1862,7 @@ public static partial class AmigaFfsWriteCore
         actual = 0;
         var blockBytes = geometry.BlockBytes; var tableEntries = geometry.TableEntries;
         if (blockBytes == 0 || tableEntries == 0) return Fail(ref w, DOS.Error.DiskNotValidated);
-        if (r.Length > int.MaxValue || !p.IsMapped(r.Buffer, r.Length)) return Fail(ref w, DOS.Error.BadNumber);
+        if (r.Length > int.MaxValue || (!w.SkipData && !p.IsMapped(r.Buffer, r.Length))) return Fail(ref w, DOS.Error.BadNumber);
         if (MountIndexEnabled && HasFileWriteGroup(ref p, w.Index))
         {
             var sizeInGroup = p.ReadUInt32(w.Index, AmigaFfsMountIndex.FileBytes);
@@ -2128,17 +2132,21 @@ public static partial class AmigaFfsWriteCore
                     }
                 }
                 // A full-block overwrite replaces every byte: no read needed.
-                if ((withinRemainder != 0 || r.Length - actual < blockBytes) && !p.ReadBlock(key, w.Data))
+                if (!w.SkipData && (withinRemainder != 0 || r.Length - actual < blockBytes) && !p.ReadBlock(key, w.Data))
                     return Fail(ref w, DOS.Error.DiskNotValidated);
             }
             var within = withinRemainder;
             var count = blockBytes - within;
             if (count > r.Length - actual) count = r.Length - actual;
-            // Keep geometry and request fields out of the per-byte live set.
-            var source = APTR.FromPointer(r.Buffer.Raw + actual);
-            var destination = APTR.FromPointer(w.Data.Raw + within);
-            p.Copy(source, destination, count);
-            if (!Put(ref p, ref w, key, w.Data, -1)) return false;
+            // SetSize growth links FFS data blocks without writing them.
+            if (!w.SkipData)
+            {
+                // Keep geometry and request fields out of the per-byte live set.
+                var source = APTR.FromPointer(r.Buffer.Raw + actual);
+                var destination = APTR.FromPointer(w.Data.Raw + within);
+                p.Copy(source, destination, count);
+                if (!Put(ref p, ref w, key, w.Data, -1)) return false;
+            }
             if (index >= oldBlocks)
             {
                 p.WriteUInt32(w.Meta, at, key); p.WriteUInt32(w.Meta, 8, slot + 1);

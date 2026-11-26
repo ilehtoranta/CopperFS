@@ -5,12 +5,12 @@ namespace CopperFS.Kickstart.Tests;
 
 public sealed partial class OriginalHandlerCorrectnessTests
 {
-    // CopperFFS does not implement ACTION_SET_FILE_SIZE or ACTION_FORMAT yet.
-    // It must say so (209) rather than claim write protection (214). The
-    // Kickstart 3.1 filesystem's replies are recorded for reference only:
-    // it implements both packets.
+    // Direct ACTION_SET_FILE_SIZE and ACTION_FORMAT packets get real replies,
+    // never a claim of write protection (214). SetFileSize must match the
+    // Kickstart 3.1 filesystem; only CopperFFS is asked to format here (the
+    // Format packet reference test compares that with Kickstart).
     [LinkReferenceFact]
-    public async System.Threading.Tasks.Task UnimplementedPacketsReportActionNotKnown()
+    public async System.Threading.Tasks.Task PacketRepliesForSetFileSizeFormatAndNullFib()
     {
         var handler = Environment.GetEnvironmentVariable("COPPERFS_FFS_HANDLER")!;
         var root = (Environment.GetEnvironmentVariable("COPPERFS_LINK_ARTIFACTS") is { Length: > 0 } configured
@@ -26,8 +26,9 @@ public sealed partial class OriginalHandlerCorrectnessTests
             results[arm] = ProbeData(root, label);
             output.WriteLine(arm + ": " + string.Join(",", results[arm].Take(6)));
         }
-        // SetFileSize: Res1 -1, Res2 209. Format while inhibited: Res1 0, Res2 209. A NULL FIB: 115 (bad number).
-        Assert.Equal(new uint[] { uint.MaxValue, 209, 0, 209, 0, 115 }, results["Copper"].Take(6));
+        // SetFileSize to 100: the new size. Format while inhibited: success. A NULL FIB: 115 (bad number).
+        Assert.Equal(results["Rom"].Take(2), results["Copper"].Take(2));
+        Assert.Equal(new uint[] { 100, 0, uint.MaxValue, 0, 0, 115 }, results["Copper"].Take(6));
         Directory.Delete(root, true);
     }
 }

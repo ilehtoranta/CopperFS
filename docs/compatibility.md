@@ -48,7 +48,7 @@ DOS\7 (long file names) are refused. Its reference is the FastFileSystem in
 Kickstart 3.1's ROM: the `CopperFS.Kickstart.Tests` reference tests run the same
 DOS workloads on both and compare results (links, ExNext and ExAll, locks,
 dates, inhibit, error codes, FIB fields, directory caches, notifications,
-Format layout). No original FFS 40.1 handler binary was available for these
+SetFileSize, Format layout and the Format packet). No original FFS 40.1 handler binary was available for these
 comparisons.
 
 ### Behaviour that matches Kickstart 3.1
@@ -61,15 +61,26 @@ comparisons.
   object and directory dates, and `fib_NumBlocks` follow the ROM.
 - DOS\4/5 directory caches are updated record by record. Their record order
   differs from Kickstart's, but Kickstart lists and edits them correctly.
-- The FFS format core (used by CopperStart and host tools) writes the same
-  blocks as Kickstart's Format, apart from the root's dates and checksum and
-  the last bitmap page's padding past the end of the volume.
+- `ACTION_FORMAT` (the standalone handler, and the format core used by
+  CopperStart and host tools) writes the same blocks as Kickstart's Format,
+  apart from the root's dates and checksum and the last bitmap page's padding
+  past the end of the volume. Like the ROM it needs the volume inhibited
+  (202 otherwise), proceeds even while locks are held, and publishes the new
+  volume name.
+- `ACTION_SET_FILE_SIZE` returns the new size or -1 with the ROM's error
+  codes, and clamps the caller's position. The FFS format has no holes, so
+  growth allocates every block. On FFS it writes only pointer tables, the
+  header and the bitmap; the grown region, like a truncated block's tail,
+  reads back whatever the blocks held before, as with the ROM. OFS data
+  blocks carry headers, so OFS growth writes them with a zeroed payload
+  (the ROM leaves their old payload).
+- `ACTION_INFO` counts neither total nor used blocks in the reserved area,
+  and Examine reports the root as `ST_USERDIR` (2).
 
 ### Known differences
 
-- `ACTION_FORMAT`, `ACTION_SET_FILE_SIZE`, `ACTION_DIE` and `ACTION_SERIALIZE_DISK`
-  return error 209 (action not known) in the standalone handler; Kickstart
-  implements the first two. `ACTION_GET_DISK_FSSM` returns 209 like the ROM.
+- `ACTION_DIE` and `ACTION_SERIALIZE_DISK` return error 209 (action not
+  known). `ACTION_GET_DISK_FSSM` returns 209 like the ROM.
 - Device I/O failures report 213 (not validated) rather than a separate
   device error.
 - Notifications are a superset: CopperFFS also signals on `SetProtection` and
