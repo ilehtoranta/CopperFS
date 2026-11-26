@@ -213,3 +213,63 @@ for exact hashes, counts, settings and coverage limits.
 When reporting a problem, include the package and handler hash, CPU, OS,
 device, partition geometry and reproducible steps with a disposable image.
 Do not upload licensed ROMs or private data.
+
+# CopperFFS: development builds
+
+CopperFFS is the OFS/FFS handler built from `src/CopperFFS.Core` and
+`src/CopperFS.Amiga`. There is no published CopperFFS package yet; the steps
+below use a local development build. Treat it as experimental and keep
+independent backups of every volume you mount with it.
+
+## Build and identify the handler
+
+```text
+pwsh build/Build-Handler.ps1 -Ffs -ArtifactRoot artifacts/ffs
+```
+
+The build needs the sibling CopperSharp68k checkout and writes
+`artifacts/ffs/CopperFFS`, a relocatable HUNK executable for the 68000
+instruction set. Options:
+
+- `-AutoTrim` enables automatic TRIM after deletes (off by default).
+- `-FfsIndexKiB 64|256|1024` sets the per-mount index workspace (default 256).
+
+Each build stamps `$VER: CopperFFS 1.0 (20.11.126)` into its CODE hunk, so the
+file and the loaded handler carry the tag that AmigaDOS `Version` reads. The
+tag does not change between development builds; use the file's SHA-256 to
+tell two builds apart.
+
+## Install and mount
+
+1. Copy the handler: `C:Copy CopperFFS L:CopperFFS`.
+2. Create a mount entry for a disposable partition (for example
+   `DEVS:DOSDrivers/FFS0`) with the partition's own geometry, plus:
+
+   ```text
+   FileSystem = L:CopperFFS
+   DosType    = 0x444F5301
+   GlobVec    = -1
+   StackSize  = 32768
+   Priority   = 10
+   Forceload  = 1
+   ```
+
+   Use the `DosType` of the volume's variant: `0x444F5300` (OFS) to
+   `0x444F5305` (FFS with directory cache, international). CopperFFS reads the
+   variant from the boot block; DOS\6 and DOS\7 volumes are refused.
+3. Run `C:Mount FFS0:` and check the volume with `C:List` and a copy/read-back
+   before using it for anything else.
+
+## Requirements and memory
+
+- Tested only on Kickstart 3.1 (68020 emulator profile). Kickstart 2.x and
+  physical 68000 machines are untested.
+- Block sizes of 512 to 4096 bytes are covered by the host tests; the native
+  and Kickstart tests use 512-byte blocks.
+- Memory: the handler itself (about 185 KB) plus the mount index workspace
+  (256 KiB by default) per mounted volume. A volume whose bitmap does not fit
+  the index (above roughly 64 GB at 512-byte blocks with 256 KiB) keeps a
+  small free-count summary in the same workspace instead.
+
+See [compatibility](compatibility.md#copperffs) for the differences from the
+Kickstart 3.1 FastFileSystem.
