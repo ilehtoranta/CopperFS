@@ -21,7 +21,8 @@ jobs:
         with:
           repository: ilehtoranta/CopperScreen
           # Provides the emulator and CopperDisk projects used by integration tests.
-          ref: 05a352e5f248e7676843a0cbafd805fb93317663
+          # 9a34172 adds opt-in multi-range UNMAP (MaximumDiscardDescriptors).
+          ref: 9a341723320c3ce3c1427a49a8afccc06fe8789a
           path: CopperScreen
       - uses: actions/setup-dotnet@v4
         with:
