@@ -445,7 +445,8 @@ public static partial class AmigaFfsWriteCore
                         p.WriteUInt32(image, 0, 8); p.WriteUInt32(image, 4, r.Header);
                         p.WriteUInt32(image, 8, index + n + 1); p.WriteUInt32(image, 12, bytes);
                         p.WriteUInt32(image, 16, n + 1 == blocks ? 0 : key + n + 1);
-                        CopyAndSealOfs(ref p, input, image, bytes);
+                        if (w.SkipData) { p.Clear(APTR.FromPointer(image.Raw + 24), bytes); Seal(ref p, image, 20); }
+                        else CopyAndSealOfs(ref p, input, image, bytes);
                         if (!staged && !Put(ref p, ref w, key + n, image, -1)) return false;
                         p.WriteUInt32(w.Meta, at - (int)n * 4, key + n);
                         if (MountIndexEnabled && fileKeys.IsNotNull) p.WriteUInt32(fileKeys, (int)(index + n) * 4, key + n);
@@ -521,7 +522,10 @@ public static partial class AmigaFfsWriteCore
             var within = withinRemainder;
             var count = payload - within;
             if (count > r.Length - actual) count = r.Length - actual;
-            p.Copy(APTR.FromPointer(r.Buffer.Raw + actual), APTR.FromPointer(w.Data.Raw + 24 + within), count);
+            // SetSize growth: OFS blocks carry headers, so they are written,
+            // with the new region zeroed.
+            if (w.SkipData) p.Clear(APTR.FromPointer(w.Data.Raw + 24 + within), count);
+            else p.Copy(APTR.FromPointer(r.Buffer.Raw + actual), APTR.FromPointer(w.Data.Raw + 24 + within), count);
             var dataBytes = newSize - index * payload; if (dataBytes > payload) dataBytes = payload;
             p.WriteUInt32(w.Data, 12, dataBytes);
             if (!Put(ref p, ref w, key, w.Data, 20)) return false;
