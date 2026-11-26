@@ -25,9 +25,15 @@ public sealed partial class OriginalHandlerCorrectnessTests
         Assert.True(File.Exists(handler), $"Missing rebuilt handler: {handler}");
         var root = Path.Combine(handlers, "replay", profile);
         var image = profile == "ffs" ? ReadMedia.Ffs() : profile == "sfs" ? ReadMedia.Sfs() : ReadMedia.Sfs2();
-        var trace = new DiscardTrace();
+        var trace = new DiscardTrace(); var scsi = 0;
+        trace.CommandObserved = command => { if (command == 28) scsi++; }; // HD_SCSICMD
         var entry = "TrimQualificationProbe::" + (profile == "ffs" ? "Ffs" : profile == "sfs" ? "Sfs" : "Sfs2") + "Execute";
         var result = await Run(root, profile, "execute", handler, image, true, entry, storage: trace);
+        // Discovery is three commands (VPD B2, VPD B0, READ CAPACITY 16); the
+        // rest are UNMAPs. copperhdf reports one descriptor per UNMAP in VPD
+        // B0, so FFS's batched manual TRIM must fall back to one range each.
+        var unmaps = scsi - 3;
+        if (profile == "ffs") Assert.Equal(trace.DiscardCount, unmaps);
         using var receipt = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "execute", "result.json")));
         Assert.Equal(uint.MaxValue, receipt.RootElement.GetProperty("Stage").GetUInt32());
         Assert.Equal(0u, receipt.RootElement.GetProperty("IoErr").GetUInt32());

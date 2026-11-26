@@ -26,6 +26,9 @@ public interface IAmigaDiscardFileSystemPlatform : IAmigaWritableFileSystemPlatf
 public interface IAmigaBatchDiscardFileSystemPlatform : IAmigaDiscardFileSystemPlatform
 {
     bool DiscardRanges(APTR control, APTR ranges, uint count);
+    /// <summary>Descriptors one DiscardRanges command accepts after a successful
+    /// QueryDiscard on this control; 0 when unknown. Below 2, callers use DiscardBlocks.</summary>
+    uint DiscardDescriptors(APTR control);
 }
 
 /// <summary>Explicit CopperSFS DOS packet ABI; unrelated handlers reject it.

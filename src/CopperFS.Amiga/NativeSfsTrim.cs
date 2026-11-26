@@ -113,18 +113,7 @@ internal static class NativeSfsTrim
             }
         }
 #endif
-        var g = p.Geometry;
-        var memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
-            (global::Amiga.Exec.MemoryFlags)g.BufferMemoryType | global::Amiga.Exec.MemoryFlags.Public);
-        if (memory != 0 && !NativeAmigaFileSystem.BufferFitsMask(memory, AmigaScsiUnmap.ControlBytes, g.Mask))
-        { global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes); memory = 0; }
-        if (memory == 0)
-        {
-            memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Chip);
-            if (memory != 0 && !NativeAmigaFileSystem.BufferFitsMask(memory, AmigaScsiUnmap.ControlBytes, g.Mask))
-            { global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes); memory = 0; }
-        }
+        var memory = AllocateControl(state, ManualControlBytes);
         if (memory == 0) { error = DOS.Error.NoFreeStore; return 0; }
         bool success;
         AmigaSmartFileSystemWriteCore.TrimResult result;
@@ -134,7 +123,8 @@ internal static class NativeSfsTrim
 #endif
         {
             NativeAmigaFileSystem.InitializeWriteWork(state, out var ffsWork);
-            success = AmigaFfsWriteCore.TrimWindow(ref p, ref ffsWork, APTR.FromPointer(memory),
+            success = AmigaFfsWriteCore.TrimWindowBatched(ref p, ref ffsWork, APTR.FromPointer(memory),
+                APTR.FromPointer(memory + AmigaScsiUnmap.BatchControlBytes),
                 APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out result, startBlock, blockCount, validation);
             error = ffsWork.Error;
         }
@@ -161,12 +151,16 @@ internal static class NativeSfsTrim
                 APTR.WriteUInt32(state, NativeFileSystemStateCodec.SmartRecoveryPendingOffset, 1);
         }
 #endif
-        global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes);
+        global::Amiga.Exec.FreeMem(memory, ManualControlBytes);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.BlocksOffset, result.Blocks); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.RangesOffset, result.Ranges);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.MaximumBlocksOffset, result.Limits.MaximumBlocks);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.GranularityOffset, result.Limits.Granularity); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.AlignmentOffset, result.Limits.Alignment);
         return success ? -1 : 0;
     }
+
+    // Manual packets: a batch-sized SCSI control block followed by the
+    // eight-descriptor vector FFS uses to pack free runs into one UNMAP.
+    private const uint ManualControlBytes = AmigaScsiUnmap.BatchControlBytes + 64;
 
 #if !COPPERSTART_NATIVE_SFS_WRITES || COPPERFS_FFS_HANDLER
     // Classic routes only FFS/OFS maintenance here. A direct entry keeps the
@@ -188,24 +182,14 @@ internal static class NativeSfsTrim
         p.Clear(APTR.FromPointer(record.Raw + 12), 20);
         if (!NativeAmigaFileSystem.CanQueryDiscard(state))
         { error = DOS.Error.ActionNotKnown; return 0; }
-        var g = p.Geometry;
-        var memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
-            (global::Amiga.Exec.MemoryFlags)g.BufferMemoryType | global::Amiga.Exec.MemoryFlags.Public);
-        if (memory != 0 && !NativeAmigaFileSystem.BufferFitsMask(memory, AmigaScsiUnmap.ControlBytes, g.Mask))
-        { global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes); memory = 0; }
-        if (memory == 0)
-        {
-            memory = global::Amiga.Exec.AllocMem(AmigaScsiUnmap.ControlBytes,
-                global::Amiga.Exec.MemoryFlags.Public | global::Amiga.Exec.MemoryFlags.Chip);
-            if (memory != 0 && !NativeAmigaFileSystem.BufferFitsMask(memory, AmigaScsiUnmap.ControlBytes, g.Mask))
-            { global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes); memory = 0; }
-        }
+        var memory = AllocateControl(state, ManualControlBytes);
         if (memory == 0) { error = DOS.Error.NoFreeStore; return 0; }
         NativeAmigaFileSystem.InitializeWriteWork(state, out var work);
-        var success = AmigaFfsWriteCore.TrimWindow(ref p, ref work, APTR.FromPointer(memory),
+        var success = AmigaFfsWriteCore.TrimWindowBatched(ref p, ref work, APTR.FromPointer(memory),
+            APTR.FromPointer(memory + AmigaScsiUnmap.BatchControlBytes),
             APTR.ReadUInt32(record, NativeSfsTrimPacketFieldCodec.FlagsOffset), out var result, startBlock, blockCount, validation);
         error = work.Error;
-        global::Amiga.Exec.FreeMem(memory, AmigaScsiUnmap.ControlBytes);
+        global::Amiga.Exec.FreeMem(memory, ManualControlBytes);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.BlocksOffset, result.Blocks); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.RangesOffset, result.Ranges);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.MaximumBlocksOffset, result.Limits.MaximumBlocks);
         APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.GranularityOffset, result.Limits.Granularity); APTR.WriteUInt32(record, NativeSfsTrimPacketFieldCodec.AlignmentOffset, result.Limits.Alignment);

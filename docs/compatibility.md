@@ -111,6 +111,8 @@ directory caches.
 
 TRIM is available on DOS\0 to DOS\5 through the CopperTrim packet, and as
 automatic TRIM in `-AutoTrim` builds. It discards only blocks free in the
-on-disk bitmap; directory-cache blocks stay allocated. Manual TRIM sends one
-UNMAP per free run. Automatic TRIM retries after a failed collection and
+on-disk bitmap; directory-cache blocks stay allocated. Manual TRIM packs up
+to eight free runs (and at most 4,096 blocks) into one UNMAP when the device
+reports multi-descriptor UNMAP in VPD page B0; otherwise it sends one UNMAP
+per free run. Automatic TRIM retries after a failed collection and
 suspends itself after four consecutive failures or any failed UNMAP.
