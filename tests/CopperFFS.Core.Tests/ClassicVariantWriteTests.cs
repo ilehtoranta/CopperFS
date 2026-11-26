@@ -296,6 +296,36 @@ public sealed partial class VolumeGeometryTests
         Assert.Equal((ushort)0x1234, p.ReadUInt16(fib, 224)); Assert.Equal((ushort)0xABCD, p.ReadUInt16(fib, 226));
     }
 
+    // MakeLink writes the layout Kickstart 3.1 FFS writes (the link reference
+    // test compares it with Kickstart's own MakeLink): lookups follow the
+    // hard link, report the soft link, and deleting the link restores the chain.
+    [Theory]
+    [InlineData(1)] [InlineData(5)]
+    public void MakeLinkCreatesFollowableHardAndSoftLinks(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var target = VariantCreate(ref p, storage, g.RootBlock, "Target");
+        Encoding.Latin1.GetBytes("Hard").CopyTo(storage.Ram, (int)Name.Raw);
+        var hard = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 4 }; var w = Work();
+        Assert.True(AmigaFfsWriteCore.MakeLink(ref p, ref w, ref hard, target.Header, APTR.Null, 0, false), w.Error.ToString());
+        Encoding.Latin1.GetBytes("Soft").CopyTo(storage.Ram, (int)Name.Raw);
+        Encoding.Latin1.GetBytes("Target").CopyTo(storage.Ram, (int)Payload.Raw);
+        var soft = new AmigaFfsWriteCore.Request { Directory = g.RootBlock, Name = Name, Length = 4 }; w = Work();
+        Assert.True(AmigaFfsWriteCore.MakeLink(ref p, ref w, ref soft, 0, Payload, 6, true), w.Error.ToString());
+        Assert.True(p.ReadBlock(target.Header, Meta)); Assert.Equal(hard.Header, p.ReadUInt32(Meta, 472));
+        Encoding.Latin1.GetBytes("Hard").CopyTo(storage.Ram, (int)Name.Raw);
+        Assert.Equal(target.Header, AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 4, type, Meta, out _));
+        Encoding.Latin1.GetBytes("Soft").CopyTo(storage.Ram, (int)Name.Raw);
+        Assert.Equal(0u, AmigaDiskFileSystemCore.Resolve(ref p, g.RootBlock, Name, 4, type, Meta, out var error));
+        Assert.Equal(DOS.Error.IsSoftLink, error);
+        w = Work(); Assert.False(AmigaFfsWriteCore.MakeLink(ref p, ref w, ref hard, target.Header, APTR.Null, 0, false));
+        Assert.Equal(DOS.Error.ObjectExists, w.Error);
+        w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, hard.Header, false), w.Error.ToString());
+        Assert.True(p.ReadBlock(target.Header, Meta)); Assert.Equal(0u, p.ReadUInt32(Meta, 472));
+        if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 2);
+    }
+
     // Mark every free block but `keep` as allocated in the volume's bitmap pages.
     private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
     {

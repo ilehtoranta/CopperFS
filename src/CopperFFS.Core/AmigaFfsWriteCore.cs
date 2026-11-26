@@ -874,10 +874,51 @@ public static partial class AmigaFfsWriteCore
         return CreateMissingEntry(ref p, ref w, ref r, slot, directory, openForWriting);
     }
 
+    // ACTION_MAKE_LINK. A hard link (type -4 to a file, 4 to a directory)
+    // records its object in real_entry and joins the head of the object's
+    // next_link chain, the layout Kickstart 3.1 FFS writes. A soft link
+    // (type 3) stores its target text where a directory keeps its hash table.
+    public static bool MakeLink<T>(ref T p, ref Work w, ref Request r, uint target, APTR softPath, uint softLength, bool soft)
+        where T : struct, IAmigaWritableFileSystemPlatform
+    {
+        var geometry = AmigaFfsGeometry.Read(ref p);
+        if (!FindDestination(ref p, ref w, ref r, out var existing, out _, out var slot)) return false;
+        if (existing != 0) return Fail(ref w, DOS.Error.ObjectExists);
+        var linkType = 3; uint chain = 0;
+        if (soft)
+        {
+            if (softLength == 0 || softLength >= geometry.BlockBytes - 224 || !p.IsMapped(softPath, softLength))
+                return Fail(ref w, DOS.Error.BadNumber);
+        }
+        else
+        {
+            if (target == geometry.RootBlock) return Fail(ref w, DOS.Error.ObjectWrongType);
+            var image = InspectHeader(ref p, ref w, in geometry, target);
+            if (image.IsNull) return false;
+            var type = unchecked((int)p.ReadUInt32(image, geometry.Tail + 508));
+            if (type is not (2 or -3)) return Fail(ref w, DOS.Error.ObjectWrongType);
+            linkType = type == 2 ? 4 : -4;
+            chain = p.ReadUInt32(image, geometry.Tail + 472);
+        }
+        var link = new LinkRequest { Type = linkType, Target = target, Chain = chain, Path = softPath, PathLength = softLength };
+        return CreateMissingEntry(ref p, ref w, ref r, slot, false, false, link);
+    }
+
+    internal struct LinkRequest
+    {
+        internal int Type;
+        internal uint Target, Chain, PathLength;
+        internal APTR Path;
+    }
+
     // Same owner and same packet as the completed lookup. The parent and
     // final component are resolved and the requested name is absent.
     internal static bool CreateMissingEntry<T>(ref T p, ref Work w, ref Request r, int slot, bool directory, bool openForWriting = false)
-        where T : struct, IAmigaWritableFileSystemPlatform
+        where T : struct, IAmigaWritableFileSystemPlatform =>
+        CreateMissingEntry(ref p, ref w, ref r, slot, directory, openForWriting, default);
+
+    private static bool CreateMissingEntry<T>(ref T p, ref Work w, ref Request r, int slot, bool directory, bool openForWriting,
+        in LinkRequest link) where T : struct, IAmigaWritableFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         if (!Prepare(ref p, ref w, in geometry, 1, keepDirectory: MountIndexEnabled && w.ReadsGroupedDirectories ? r.Directory : 0)) return false;
@@ -933,10 +974,24 @@ public static partial class AmigaFfsWriteCore
         if (MountIndexEnabled && newDirectory) header = APTR.FromPointer(p.ReadUInt32(w.Index, AmigaFfsMountIndex.ParentImage));
         p.Clear(header, geometry.BlockBytes); p.WriteUInt32(header, 0, 2); p.WriteUInt32(header, 4, key);
         p.WriteUInt32(header, geometry.Tail + 496, successor); p.WriteUInt32(header, geometry.Tail + 500, r.Directory);
-        p.WriteUInt32(header, 12, directory || (w.DosType & 1) != 0 ? geometry.TableEntries : 0);
+        // Kickstart 3.1 FFS leaves offset 12 zero in file and directory headers;
+        // only the root stores its hash table size there.
+        p.WriteUInt32(header, 12, 0);
         p.WriteUInt32(header, geometry.Tail + 508, directory ? 2u : 0xFFFFFFFD);
         p.WriteUInt8(header, geometry.Tail + 432, (byte)r.Length);
         for (var i = 0u; i < r.Length; i++) p.WriteUInt8(header, geometry.Tail + 433 + (int)i, p.ReadUInt8(r.Name, (int)i));
+        if (link.Type != 0)
+        {
+            p.WriteUInt32(header, 12, 0);
+            p.WriteUInt32(header, geometry.Tail + 508, unchecked((uint)link.Type));
+            if (link.Type == 3)
+                for (var i = 0u; i < link.PathLength; i++) p.WriteUInt8(header, 24 + (int)i, p.ReadUInt8(link.Path, (int)i));
+            else
+            {
+                p.WriteUInt32(header, geometry.Tail + 468, link.Target);
+                p.WriteUInt32(header, geometry.Tail + 472, link.Chain);
+            }
+        }
         StampDate(ref p, ref w, header, geometry.Tail + 420);
         if (MountIndexEnabled && w.GroupHeader == key)
         {
@@ -954,6 +1009,13 @@ public static partial class AmigaFfsWriteCore
             p.WriteUInt32(w.Index, AmigaFfsMountIndex.PendingParent, key);
         }
         else if (!Put(ref p, ref w, key, header, 20)) return false;
+        if (link.Type is 4 or -4)
+        {
+            // The new link heads the object's next_link chain.
+            if (!Header(ref p, ref w, link.Target)) return false;
+            p.WriteUInt32(w.Meta, geometry.Tail + 472, key);
+            if (!Put(ref p, ref w, link.Target, w.Meta, 20)) return false;
+        }
         if (MountIndexEnabled && (w.GroupHeader != 0 || groupDirectory ||
             (r.Directory == geometry.RootBlock && w.RootImage.IsNotNull && w.DosType < 0x444F5304)))
         {

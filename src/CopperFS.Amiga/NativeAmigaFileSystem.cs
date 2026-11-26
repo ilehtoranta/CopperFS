@@ -1876,6 +1876,45 @@ public static partial class NativeAmigaFileSystem
         return success ? -1 : 0;
     }
 
+    // ACTION_MAKE_LINK: Arg1 directory lock, Arg2 BSTR name, Arg3 the object's
+    // lock (LINK_HARD, Arg4 0) or a C string target (LINK_SOFT, Arg4 1).
+    private static int MakeLinkPacket(APTR state, APTR packet, out DOS.Error error)
+    {
+        var p = new NativeFileSystemPlatform(state); var r = new AmigaFfsWriteCore.Request();
+        error = DOS.Error.None;
+        if (!PacketName(state, APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument1Offset),
+            APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument2Offset), ref r)) { error = DOS.Error.InvalidLock; return 0; }
+        if (p.WriteProtected()) { error = DOS.Error.DiskWriteProtected; return 0; }
+        var target = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument3Offset);
+        var soft = APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset) != 0;
+        uint key = 0, length = 0;
+        if (soft)
+        {
+            while (length < 256 && p.IsMapped(APTR.FromPointer(target + length), 1) && APTR.ReadUInt8(APTR.FromPointer(target), (int)length) != 0) length++;
+            if (length == 0 || length == 256) { error = DOS.Error.BadNumber; return 0; }
+        }
+        else
+        {
+            var owned = Object(state, target, false);
+            if (owned.IsNull) { error = DOS.Error.InvalidLock; return 0; }
+            key = APTR.ReadUInt32(owned, 4);
+        }
+#if COPPERFS_FFS_HANDLER && !COPPERSTART_PACKED_EXTENSION
+        // Publish any open group first: this packet uses its own root update.
+        if (APTR.ReadUInt32(state, FfsWriteGroupHandle) != 0)
+        {
+            InitializeWriteWork(state, out var group);
+            var published = AmigaFfsWriteCore.FinishFileWriteGroup(ref p, ref group);
+            APTR.WriteUInt32(state, FfsWriteGroupHandle, 0);
+            if (!published) { APTR.WriteUInt32(state, FfsGroupPublicationFailed, 1); error = group.Error; return 0; }
+        }
+#endif
+        InitializeWriteWork(state, out var w);
+        if (!AmigaFfsWriteCore.MakeLink(ref p, ref w, ref r, key, APTR.FromPointer(target), length, soft)) { error = w.Error; return 0; }
+        NativeFileSystemNotifications.Changed(state, r.Header);
+        return -1;
+    }
+
     private static int SetMetadata(APTR state, APTR packet, DosPacketAction action, out DOS.Error error)
     {
         var p = new NativeFileSystemPlatform(state); InitializeWriteWork(state, out var w); var r = new AmigaFfsWriteCore.Request();
@@ -3005,6 +3044,10 @@ public static partial class NativeAmigaFileSystem
                 result = AmigaFfsReadLinkCore.Read(ref p, key, APTR.FromPointer(b), APTR.FromPointer(c),
                     unchecked((int)APTR.ReadUInt32(packet, NativeDosPacketFieldCodec.Argument4Offset)),
                     APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset), metadata, data, out error);
+                break;
+            case DosPacketAction.MakeLink:
+                if ((SpecializeFormat ? FormatIsSmart : Smart(state))) { error = DOS.Error.ActionNotKnown; break; }
+                result = MakeLinkPacket(state, packet, out error);
                 break;
             case DosPacketAction.ReadLink:
                 // dos.library sends this after a lookup reports ERROR_IS_SOFT_LINK.

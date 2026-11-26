@@ -33,9 +33,18 @@ public sealed partial class OriginalHandlerCorrectnessTests
             firstFileBlock: 2, payload: [1, 2, 3], volumeName: "Links").Bytes;
         var created = await Run(root, "ffs", "rom-create", handler, initial, true, "LinkProbe::RomCreate");
         var createData = ProbeData(root, "rom-create");
-        var report = new Dictionary<string, object> { ["create"] = new { Probe = createData, Layout = LinkLayout(created) } };
+        // CopperFFS's own MakeLink must produce the same results and layout.
+        var copperCreated = await Run(root, "ffs", "copper-create", handler, initial, true, "LinkProbe::CopperCreate");
+        var copperCreateData = ProbeData(root, "copper-create");
+        var report = new Dictionary<string, object>
+        {
+            ["create"] = new { Probe = createData, Layout = LinkLayout(created) },
+            ["copper-create"] = new { Probe = copperCreateData, Layout = LinkLayout(copperCreated) }
+        };
         Assert.All(createData.Take(6).Where((_, i) => i % 2 == 0), ok => Assert.NotEqual(0u, ok));
         var mismatches = new List<string>();
+        if (!createData.SequenceEqual(copperCreateData)) mismatches.Add("MakeLink probe");
+        if (!LinkLayout(created).SequenceEqual(LinkLayout(copperCreated))) mismatches.Add("MakeLink layout");
         foreach (var phase in LinkPhases)
         {
             var results = new Dictionary<string, (uint[] Probe, string[] Layout)>();
@@ -79,8 +88,12 @@ public sealed partial class OriginalHandlerCorrectnessTests
                 }
         }
         string P(uint key) => key == 0 ? "-" : paths.TryGetValue(key, out var path) ? path : "#unreachable";
+        string Soft(uint key) => unchecked((int)U(key, 508)) != 3 ? "" :
+            " target=" + System.Text.Encoding.Latin1.GetString(image, (int)(key * bytes) + 24,
+                Array.IndexOf(image, (byte)0, (int)(key * bytes) + 24) - (int)(key * bytes) - 24);
         return paths.Where(p => p.Key != root).Select(p =>
-            $"{p.Value} type={unchecked((int)U(p.Key, 508))} size={U(p.Key, 324)} real={P(U(p.Key, 468))} next={P(U(p.Key, 472))}")
+            $"{p.Value} type={unchecked((int)U(p.Key, 508))} size={U(p.Key, 324)} real={P(U(p.Key, 468))} next={P(U(p.Key, 472))}" +
+            $" count={U(p.Key, 8)} first={(U(p.Key, 16) == 0 ? 0 : 1)} tables={U(p.Key, 12)}{Soft(p.Key)}")
             .Order().ToArray();
     }
 }
@@ -88,6 +101,7 @@ public sealed partial class OriginalHandlerCorrectnessTests
 public static class LinkProbe
 {
     public static int RomCreate() => Run(true, 0);
+    public static int CopperCreate() => Run(false, 0);
     public static int RomInspect() => Run(true, 1);
     public static int CopperInspect() => Run(false, 1);
     public static int RomDeleteOriginal() => Run(true, 2);
