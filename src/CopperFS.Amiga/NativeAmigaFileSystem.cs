@@ -3112,7 +3112,13 @@ public static partial class NativeAmigaFileSystem
             case DosPacketAction.SameLock:
                 var other = Object(state, b, false);
                 if (key == 0 || (b != 0 && other.IsNull)) error = DOS.Error.InvalidLock;
+#if COPPERSTART_SFS_STANDALONE
+                // Kickstart's packet reply is a Boolean: DOSTRUE for the same object.
+                else result = key == (b == 0 ? RootKey(state) : APTR.ReadUInt32(other, 4)) ? -1 : 0;
+#else
+                // CopperStart's dos.library expects LOCK_SAME (0) / LOCK_SAME_VOLUME (1).
                 else result = key == (b == 0 ? RootKey(state) : APTR.ReadUInt32(other, 4)) ? 0 : 1;
+#endif
                 break;
             case DosPacketAction.QueryAttribute:
                 result = QueryAttribute(state, (FileSystemQueryAttribute)a,
