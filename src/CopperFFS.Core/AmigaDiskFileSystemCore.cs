@@ -711,6 +711,8 @@ public static class AmigaDiskFileSystemCore
         var blockBytes = geometry.BlockBytes;
         if (blockBytes == 0) return false;
         p.Clear(fib, FileInfoBlock.SizeInBytes);
+        // fib_DiskKey is the header key, as in Kickstart FFS.
+        p.WriteUInt32(fib, 0, key);
         var type = p.ReadUInt32(buffer, geometry.Tail + 508);
         p.WriteUInt32(fib, 4, type);
         p.WriteUInt32(fib, 120, type);
@@ -736,9 +738,9 @@ public static class AmigaDiskFileSystemCore
         return true;
     }
 
-    // Private acceleration only: the public disk key remains the ordinal.
-    // A different/interleaved cursor or an invalidated mount record can always
-    // rebuild the position from that ordinal without extra caller requirements.
+    // Private acceleration only: fib_DiskKey (the last returned header key)
+    // is authoritative. A different, interleaved or invalidated cursor resumes
+    // from that key. Ordinal holds the key this cursor last returned.
     public struct DirectoryCursor
     {
         public uint Directory, Ordinal, Slot, Entry, Visited;
@@ -751,11 +753,12 @@ public static class AmigaDiskFileSystemCore
         return ExamineNext(ref p, ref cursor, directory, fib, metadata, table);
     }
 
+    // dosType selects the name hash used to resume; 0 reads it from the boot block.
     public static DOS.Error ExamineNext<T>(ref T p, ref DirectoryCursor cursor,
-        uint directory, APTR fib, APTR metadata, APTR table)
+        uint directory, APTR fib, APTR metadata, APTR table, uint dosType = 0)
         where T : struct, IAmigaFileSystemPlatform
         // Kickstart FFS lists link entries with their own secondary types.
-        => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, true);
+        => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, true, dosType);
 
     /// <summary>Inspect link entries without resolving them; retained packet enumeration semantics are unchanged.</summary>
     public static DOS.Error ExamineNextIncludingLinks<T>(ref T p, ref DirectoryCursor cursor,
@@ -764,38 +767,67 @@ public static class AmigaDiskFileSystemCore
         => ExamineNextCore(ref p, ref cursor, directory, fib, metadata, table, true);
 
     private static DOS.Error ExamineNextCore<T>(ref T p, ref DirectoryCursor cursor,
-        uint directory, APTR fib, APTR metadata, APTR table, bool includeLinks)
+        uint directory, APTR fib, APTR metadata, APTR table, bool includeLinks, uint dosType = 0)
         where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes) || !Header(ref p, directory, table)) return DOS.Error.InvalidLock;
         if (unchecked((int)p.ReadUInt32(table, geometry.Tail + 508)) < 0) return DOS.Error.ObjectWrongType;
+        // Like Kickstart FFS, fib_DiskKey holds the last returned header key
+        // (the directory's own key after Examine). The scan continues from
+        // that header's hash bucket and successor, so deleting the returned
+        // entry between calls skips nothing.
         var wanted = p.ReadUInt32(fib);
         if (wanted >= geometry.BlockCount) return DOS.Error.NoMoreEntries;
         var next = cursor;
-        if (wanted == 0 || next.Directory != directory || next.Ordinal != wanted)
-            next = new DirectoryCursor { Directory = directory };
+        if (wanted == 0 || wanted == directory) next = new DirectoryCursor { Directory = directory };
+        else if (next.Directory != directory || next.Ordinal != wanted)
+        {
+            // A deleted entry's header keeps its name and old successor on disk.
+            if (dosType == 0)
+            {
+                if (!p.ReadBlock(0, metadata)) return DOS.Error.DiskNotValidated;
+                dosType = p.ReadUInt32(metadata);
+            }
+            var nameLength = 0u;
+            if (Header(ref p, in geometry, wanted, metadata, true) && p.ReadUInt32(metadata, geometry.Tail + 500) == directory)
+            {
+                nameLength = p.ReadUInt8(metadata, geometry.Tail + 432);
+                if (nameLength == 0 || nameLength > 30) return DOS.Error.DiskNotValidated;
+            }
+            if (nameLength != 0)
+            {
+                next = new DirectoryCursor
+                {
+                    Directory = directory,
+                    Slot = NameBucket(ref p, APTR.FromPointer(metadata.Raw + (uint)geometry.Tail + 433), nameLength, dosType, geometry.TableEntries),
+                    Entry = p.ReadUInt32(metadata, geometry.Tail + 496)
+                };
+                if (next.Entry == 0) next.Slot++;
+            }
+            // The freed header was already reused. The invalidated private
+            // cursor still knows the bucket: restart at its head.
+            else if (next.Directory == directory && next.Slot < geometry.TableEntries)
+                next = new DirectoryCursor { Directory = directory, Slot = next.Slot, Visited = next.Visited };
+            else return DOS.Error.NoMoreEntries;
+        }
         for (; next.Slot < geometry.TableEntries; next.Slot++)
         {
             var entry = next.Entry;
             if (entry == 0) entry = p.ReadUInt32(table, 24 + (int)next.Slot * 4);
-            while (entry != 0)
+            if (entry != 0)
             {
                 if (next.Visited >= geometry.BlockCount || !Header(ref p, in geometry, entry, metadata, includeLinks) ||
                     p.ReadUInt32(metadata, geometry.Tail + 500) != directory) return DOS.Error.DiskNotValidated;
                 next.Visited++;
                 var successor = p.ReadUInt32(metadata, geometry.Tail + 496);
-                if (next.Ordinal == wanted)
-                {
-                    if (!ExamineHeader(ref p, entry, fib, metadata)) return DOS.Error.DiskNotValidated;
-                    next.Ordinal++;
-                    if (successor == 0) { next.Slot++; next.Entry = 0; }
-                    else next.Entry = successor;
-                    p.WriteUInt32(fib, 0, next.Ordinal);
-                    cursor = next;
-                    return DOS.Error.None;
-                }
-                next.Ordinal++; entry = successor;
+                if (!ExamineHeader(ref p, entry, fib, metadata)) return DOS.Error.DiskNotValidated;
+                // Ordinal carries the last returned key for the private fast path.
+                next.Ordinal = entry;
+                if (successor == 0) { next.Slot++; next.Entry = 0; }
+                else next.Entry = successor;
+                cursor = next;
+                return DOS.Error.None;
             }
             next.Entry = 0;
         }

@@ -215,6 +215,32 @@ public sealed partial class VolumeGeometryTests
         if (dos >= 4) InspectDirectoryCache(storage, g, g.RootBlock, 1);
     }
 
+    // Delete ALL pattern: list one entry, delete it, list the next. The native
+    // owner drops its private cursor on every mutation, so each step resumes
+    // from fib_DiskKey alone.
+    [Theory]
+    [InlineData(1)] [InlineData(3)] [InlineData(5)]
+    public void ListOneDeleteItListNextRemovesEveryEntry(int dos)
+    {
+        var storage = new Storage(); AmigaVolumeGeometry.Create(1760, 512, 2, out var g); var p = new Memory(storage, g);
+        var type = 0x444F5300u + (uint)dos; VariantFormat(ref p, storage, type);
+        var drawer = VariantCreate(ref p, storage, g.RootBlock, "Drawer", true);
+        for (var i = 0; i < 40; i++) VariantCreate(ref p, storage, drawer.Header, $"Entry{i:00}");
+        var fib = APTR.FromPointer(0x50000);
+        Assert.True(AmigaDiskFileSystemCore.Examine(ref p, drawer.Header, fib, Meta));
+        Assert.Equal(drawer.Header, p.ReadUInt32(fib, 0));
+        var deleted = 0; var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
+        while (AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, drawer.Header, fib, Meta, Data, type) == DOS.Error.None)
+        {
+            var w = Work(); Assert.True(AmigaFfsWriteCore.Remove(ref p, ref w, p.ReadUInt32(fib, 0), false), w.Error.ToString());
+            cursor.Ordinal = 0; // the native owner invalidates its private position on every mutation
+            deleted++;
+        }
+        Assert.Equal(40, deleted);
+        Assert.True(p.ReadBlock(drawer.Header, Meta));
+        for (var at = 24; at < 312; at += 4) Assert.Equal(0u, p.ReadUInt32(Meta, at));
+    }
+
     // Mark every free block but `keep` as allocated in the volume's bitmap pages.
     private static void LeaveFree(ref Memory p, AmigaVolumeGeometry g, uint keep)
     {

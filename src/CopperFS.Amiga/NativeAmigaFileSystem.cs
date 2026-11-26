@@ -1395,7 +1395,8 @@ public static partial class NativeAmigaFileSystem
             cursor.Slot = APTR.ReadUInt32(owned, 44); cursor.Entry = APTR.ReadUInt32(owned, 48);
             cursor.Visited = APTR.ReadUInt32(owned, 52);
         }
-        var error = AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, key, fib, metadata, table);
+        var error = AmigaDiskFileSystemCore.ExamineNext(ref p, ref cursor, key, fib, metadata, table,
+            APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset));
         if (error == DOS.Error.None && owned.IsNotNull)
         {
 #if COPPERFS_FFS_HANDLER
