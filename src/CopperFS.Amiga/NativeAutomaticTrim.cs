@@ -9,7 +9,9 @@ internal static class NativeAutomaticTrim
 {
     private const int Control = 0, Queried = 4, Maximum = 8, Granularity = 12,
         Alignment = 16, Descriptors = 20, Generation = 24,
-        DiscoveryCount = 44, Dropped = 48, Commands = 52, Blocks = 56;
+        DiscoveryCount = 44, Dropped = 48, Commands = 52, Blocks = 56, Failures = 60;
+    // Consecutive collector failures tolerated before discard is suspended.
+    private const uint RetryLimit = 4;
     internal const int Eligible = 28;
 #if COPPERFS_FFS_TRIM_LAYOUT_CONTROL
     // Reset admits the first hint with an empty queue or leaves discard
@@ -244,9 +246,25 @@ internal static class NativeAutomaticTrim
         }
         if (p.ReadUInt32(batch, AmigaAutomaticTrimBatch.Inputs) != 0)
         {
-            if (!AmigaAutomaticTrimBatch.Current(ref p, batch, state.Raw, generation) ||
-                !NativeSfsTrim.CollectAutomatic(state, batch, generation, out var complete))
-            { Suspend(state); return; }
+            if (!AmigaAutomaticTrimBatch.Current(ref p, batch, state.Raw, generation)) { Suspend(state); return; }
+            if (!NativeSfsTrim.CollectAutomatic(state, batch, generation, out var complete))
+            {
+                // A collector failure discards no blocks. It can be temporary
+                // (write protection, an unvalidated root a validator will fix,
+                // a read error), so drop only this batch's hints and retry on a
+                // later idle turn. Repeated failures still suspend discard.
+                var failures = APTR.ReadUInt32(record, Failures) + 1;
+                if (failures >= RetryLimit) { Suspend(state); return; }
+                APTR.WriteUInt32(record, Failures, failures);
+                APTR.WriteUInt32(record, Dropped, APTR.ReadUInt32(record, Dropped) + APTR.ReadUInt32(batch, AmigaAutomaticTrimBatch.Inputs));
+                APTR.WriteUInt32(batch, AmigaAutomaticTrimBatch.Inputs, 0);
+                APTR.WriteUInt32(batch, AmigaAutomaticTrimBatch.Stage, 0);
+                APTR.WriteUInt32(batch, AmigaAutomaticTrimBatch.Outputs, 0);
+                APTR.WriteUInt32(batch, AmigaAutomaticTrimBatch.RemainderCount, 0);
+                APTR.WriteUInt32(record, Eligible, 0);
+                return;
+            }
+            APTR.WriteUInt32(record, Failures, 0);
             if (!complete) return;
             var count = p.ReadUInt32(batch, AmigaAutomaticTrimBatch.Outputs);
             if (count != 0)

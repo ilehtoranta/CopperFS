@@ -108,6 +108,8 @@ public static partial class AmigaFfsWriteCore
         uint index = startBlock > g.ReservedBlocks ? (startBlock - g.ReservedBlocks) / g.BitmapBits : 0;
         if (startBlock >= g.BlockCount) return true;
         uint first = g.ReservedBlocks + index * g.BitmapBits, run = 0, length = 0;
+        // One past the window's last block, clamped to the volume.
+        var windowEnd = blockCount > g.BlockCount - startBlock ? g.BlockCount : startBlock + blockCount;
         while (first < g.BlockCount)
         {
             if (first >= startBlock && first - startBlock >= blockCount) break;
@@ -120,16 +122,33 @@ public static partial class AmigaFfsWriteCore
             // identity in sync with the page we just loaded into that scratch.
             w.BitmapBlock = map; w.BitmapFirst = first; w.BitmapCount = count; w.BitmapDirty = 0;
             w.ActiveBitmap = w.Bitmap;
-            for (var bit = startBlock > first ? startBlock - first : 0; bit < count; bit++)
+            // Scan whole words where the window allows: an all-free word extends
+            // the run by 32 blocks and an all-used word ends it.
+            var limit = count;
+            if (windowEnd - first < limit) limit = windowEnd - first;
+            var bit = startBlock > first ? startBlock - first : 0;
+            while (bit < limit)
             {
-                if (first + bit >= startBlock && first + bit - startBlock >= blockCount) break;
-                var free = (p.ReadUInt32(w.Bitmap, 4 + (int)(bit / 32) * 4) & (1u << (int)(bit % 32))) != 0;
+                var word = p.ReadUInt32(w.Bitmap, 4 + (int)(bit / 32) * 4);
+                if ((bit & 31) == 0 && limit - bit >= 32 && (word == 0 || word == uint.MaxValue))
+                {
+                    if (word != 0) { if (length == 0) run = first + bit; length += 32; }
+                    else if (length != 0)
+                    {
+                        if (!TrimRange(ref p, ref w, control, run, length, flags, ref result, startBlock, blockCount)) return false;
+                        length = 0;
+                    }
+                    bit += 32;
+                    continue;
+                }
+                var free = (word & (1u << (int)(bit % 32))) != 0;
                 if (free) { if (length == 0) run = first + bit; length++; }
                 else if (length != 0)
                 {
                     if (!TrimRange(ref p, ref w, control, run, length, flags, ref result, startBlock, blockCount)) return false;
                     length = 0;
                 }
+                bit++;
             }
             first += count;
         }
@@ -179,38 +198,79 @@ public static partial class AmigaFfsWriteCore
         return true;
     }
 
+    // Bitmap pages have no own-block field. Reject aliases explicitly rather
+    // than applying one checksum-valid page to two different allocation ranges:
+    // every bitmap and extension key must be distinct. Sort the keys in chunks
+    // the buffer can hold and binary-search the later keys against each chunk.
+    // A forgotten (declined) mount index lends its workspace, so one chunk
+    // covers the volume; otherwise the Bitmap scratch holds one block of keys.
     private static bool TrimLayout<T>(ref T p, ref Work w) where T : struct, IAmigaDiscardFileSystemPlatform
     {
         var g = AmigaFfsGeometry.Read(ref p);
         var maps = (g.BlockCount - g.ReservedBlocks - 1) / g.BitmapBits + 1;
-        var cursor = new AmigaDiskFileSystemCore.BitmapCursor();
-        // Bitmap pages have no own-block field. Reject aliases explicitly rather
-        // than applying one checksum-valid page to two different allocation ranges.
-        // This bounded pairwise check uses existing scratch, only during maintenance.
-        for (var i = 0u; i < maps; i++)
-        {
-            if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref cursor, i, w.Meta, out var map))
-                return Fail(ref w, DOS.Error.DiskNotValidated);
-            var previous = new AmigaDiskFileSystemCore.BitmapCursor();
-            for (var j = 0u; j < i; j++)
-                if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref previous, j, w.Data, out var other) || other == map)
-                    return Fail(ref w, DOS.Error.DiskNotValidated);
-        }
-        if (!Header(ref p, ref w, g.RootBlock)) return false;
-        var extension = p.ReadUInt32(w.Meta, g.Tail + 416);
         var needed = maps <= 25 ? 0 : (maps - 26) / (g.BlockBytes / 4 - 1) + 1;
+        if (!Header(ref p, ref w, g.RootBlock)) return false;
+        var firstExtension = p.ReadUInt32(w.Meta, g.Tail + 416);
+        var extension = firstExtension;
         for (var i = 0u; i < needed; i++)
         {
-            if (extension < g.ReservedBlocks || extension >= g.BlockCount || extension == g.RootBlock)
-                return Fail(ref w, DOS.Error.DiskNotValidated);
-            cursor = default;
-            for (var j = 0u; j < maps; j++)
-                if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref cursor, j, w.Meta, out var map) || map == extension)
-                    return Fail(ref w, DOS.Error.DiskNotValidated);
-            if (!p.ReadBlock(extension, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            if (extension < g.ReservedBlocks || extension >= g.BlockCount || extension == g.RootBlock ||
+                !p.ReadBlock(extension, w.Data)) return Fail(ref w, DOS.Error.DiskNotValidated);
             extension = p.ReadUInt32(w.Data, (int)g.BlockBytes - 4);
         }
-        return extension == 0 || Fail(ref w, DOS.Error.DiskNotValidated);
+        if (extension != 0) return Fail(ref w, DOS.Error.DiskNotValidated);
+        var total = maps + needed;
+        var buffer = w.Bitmap; var capacity = g.BlockBytes / 4;
+        if (MountIndexEnabled && w.Index.IsNotNull && p.ReadUInt32(w.Index, AmigaFfsMountIndex.Status) == 0 &&
+            AmigaFfsMountIndex.ScratchWords(ref p, w.Index) > capacity)
+        {
+            buffer = AmigaFfsMountIndex.SummaryMap(w.Index);
+            capacity = AmigaFfsMountIndex.ScratchWords(ref p, w.Index);
+        }
+        for (var start = 0u; start < total; start += capacity)
+        {
+            var count = total - start < capacity ? total - start : capacity;
+            var walk = new LayoutWalk();
+            for (var k = 0u; k < start + count; k++)
+            {
+                if (!NextLayoutKey(ref p, ref w, in g, maps, firstExtension, ref walk, out var key))
+                    return Fail(ref w, DOS.Error.DiskNotValidated);
+                if (k >= start) p.WriteUInt32(buffer, (int)(k - start) * 4, key);
+            }
+            if (!AmigaFfsMountIndex.Unique(ref p, buffer, count)) return Fail(ref w, DOS.Error.DiskNotValidated);
+            for (var k = start + count; k < total; k++)
+            {
+                if (!NextLayoutKey(ref p, ref w, in g, maps, firstExtension, ref walk, out var key) ||
+                    AmigaFfsMountIndex.SortedContains(ref p, buffer, count, key))
+                    return Fail(ref w, DOS.Error.DiskNotValidated);
+            }
+        }
+        return true;
+    }
+
+    private struct LayoutWalk
+    {
+        internal AmigaDiskFileSystemCore.BitmapCursor Cursor;
+        internal uint Ordinal, Extension;
+    }
+
+    // The layout's keys in order: each bitmap page, then each extension block
+    // (already range-checked). Meta is the cursor's scratch, Data the chain's.
+    private static bool NextLayoutKey<T>(ref T p, ref Work w, in AmigaFfsGeometry g, uint maps, uint firstExtension,
+        ref LayoutWalk walk, out uint key) where T : struct, IAmigaDiscardFileSystemPlatform
+    {
+        if (walk.Ordinal < maps)
+        {
+            if (!AmigaDiskFileSystemCore.BitmapBlock(ref p, ref walk.Cursor, walk.Ordinal, w.Meta, out key)) return false;
+        }
+        else
+        {
+            key = walk.Ordinal == maps ? firstExtension : walk.Extension;
+            if (!p.ReadBlock(key, w.Data)) return false;
+            walk.Extension = p.ReadUInt32(w.Data, (int)g.BlockBytes - 4);
+        }
+        walk.Ordinal++;
+        return true;
     }
 
     private static bool TrimRange<T>(ref T p, ref Work w, APTR control, uint block, uint count,

@@ -456,6 +456,16 @@ public static class AmigaFfsMountIndex
         return bytes < Directory || keys > (bytes - Directory) / 8;
     }
 
+    // Words a forgotten index can lend to maintenance as a sort buffer.
+    internal static uint ScratchWords<T>(ref T p, APTR memory) where T : struct, IAmigaFileSystemPlatform
+    {
+        var bytes = p.ReadUInt32(memory, Bytes);
+        return bytes < Directory ? 0 : (bytes - (uint)Directory) / 4;
+    }
+
+    internal static bool SortedContains<T>(ref T p, APTR start, uint entries, uint key) where T : struct, IAmigaFileSystemPlatform
+        => SortedIntersects(ref p, start, entries, key, 1);
+
     internal static APTR SummaryMap(APTR memory) => APTR.FromPointer(memory.Raw + (uint)Directory);
 
     // Extension keys the summary map can hold after the root pointers and count.
