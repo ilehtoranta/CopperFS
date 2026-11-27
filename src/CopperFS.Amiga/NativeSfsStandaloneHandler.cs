@@ -34,7 +34,7 @@ public static class NativeSfsStandaloneHandler
 #endif
         if (state.IsNull)
         { Reply(message, packet, port, 0, DOS.Error.DiskNotValidated); global::Amiga.Exec.CloseLibrary(dosBase); return 20; }
-        if (ffs ? APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is < 0x444F5300 or > 0x444F5305 :
+        if (ffs ? APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is < 0x444F5300 or > 0x444F5307 :
             APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset) is not (AmigaSmartFileSystemCore.DosType or NativeSfs2Bridge.DosType))
         {
             NativeAmigaFileSystem.Destroy(state);

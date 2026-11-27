@@ -24,6 +24,8 @@ public static class AmigaFfsReadLinkCore
         // copying the partition geometry in each helper.
         var geometry = AmigaFfsGeometry.Read(ref p);
         error = DOS.Error.None;
+        var lnfs = AmigaDiskFileSystemCore.LongNames(dosType);
+        var nameAt = geometry.Tail + AmigaDiskFileSystemCore.NameOffset(lnfs);
         uint length = 0, offset = 0;
         while (true)
         {
@@ -48,7 +50,7 @@ public static class AmigaFfsReadLinkCore
             var start = offset;
             while (offset < length && p.ReadUInt8(path, (int)offset) != '/') offset++;
             var count = offset - start;
-            if (count > 30) { error = DOS.Error.InvalidComponentName; return -1; }
+            if (count > AmigaDiskFileSystemCore.NameLimit(lnfs)) { error = DOS.Error.InvalidComponentName; return -1; }
             var key = p.ReadUInt32(metadata, 24 + (int)AmigaDiskFileSystemCore.NameBucket(ref p, APTR.FromPointer(path.Raw + start),
                 count, dosType, geometry.TableEntries) * 4);
             var matched = false;
@@ -59,9 +61,9 @@ public static class AmigaFfsReadLinkCore
                 if (++run == power) { mark = key; power <<= 1; run = 0; }
                 if (!Header(ref p, in geometry, key, metadata) || p.ReadUInt32(metadata, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return -1; }
-                matched = p.ReadUInt8(metadata, geometry.Tail + 432) == count;
+                matched = p.ReadUInt8(metadata, nameAt) == count;
                 for (uint i = 0; matched && i < count; i++) matched =
-                    Upper(p.ReadUInt8(metadata, geometry.Tail + 433 + (int)i), dosType) == Upper(p.ReadUInt8(path, (int)(start + i)), dosType);
+                    Upper(p.ReadUInt8(metadata, nameAt + 1 + (int)i), dosType) == Upper(p.ReadUInt8(path, (int)(start + i)), dosType);
                 if (matched) break;
                 key = p.ReadUInt32(metadata, geometry.Tail + 496);
             }
@@ -74,7 +76,7 @@ public static class AmigaFfsReadLinkCore
                 type = type == 4 ? 2 : -3;
             }
             if (type is 3 || (!stored && type is 4 or -4))
-                return Target(ref p, in geometry, key, directory, path, offset, length - offset, output, capacity, metadata, data, out error, stored);
+                return Target(ref p, in geometry, key, directory, path, offset, length - offset, output, capacity, metadata, data, out error, stored, lnfs);
             directory = key;
             if (offset < length) offset++;
         }
@@ -84,7 +86,7 @@ public static class AmigaFfsReadLinkCore
 
     // Measure and emit a canonical volume-qualified path without a stack-sized
     // path buffer. Parent walks are bounded by actual disk blocks, not guest text.
-    private static bool Path<T>(ref T p, in AmigaFfsGeometry geometry, uint node, APTR block, APTR output, out uint length)
+    private static bool Path<T>(ref T p, in AmigaFfsGeometry geometry, uint node, APTR block, APTR output, out uint length, bool lnfs)
         where T : struct, IAmigaFileSystemPlatform
     {
         length = 0;
@@ -92,8 +94,10 @@ public static class AmigaFfsReadLinkCore
         for (uint visited = 0; visited < geometry.BlockCount; visited++)
         {
             if (!Header(ref p, in geometry, key, block)) return false;
-            var size = p.ReadUInt8(block, geometry.Tail + 432);
-            if (size == 0 || size > 30 || length > int.MaxValue - size - 1) return false;
+            // The root keeps the classic name field on long-name volumes.
+            var entryNames = lnfs && key != geometry.RootBlock;
+            var size = AmigaDiskFileSystemCore.StoredNameLength(ref p, block, geometry.Tail, entryNames);
+            if (size == 0 || size > AmigaDiskFileSystemCore.NameLimit(entryNames) || length > int.MaxValue - size - 1) return false;
             length += (uint)size + 1;
             if (key == geometry.RootBlock) break;
             key = p.ReadUInt32(block, geometry.Tail + 500);
@@ -107,18 +111,19 @@ public static class AmigaFfsReadLinkCore
         while (true)
         {
             if (!Header(ref p, in geometry, key, block)) return false;
-            var size = p.ReadUInt8(block, geometry.Tail + 432);
+            var at = geometry.Tail + AmigaDiskFileSystemCore.NameOffset(lnfs && key != geometry.RootBlock);
+            var size = p.ReadUInt8(block, at);
             if (key == geometry.RootBlock) p.WriteUInt8(output, (int)--position, (byte)':');
             else if (key != node) p.WriteUInt8(output, (int)--position, (byte)'/');
             position -= size;
-            for (var i = 0; i < size; i++) p.WriteUInt8(output, (int)position + i, p.ReadUInt8(block, geometry.Tail + 433 + i));
+            for (var i = 0; i < size; i++) p.WriteUInt8(output, (int)position + i, p.ReadUInt8(block, at + 1 + i));
             if (key == geometry.RootBlock) return position == 0;
             key = p.ReadUInt32(block, geometry.Tail + 500);
         }
     }
 
     private static int Target<T>(ref T p, in AmigaFfsGeometry geometry, uint key, uint parent, APTR suffix, uint suffixOffset, uint suffixLength,
-        APTR output, int capacity, APTR metadata, APTR data, out DOS.Error error, bool stored = false) where T : struct, IAmigaFileSystemPlatform
+        APTR output, int capacity, APTR metadata, APTR data, out DOS.Error error, bool stored, bool lnfs) where T : struct, IAmigaFileSystemPlatform
     {
         error = DOS.Error.None;
         if (!Header(ref p, in geometry, key, data)) { error = DOS.Error.DiskNotValidated; return -1; }
@@ -140,7 +145,7 @@ public static class AmigaFfsReadLinkCore
             if (relative || volumeRelative)
             {
                 if (!relative) parent = geometry.RootBlock;
-                if (!Path(ref p, in geometry, parent, metadata, APTR.Null, out prefix)) { error = DOS.Error.DiskNotValidated; return -1; }
+                if (!Path(ref p, in geometry, parent, metadata, APTR.Null, out prefix, lnfs)) { error = DOS.Error.DiskNotValidated; return -1; }
                 if (relative)
                 {
                     if (parent != geometry.RootBlock && targetLength != 0) prefix++;
@@ -158,7 +163,7 @@ public static class AmigaFfsReadLinkCore
                 if (type is not (4 or -4)) break;
             }
             var targetType = unchecked((int)p.ReadUInt32(data, geometry.Tail + 508));
-            if (targetType is not (1 or 2 or -3) || !Path(ref p, in geometry, key, metadata, APTR.Null, out targetLength))
+            if (targetType is not (1 or 2 or -3) || !Path(ref p, in geometry, key, metadata, APTR.Null, out targetLength, lnfs))
             { error = DOS.Error.DiskNotValidated; return -1; }
         }
         // The separator after the link's input component is a join boundary.
@@ -189,13 +194,13 @@ public static class AmigaFfsReadLinkCore
         {
             if (relative || volumeRelative)
             {
-                if (!Path(ref p, in geometry, parent, metadata, output, out _)) { error = DOS.Error.DiskNotValidated; return -1; }
+                if (!Path(ref p, in geometry, parent, metadata, output, out _, lnfs)) { error = DOS.Error.DiskNotValidated; return -1; }
                 if (relative && parent != geometry.RootBlock && targetLength != 0)
                     p.WriteUInt8(output, (int)prefix - 1, (byte)'/');
             }
             for (uint i = 0; i < targetLength; i++) p.WriteUInt8(output, (int)(prefix + i), p.ReadUInt8(data, 24 + (int)i));
         }
-        else if (!Path(ref p, in geometry, key, metadata, output, out _)) { error = DOS.Error.DiskNotValidated; return -1; }
+        else if (!Path(ref p, in geometry, key, metadata, output, out _, lnfs)) { error = DOS.Error.DiskNotValidated; return -1; }
         p.WriteUInt8(output, (int)total, 0);
         return (int)total;
     }

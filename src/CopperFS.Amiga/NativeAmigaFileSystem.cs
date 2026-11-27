@@ -439,7 +439,9 @@ public static partial class NativeAmigaFileSystem
         if (!AmigaFileSystemDeviceCore.AdmitPartition(ref p, geometry, APTR.FromPointer(cache)))
         { Destroy(s); return APTR.Null; }
         var type = 0u;
-        if (!AmigaDiskFileSystemCore.Mount(ref p, Metadata(s), out type))
+        // Every read path below passes the mounted dosType, so DOS\6/7
+        // long-name volumes can mount; WriteProtected() keeps them read-only.
+        if (!AmigaDiskFileSystemCore.Mount(ref p, Metadata(s), out type, longNames: true))
         {
 #if !COPPERSTART_SFS_STANDALONE || (!COPPERSTART_FFS_ONLY && !COPPERSTART_SMART_ONLY)
             if (ffsOnly)
@@ -449,7 +451,7 @@ public static partial class NativeAmigaFileSystem
                 // Standalone FFS never mounts or repairs foreign media. Return
                 // a non-FFS signature to the standalone entry
                 // so it can reply ObjectWrongType without mounting that volume.
-                if (type != 0 && (type < 0x444F5300 || type > 0x444F5305))
+                if (type != 0 && (type < 0x444F5300 || type > 0x444F5307))
                 {
                     APTR.WriteUInt32(s, NativeFileSystemStateCodec.DosTypeOffset, type);
                     return s;
@@ -1988,7 +1990,10 @@ public static partial class NativeAmigaFileSystem
         if (type > 7) type = 7;
         // ED_NAME..ED_PROTECTION add a longword each; ED_DATE adds three, then one each.
         var fixedBytes = type <= 4 ? 4 + type * 4 : type == 5 ? 32 : 4 + type * 4 + 8;
-        var reserve = fixedBytes + 32 + (type >= 6 ? 80 : 0);
+        var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
+        // The name is copied before matching, so the reserve must hold the
+        // longest stored name: 108 bytes on DOS\6/7 long-name volumes.
+        var reserve = fixedBytes + (AmigaDiskFileSystemCore.LongNames(dosType) ? 108 : 32) + (type >= 6 ? 80 : 0);
         var pattern = APTR.FromPointer(APTR.ReadUInt32(control, 8));
         var hook = APTR.ReadUInt32(control, 12);
         var fib = Bitmap(state);
@@ -1999,7 +2004,6 @@ public static partial class NativeAmigaFileSystem
         var last = APTR.ReadUInt32(control, 4);
         APTR.WriteUInt32(fib, 0, last == 0 ? directory : last);
         var cursor = new AmigaDiskFileSystemCore.DirectoryCursor();
-        var dosType = APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset);
         var at = 0; uint entries = 0; var previous = APTR.Null;
         while (true)
         {
@@ -3645,7 +3649,8 @@ public static partial class NativeAmigaFileSystem
                 if (b > 0x3FFFFFFF || !p.IsMapped(APTR.FromPointer(b << 2), FileInfoBlock.SizeInBytes)) { error = DOS.Error.BadNumber; break; }
                 result = ((SpecializeFormat ? FormatIsSmart : Smart(state))
                     ? NativeSfsExtension.Examine(state, key, APTR.FromPointer(b << 2))
-                    : AmigaDiskFileSystemCore.Examine(ref p, key, APTR.FromPointer(b << 2), metadata)) ? -1 : 0;
+                    : AmigaDiskFileSystemCore.Examine(ref p, key, APTR.FromPointer(b << 2), metadata,
+                        APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset))) ? -1 : 0;
                 if (result == 0) error = DOS.Error.DiskNotValidated;
                 else if (!NativeSfs2Bridge.IsSfs2(state) && (action is DosPacketAction.ExamineObject64 or DosPacketAction.ExamineFileHandle64))
                     ExtendFileInfo(APTR.FromPointer(b << 2));
@@ -4318,6 +4323,8 @@ public struct NativeFileSystemPlatform : IAmigaBlockRangeFileSystemPlatform,
 #if COPPERFS_FFS_HANDLER
         if (APTR.ReadUInt32(state, NativeAmigaFileSystem.FfsSoftProtect) != 0) return true;
 #endif
+        // DOS\6/7 long-name volumes are mounted read-only.
+        if (AmigaDiskFileSystemCore.LongNames(APTR.ReadUInt32(state, NativeFileSystemStateCodec.DosTypeOffset))) return true;
         var request = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.RequestOffset));
         APTR.WriteUInt16(request, NativeExecFieldCodec.IoCommandOffset, 15);
         global::Amiga.Exec.DoIO(request);

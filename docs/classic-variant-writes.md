@@ -3,7 +3,8 @@
 CopperFFS's maintained writer and quick formatter support DOS0–DOS5. The low bit
 selects FFS data blocks versus OFS headers/chains; types 2–5 use international
 Latin-1 name hashing. Byte 0xFF remains unchanged and cannot alias 0xDF.
-DOS6/DOS7 are outside this core's supported formats.
+DOS6/DOS7 long-name volumes are read-only: every write fails with 214 (see
+`compatibility.md`).
 
 DOS4/DOS5 also maintain T\_DIRC directory-cache chains. The canonical hash tables
 remain authoritative. Before publishing a valid root, the writer edits only the
