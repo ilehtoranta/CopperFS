@@ -851,6 +851,8 @@ public static partial class AmigaFfsWriteCore
     {
         if (!p.ReadBlock(0, w.Meta)) return Fail(ref w, DOS.Error.DiskNotValidated);
         w.DosType = p.ReadUInt32(w.Meta);
+        // DOS\6/7 long-name volumes are read-only: report them as write-protected.
+        if (AmigaDiskFileSystemCore.LongNames(w.DosType)) return Fail(ref w, DOS.Error.DiskWriteProtected);
         return w.DosType is >= 0x444F5300 and <= 0x444F5305 || Fail(ref w, DOS.Error.ActionNotKnown);
     }
     private static uint Hash<T>(ref T p, APTR name, uint length, uint dosType) where T : struct, IAmigaFileSystemPlatform

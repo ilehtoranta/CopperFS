@@ -256,7 +256,8 @@ tell two builds apart.
 
    Use the `DosType` of the volume's variant: `0x444F5300` (OFS) to
    `0x444F5305` (FFS with directory cache, international). CopperFFS reads the
-   variant from the boot block; DOS\6 and DOS\7 volumes are refused.
+   variant from the boot block. DOS\6 and DOS\7 (long-name) volumes mount
+   read-only.
 3. Run `C:Mount FFS0:` and check the volume with `C:List` and a copy/read-back
    before using it for anything else.
 

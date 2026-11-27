@@ -99,15 +99,51 @@ public static class AmigaDiskFileSystemCore
     }
 
     public static bool Mount<T>(ref T p, APTR buffer, out uint dosType) where T : struct, IAmigaFileSystemPlatform
+        => Mount(ref p, buffer, out dosType, false);
+
+    // longNames admits read-only DOS\6/7. Such a caller must pass the mounted
+    // dosType to Examine, ExamineNext, Resolve and ReadLink: their dosType-less
+    // overloads assume the classic header layout.
+    public static bool Mount<T>(ref T p, APTR buffer, out uint dosType, bool longNames) where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         dosType = 0;
         if (!p.ReadBlock(0, buffer)) return false;
         dosType = p.ReadUInt32(buffer);
         // Directory-cache disks use the ordinary hash table for read access.
-        if (dosType < 0x444F5300 || dosType > 0x444F5305) return false;
-        return Header(ref p, geometry.RootBlock, buffer) && p.ReadUInt8(buffer, geometry.Tail + 432) is > 0 and <= 30;
+        var lnfs = LongNames(dosType);
+        if (dosType < 0x444F5300 || dosType > 0x444F5307 || (lnfs && !longNames)) return false;
+        // The LNFS root repeats the boot block's signature; classic roots keep 0 there.
+        return Header(ref p, geometry.RootBlock, buffer) && p.ReadUInt8(buffer, geometry.Tail + 432) is > 0 and <= 30 &&
+            (!lnfs || p.ReadUInt32(buffer, geometry.Tail + 496) == dosType);
     }
+
+    // DOS\6 (OFS) and DOS\7 (FFS) long-name mode (LNFS), read-only. Layout from
+    // Olaf Barthel, "DCFS and LNFS Low Level Data Structures" (AmigaOS wiki):
+    // entry headers merge the 30-character name and 80-byte comment into one
+    // 112-byte name-and-comment field at Tail+328 (two BCPL strings), followed
+    // by a comment block key at Tail+440 and the date at Tail+452. A comment that
+    // does not fit beside the name lives in a TYPE_COMMENT (64) block. The root
+    // block keeps the classic name and date positions. Names always use the
+    // international hash. No CopperFFS write path accepts these variants.
+    internal static bool LongNames(uint dosType) => dosType is 0x444F5306 or 0x444F5307;
+    internal const int LongNameBytes = 112, LongCommentKey = 440, LongDate = 452, CommentBlockType = 64;
+    // FIB and ExAll names are limited to 107 characters by fib_FileName[108].
+    internal const uint LongNameLimit = 107;
+    internal static int NameOffset(bool lnfs) => lnfs ? 328 : 432;
+    internal static uint NameLimit(bool lnfs) => lnfs ? LongNameLimit : 30;
+
+    // Stored name length, or a value above the variant's limit when the
+    // header's name field is malformed. The root always uses classic fields.
+    internal static uint StoredNameLength<T>(ref T p, APTR header, int tail, bool lnfs) where T : struct, IAmigaFileSystemPlatform
+    {
+        var length = (uint)p.ReadUInt8(header, tail + NameOffset(lnfs));
+        if (!lnfs) return length;
+        // Name and comment are both BCPL strings inside the 112-byte field.
+        return length + 2 > LongNameBytes ? LongNameLimit + 1 : length;
+    }
+
+
 
     internal static byte Upper(byte c, uint type) => c is >= 97 and <= 122 ||
         (type >= 0x444F5302 && c is >= 224 and <= 254 && c != 247) ? unchecked((byte)(c - 32)) : c;
@@ -161,6 +197,8 @@ public static class AmigaDiskFileSystemCore
         if (length > 255) { error = DOS.Error.InvalidComponentName; return 0; }
         var tableEntries = geometry.TableEntries;
         if (tableEntries == 0) { error = DOS.Error.DiskNotValidated; return 0; }
+        var lnfs = LongNames(dosType);
+        var nameAt = geometry.Tail + NameOffset(lnfs);
         var offset = 0u;
         for (var i = 0u; i < length; i++)
             if (p.ReadUInt8(name, (int)i) == ':') { directory = geometry.RootBlock; offset = i + 1; }
@@ -221,7 +259,7 @@ public static class AmigaDiskFileSystemCore
             var start = offset;
             while (offset < length && p.ReadUInt8(name, (int)offset) != '/') offset++;
             var count = offset - start;
-            if (count == 0 || count > 30) { error = DOS.Error.InvalidComponentName; return 0; }
+            if (count == 0 || count > NameLimit(lnfs)) { error = DOS.Error.InvalidComponentName; return 0; }
             var slot = 24 + (int)NameBucket(ref p, APTR.FromPointer(name.Raw + start), count, dosType, tableEntries) * 4;
             var entry = p.ReadUInt32(view, slot);
             if (AmigaFfsMountIndex.Enabled && entry != 0 && directory == geometry.RootBlock && prefixIndex.IsNotNull &&
@@ -239,10 +277,10 @@ public static class AmigaDiskFileSystemCore
                 view = HeaderView(ref p, in geometry, entry, buffer, name, length, true);
                 if (view.IsNull || p.ReadUInt32(view, geometry.Tail + 500) != directory)
                 { error = DOS.Error.DiskNotValidated; return 0; }
-                var matches = p.ReadUInt8(view, geometry.Tail + 432) == count;
+                var matches = p.ReadUInt8(view, nameAt) == count;
                 for (var i = 0u; matches && i < count; i++)
                 {
-                    var stored = p.ReadUInt8(view, geometry.Tail + 433 + (int)i);
+                    var stored = p.ReadUInt8(view, nameAt + 1 + (int)i);
                     var requested = p.ReadUInt8(name, (int)(start + i));
                     matches = stored == requested || Upper(stored, dosType) == Upper(requested, dosType);
                 }
@@ -703,30 +741,38 @@ public static class AmigaDiskFileSystemCore
     }
 
     public static bool Examine<T>(ref T p, uint key, APTR fib, APTR buffer) where T : struct, IAmigaFileSystemPlatform
+        => Examine(ref p, key, fib, buffer, 0);
+
+    // dosType selects the classic or DOS\6/7 long-name header layout; 0 is classic.
+    public static bool Examine<T>(ref T p, uint key, APTR fib, APTR buffer, uint dosType) where T : struct, IAmigaFileSystemPlatform
     {
         if (!p.IsMapped(fib, FileInfoBlock.SizeInBytes) || !Header(ref p, key, buffer)) return false;
-        return ExamineHeader(ref p, key, fib, buffer);
+        return ExamineHeader(ref p, key, fib, buffer, dosType);
     }
 
     // The serial handler has already validated this header. Do not read and
-    // checksum the same block again merely to project it into a FIB.
-    private static bool ExamineHeader<T>(ref T p, uint key, APTR fib, APTR buffer) where T : struct, IAmigaFileSystemPlatform
+    // checksum the same block again merely to project it into a FIB. A
+    // long-name comment block is read into buffer, then the header is restored.
+    private static bool ExamineHeader<T>(ref T p, uint key, APTR fib, APTR buffer, uint dosType) where T : struct, IAmigaFileSystemPlatform
     {
         var geometry = AmigaFfsGeometry.Read(ref p);
         var blockBytes = geometry.BlockBytes;
         if (blockBytes == 0) return false;
+        var root = key == geometry.RootBlock;
+        var lnfs = LongNames(dosType) && !root;
         p.Clear(fib, FileInfoBlock.SizeInBytes);
         // fib_DiskKey is the header key, as in Kickstart FFS.
         p.WriteUInt32(fib, 0, key);
         var type = p.ReadUInt32(buffer, geometry.Tail + 508);
         p.WriteUInt32(fib, 4, type);
         p.WriteUInt32(fib, 120, type);
-        var nameLength = p.ReadUInt8(buffer, geometry.Tail + 432);
-        if (nameLength > 30) return false;
+        var nameAt = geometry.Tail + NameOffset(lnfs);
+        var nameLength = StoredNameLength(ref p, buffer, geometry.Tail, lnfs);
+        if (nameLength > NameLimit(lnfs)) return false;
         // Packet FIB names use the SDK's length-prefixed representation.
         // Native DOS name/path reconstruction consumes this packet record.
-        p.WriteUInt8(fib, 8, nameLength);
-        for (var i = 0; i < nameLength; i++) p.WriteUInt8(fib, 9 + i, p.ReadUInt8(buffer, geometry.Tail + 433 + i));
+        p.WriteUInt8(fib, 8, (byte)nameLength);
+        for (var i = 0; i < nameLength; i++) p.WriteUInt8(fib, 9 + i, p.ReadUInt8(buffer, nameAt + 1 + i));
         p.WriteUInt32(fib, 116, key == geometry.RootBlock ? 0 : p.ReadUInt32(buffer, geometry.Tail + 320));
         var file = unchecked((int)type) < 0;
         var size = file ? p.ReadUInt32(buffer, geometry.Tail + 324) : 0;
@@ -741,15 +787,30 @@ public static class AmigaDiskFileSystemCore
             p.WriteUInt16(fib, 224, (ushort)(owner >> 16));
             p.WriteUInt16(fib, 226, (ushort)owner);
         }
-        for (var i = 0; i < 12; i += 4) p.WriteUInt32(fib, 132 + i, p.ReadUInt32(buffer, geometry.Tail + 420 + i));
-        if (key != geometry.RootBlock)
-        {
-            var commentLength = p.ReadUInt8(buffer, geometry.Tail + 328);
-            if (commentLength > 79) return false;
-            p.WriteUInt8(fib, 144, commentLength);
-            for (var i = 0; i < commentLength; i++) p.WriteUInt8(fib, 145 + i, p.ReadUInt8(buffer, geometry.Tail + 329 + i));
-        }
-        return true;
+        var dateAt = geometry.Tail + (lnfs ? LongDate : 420);
+        for (var i = 0; i < 12; i += 4) p.WriteUInt32(fib, 132 + i, p.ReadUInt32(buffer, dateAt + i));
+        if (root) return true;
+        // Classic headers keep the comment at Tail+328; LNFS stores it right
+        // after the name, or in a separate comment block when both do not fit.
+        var commentAt = lnfs ? nameAt + 1 + (int)nameLength : geometry.Tail + 328;
+        var commentLength = p.ReadUInt8(buffer, commentAt);
+        if (commentLength > 79 || (lnfs && nameLength + commentLength + 2 > LongNameBytes)) return false;
+        p.WriteUInt8(fib, 144, commentLength);
+        for (var i = 0; i < commentLength; i++) p.WriteUInt8(fib, 145 + i, p.ReadUInt8(buffer, commentAt + 1 + i));
+        if (!lnfs) return true;
+        var commentBlock = p.ReadUInt32(buffer, geometry.Tail + LongCommentKey);
+        if (commentBlock == 0) return true;
+        // An entry keeps either an inline comment or a comment block.
+        if (commentLength != 0 || commentBlock < geometry.ReservedBlocks || commentBlock >= geometry.BlockCount ||
+            commentBlock == key) return false;
+        if (!p.ReadBlock(commentBlock, buffer) || !Checksum(ref p, buffer) || p.ReadUInt32(buffer) != CommentBlockType ||
+            p.ReadUInt32(buffer, 4) != commentBlock || p.ReadUInt32(buffer, 8) != key) return false;
+        commentLength = p.ReadUInt8(buffer, 24);
+        if (commentLength > 79) return false;
+        p.WriteUInt8(fib, 144, commentLength);
+        for (var i = 0; i < commentLength; i++) p.WriteUInt8(fib, 145 + i, p.ReadUInt8(buffer, 25 + i));
+        // Callers may still read the entry header from buffer.
+        return Header(ref p, in geometry, key, buffer, true);
     }
 
     // Private acceleration only: fib_DiskKey (the last returned header key)
@@ -794,6 +855,8 @@ public static class AmigaDiskFileSystemCore
         var wanted = p.ReadUInt32(fib);
         if (wanted >= geometry.BlockCount) return DOS.Error.NoMoreEntries;
         var next = cursor;
+        // 0 selects the classic header layout (see the long-name Mount).
+        var lnfs = LongNames(dosType);
         if (wanted == 0 || wanted == directory) next = new DirectoryCursor { Directory = directory };
         else if (next.Directory != directory || next.Ordinal != wanted)
         {
@@ -802,19 +865,21 @@ public static class AmigaDiskFileSystemCore
             {
                 if (!p.ReadBlock(0, metadata)) return DOS.Error.DiskNotValidated;
                 dosType = p.ReadUInt32(metadata);
+                // A legacy caller never mounted a long-name volume.
+                if (LongNames(dosType)) return DOS.Error.DiskNotValidated;
             }
             var nameLength = 0u;
             if (Header(ref p, in geometry, wanted, metadata, true) && p.ReadUInt32(metadata, geometry.Tail + 500) == directory)
             {
-                nameLength = p.ReadUInt8(metadata, geometry.Tail + 432);
-                if (nameLength == 0 || nameLength > 30) return DOS.Error.DiskNotValidated;
+                nameLength = StoredNameLength(ref p, metadata, geometry.Tail, lnfs);
+                if (nameLength == 0 || nameLength > NameLimit(lnfs)) return DOS.Error.DiskNotValidated;
             }
             if (nameLength != 0)
             {
                 next = new DirectoryCursor
                 {
                     Directory = directory,
-                    Slot = NameBucket(ref p, APTR.FromPointer(metadata.Raw + (uint)geometry.Tail + 433), nameLength, dosType, geometry.TableEntries),
+                    Slot = NameBucket(ref p, APTR.FromPointer(metadata.Raw + (uint)(geometry.Tail + NameOffset(lnfs) + 1)), nameLength, dosType, geometry.TableEntries),
                     Entry = p.ReadUInt32(metadata, geometry.Tail + 496)
                 };
                 if (next.Entry == 0) next.Slot++;
@@ -835,7 +900,7 @@ public static class AmigaDiskFileSystemCore
                     p.ReadUInt32(metadata, geometry.Tail + 500) != directory) return DOS.Error.DiskNotValidated;
                 next.Visited++;
                 var successor = p.ReadUInt32(metadata, geometry.Tail + 496);
-                if (!ExamineHeader(ref p, entry, fib, metadata)) return DOS.Error.DiskNotValidated;
+                if (!ExamineHeader(ref p, entry, fib, metadata, dosType)) return DOS.Error.DiskNotValidated;
                 // Ordinal carries the last returned key for the private fast path.
                 next.Ordinal = entry;
                 if (successor == 0) { next.Slot++; next.Entry = 0; }

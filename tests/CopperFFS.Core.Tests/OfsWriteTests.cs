@@ -202,7 +202,7 @@ public sealed partial class VolumeGeometryTests
     }
 
     [Theory]
-    [InlineData(0)] [InlineData(1)] [InlineData(2)]
+    [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)]
     public void OfsRejectsReadOnlyDiskFullAndUnsupportedFormatsBeforeWriting(int failure)
     {
         var storage = new Storage(); Assert.True(AmigaVolumeGeometry.Create(3520, 512, 2, out var g));
@@ -210,10 +210,12 @@ public sealed partial class VolumeGeometryTests
         var r = OfsFile(ref p, storage, g, "Data"); OfsWrite(ref p, storage, ref r, 0, new byte[488]);
         if (failure == 0) storage.Protected = true;
         if (failure == 1) { p.Clear(Bitmap, 512); Assert.True(p.WriteBlock(g.RootBlock + 1, Bitmap)); }
+        // DOS\6 long-name volumes are read-only; DOS\8 is unknown.
         if (failure == 2) SetDosType(ref p, 0x444F5306);
+        if (failure == 3) SetDosType(ref p, 0x444F5308);
         r.Position = 488; r.Buffer = Payload; r.Length = 1; var w = Work(); storage.Transfers.Clear();
         Assert.False(AmigaFfsWriteCore.Write(ref p, ref w, ref r, out var actual)); Assert.Equal(0u, actual);
-        Assert.Equal(failure == 0 ? DOS.Error.DiskWriteProtected : failure == 1 ? DOS.Error.DiskFull : DOS.Error.ActionNotKnown, w.Error);
+        Assert.Equal(failure is 0 or 2 ? DOS.Error.DiskWriteProtected : failure == 1 ? DOS.Error.DiskFull : DOS.Error.ActionNotKnown, w.Error);
         Assert.DoesNotContain(storage.Transfers, t => t.Command is 3 or 25);
     }
 

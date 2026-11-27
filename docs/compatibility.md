@@ -44,7 +44,7 @@ RDB autoboot installer here.
 
 CopperFFS reads and writes DOS\0 to DOS\5 (OFS, FFS, their international and
 directory-cache variants) with block sizes of 512 to 4096 bytes. DOS\6 and
-DOS\7 (long file names) are refused. Its reference is the FastFileSystem in
+DOS\7 (long file names) mount read-only; see below. Its reference is the FastFileSystem in
 Kickstart 3.1's ROM: the `CopperFS.Kickstart.Tests` reference tests run the same
 DOS workloads on both and compare results (links, ExNext and ExAll, locks,
 dates, inhibit, error codes, FIB fields, directory caches, notifications,
@@ -76,6 +76,33 @@ comparisons.
   (the ROM leaves their old payload).
 - `ACTION_INFO` counts neither total nor used blocks in the reserved area,
   and Examine reports the root as `ST_USERDIR` (2).
+
+### DOS\6/7 long-name volumes (read-only)
+
+DOS\6 (OFS) and DOS\7 (FFS) volumes mount read-only. The layout comes from
+Olaf Barthel's [DCFS and LNFS Low Level Data Structures](https://wiki.amigaos.net/wiki/DCFS_and_LNFS_Low_Level_Data_Structures)
+on the AmigaOS wiki, not from any original handler's code:
+
+- Entry headers keep the name and comment as two BCPL strings in one
+  112-byte field at the classic comment position, followed by a comment-block
+  key and the date. A comment that does not fit beside the name is read from
+  its `TYPE_COMMENT` (64) block. The root keeps the classic name and date
+  fields, and must repeat the boot block's DOS type in its `FileSystemType`
+  field; a volume without it is refused.
+- Names use the international hash and may be up to 107 characters, the
+  `fib_FileName` limit. Lookups, reads, Examine, ExNext, ExAll and ReadLink
+  handle them.
+- Every write, including Format, fails with 214 (disk write-protected), and
+  Info reports the volume as write-protected (80). The root's `NumBlocksUsed`
+  counter is not used; Info counts the bitmap.
+
+There is no OS 3.1.4/3.2 handler or image to compare against, so this is
+checked only against images built from that description: host tests in
+`CopperFFS.Core.Tests` (`LongNameReadTests.cs`, 512- and 1024-byte blocks)
+and a full-ROM test in which Kickstart 3.1's dos.library drives the native
+handler (`LongNameReferenceTests.cs`, 512-byte blocks). The header blocks in
+[hst-amiga](https://github.com/henrikstengaard/hst-amiga)'s test data were
+checked by hand against the same offsets and agree; they are not imported.
 
 ### Known differences
 
