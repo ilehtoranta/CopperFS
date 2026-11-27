@@ -2115,8 +2115,38 @@ public static partial class NativeAmigaFileSystem
         if (p.WriteProtected()) { error = DOS.Error.DiskWriteProtected; return 0; }
         if (!FinishOpenGroup(state, out error)) return 0;
         InitializeWriteWork(state, out var w);
-        if (!AmigaFfsWriteCore.Relabel(ref p, ref w, APTR.FromPointer(name.Raw + 1), length)) { error = w.Error; return 0; }
         var volume = APTR.FromPointer(APTR.ReadUInt32(state, NativeFileSystemStateCodec.VolumeOffset));
+#if !COPPERSTART_SFS_STANDALONE
+        if (volume.IsNotNull)
+        {
+            // CopperStart's MakeDosEntry reserves 256 bytes for the BSTR in the
+            // volume allocation. Keep that storage and its published BPTR.
+            var library = global::Amiga.Exec.OpenLibraryRaw("dos.library", 36);
+            if (library.IsNull) { error = DOS.Error.DeviceNotMounted; return 0; }
+            var dos = new CopperSharpNativeDosPlatform(0);
+            var dosState = DosNativeLibraryCore.StateFor(ref dos, library);
+            const uint flags = (uint)(DosListLockFlags.Write | DosListLockFlags.Volumes);
+            if (dosState.IsNull || DosListCore.LockDosList(ref dos, dosState, flags).IsNull)
+            {
+                global::Amiga.Exec.CloseLibrary(library);
+                error = DOS.Error.ObjectInUse;
+                return 0;
+            }
+            var renamed = AmigaFfsWriteCore.Relabel(ref p, ref w, APTR.FromPointer(name.Raw + 1), length);
+            if (renamed)
+            {
+                var target = APTR.FromPointer(APTR.ReadUInt32(volume, 40) << 2);
+                for (var i = 0; i <= length; i++) APTR.WriteUInt8(target, i, APTR.ReadUInt8(name, i));
+                APTR.WriteUInt8(target, length + 1, 0);
+            }
+            DosListCore.UnLockDosList(ref dos, dosState, flags);
+            global::Amiga.Exec.CloseLibrary(library);
+            error = w.Error;
+            return renamed ? -1 : 0;
+        }
+#endif
+        if (!AmigaFfsWriteCore.Relabel(ref p, ref w, APTR.FromPointer(name.Raw + 1), length)) { error = w.Error; return 0; }
+#if COPPERSTART_SFS_STANDALONE
         if (volume.IsNotNull)
         {
             // dos.library allocates dol_Name with AllocVec; FreeDosEntry frees it the same way.
@@ -2133,6 +2163,7 @@ public static partial class NativeAmigaFileSystem
                 if (old != 0) global::Amiga.Exec.FreeVec(APTR.FromPointer(old << 2));
             }
         }
+#endif
         return -1;
     }
 
